@@ -160,7 +160,7 @@
 @media(max-width:600px){.collision-editor-body{grid-template-columns:1fr;}.collision-editor-body>.check-line:first-child,.collision-editor-body>.field-label,.collision-editor-body>.modal-note{grid-column:1;}.collision-preview{height:120px;}}
 
 
-/* ZeroEngine 0.7 — true isometric viewport, adjustable panels and 3D spatial editors */
+/* ZeroEngine 0.7.2 — perspective camera only, adjustable panels and 3D spatial editors */
 :root{--zero-side-w:250px;--zero-props-w:280px}
 .editor-layout{grid-template-columns:var(--left-w) minmax(0,1fr) var(--right-w);grid-template-rows:minmax(0,1fr) var(--dock-h)}
 .hierarchy-panel,.inspector-panel,.asset-dock,.workbench-sidebar,.workbench-properties{position:relative;min-width:0}
