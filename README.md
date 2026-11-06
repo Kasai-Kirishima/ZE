@@ -1,4 +1,4 @@
-# ZeroEngine 0.9.4
+# ZeroEngine 0.9.5
 
 ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
 
@@ -18,6 +18,14 @@ The **3D-моделирование** entry is on the home screen. Choose an exi
 - Component pick modes for vertices, edges and faces. Face selection uses a marker instead of drawing a triangle, since Three.js renders buffer geometry as triangles internally.
 - Early face push/inset/bevel/sharpen/cut/joint tools, image reference planes, image texture assignment, basic canvas paint, material controls and UV repeat/offset.
 - GLB export to project `Assets/Models`; saved assets are included in project ZIP export. A selected model can be converted into a `Player` entity.
+
+## Changes in 0.9.5
+
+- Added a delete control beside every model in the Model Studio object list.
+- Fixed component editing tools and transform gizmo behavior for vertex, edge and face selections; selected components can be translated, rotated and scaled directly in the viewport.
+- Component deletion now removes affected triangles from the mesh instead of collapsing them into a point.
+- The Joystick block exposes separate numeric X and Y outputs.
+- Expanded typed ZeroBox data ports for numbers, directions, booleans, colors, text and assets; added Text and Asset source blocks. Moving accepts connected X/Y/Z, speed and direction values.
 
 ## Changes in 0.9.4
 
@@ -44,13 +52,13 @@ The **3D-моделирование** entry is on the home screen. Choose an exi
 
 ## Modeling limitations
 
-This remains an early browser modeling workspace, not a Blender replacement. Component modes provide picking; face operations still affect the selected triangle in the current buffer geometry. Cut, joint, join and bevel are prototypes. There is no full topology kernel, boolean solver, edge-loop system, skin-weight editor, automatic UV unwrap or production-grade texture painting yet.
+This remains an early browser modeling workspace, not a Blender replacement. Component modes support vertex, edge and coplanar face selection with direct transforms. Face operations work on the selected triangulated face region; cut, joint, join and bevel remain early prototypes. There is no full topology kernel, boolean solver, edge-loop system, skin-weight editor, automatic UV unwrap or production-grade texture painting yet.
 
 ## Project data
 
 Projects are stored locally in IndexedDB. Export ZIP regularly to back them up or move them to another device.
 
-## ZeroEngine 0.9.4
+## ZeroEngine 0.9.5
 
 - ZeroBox and UI Designer now open as exclusive full-screen workspaces; the scene is blocked until the workspace is closed.
 - Play Mode first persists the project and refuses to start if saving fails or no ZeroBox exists.

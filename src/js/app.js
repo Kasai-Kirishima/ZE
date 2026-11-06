@@ -91,7 +91,7 @@ let heldButtonIds = new Set();
 let heldZeroTimers = new Map();
 let previewYaw = 0, previewPitch = -0.18;
 let editorCameraMode = 'perspective';
-let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, componentHelper:null, componentTarget:null, mode:'object', raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null };
+let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null };
 let deviceSettings = { profile:'auto', width:window.innerWidth||1280, height:window.innerHeight||720 };
 const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey'];
 let currentLanguage = 'ru';
@@ -310,7 +310,7 @@ function normalizeProject(project) {
   if (!project.variables.some(v => v.name === 'Value')) project.variables.unshift({id:uid(),name:'Value',type:'Number',value:0,system:true});
   const activeScreenForLoad=project.uiScreens.find(screen=>screen.id===project.activeUIScreenId)||project.uiScreens[0];
   if(activeScreenForLoad) project.uiElements=clone(activeScreenForLoad.elements||project.uiElements||[]);
-  project.zeroBoxes.forEach(box => { box.blocks ||= []; box.blocks=box.blocks.filter(block=>block.type!=='Walking'); box.variables ||= []; box.connections ||= []; box.blocks.forEach((block,index)=>{ block.config ||= {...ZEROBOX_DEFAULTS}; if(!Number.isFinite(block.x)) block.x=360+(index%3)*330; if(!Number.isFinite(block.y)) block.y=130+Math.floor(index/3)*250; }); box.connections=box.connections.filter(c=>box.blocks.some(b=>b.id===c.from?.nodeId)&&box.blocks.some(b=>b.id===c.to?.nodeId)); });
+  project.zeroBoxes.forEach(box => { box.blocks ||= []; box.blocks=box.blocks.filter(block=>block.type!=='Walking'); box.variables ||= []; box.connections ||= []; box.blocks.forEach((block,index)=>{ block.config ||= {...ZEROBOX_DEFAULTS}; if(block.config.variableY===undefined&&block.config.variableZ!==undefined)block.config.variableY=block.config.variableZ; if(!Number.isFinite(block.x)) block.x=360+(index%3)*330; if(!Number.isFinite(block.y)) block.y=130+Math.floor(index/3)*250; }); box.connections=box.connections.filter(c=>box.blocks.some(b=>b.id===c.from?.nodeId)&&box.blocks.some(b=>b.id===c.to?.nodeId)); });
   project.scenes.forEach(sceneItem => (sceneItem.data.objects || []).forEach(entity => {
     if (entity.type === 'player') {
       if (!entity.cameraMount) {
@@ -2150,14 +2150,15 @@ const ZEROBOX_CATEGORIES = [
   {name:'Объекты', icon:'⬡', color:'#d1aa70', items:['Spawn','Delete']},
   {name:'Визуал', icon:'◈', color:'#e78d75', items:['Writes','ChangeTransparency','ChangeColor','ChangeTexture','ChangeModel','Changinganimation']},
   {name:'Звук', icon:'♫', color:'#62b9a8', items:['Changesound','Playsound',"Don'tSound",'Pausesound']},
-  {name:'Типы переменных', icon:'▦', color:'#9aa9b5', items:['Yesorno','Transparency','Color']}
+  {name:'Типы переменных', icon:'▦', color:'#9aa9b5', items:['Yesorno','Transparency','Color']},
+  {name:'Данные', icon:'⌘', color:'#8db6d6', items:['Text','Asset']}
 ];
 const ZEROBOX_DEFAULTS = {
   targetObjectId:'', variable:'Value', value:1, amount:1, side:'Forward', speed:3,
   x:0, y:0, z:0, color:'#a5ef4c', enabled:true, key:'', buttonId:'', distance:25,
   repeat:3, condition:'true', assetId:'', animation:'', text:'Hello from ZeroBox',
-  sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableZ:'JoystickY',
-  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', variableX:'JoystickX', variableZ:'JoystickY'
+  sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableY:'JoystickY', variableZ:'JoystickY',
+  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:''
 };
 function createZeroBox() {
   const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[]};
@@ -2206,8 +2207,10 @@ function zeroBlockFields(block) {
   if (['Speed','Jumpup','Squat','Twist','Minus','Plus','Divide','Multiply'].includes(block.type)) html += input('amount','Значение');
   if (block.type==='Gamespeed') html += input('gameSpeed','Множитель времени (0.1–4)');
   if (block.type==='Spawn') html += select('spawnType','Тип создаваемого объекта','<option value="cube">Куб</option><option value="sphere">Сфера</option><option value="plane">Плоскость</option><option value="cylinder">Цилиндр</option><option value="cone">Конус</option><option value="capsule">Капсула</option><option value="player">Player</option><option value="spawn">Player Start</option><option value="camera">Camera</option><option value="light">Point Light</option><option value="environmentLight">Environment Light</option>')+input('spawnName','Название объекта','text')+input('x','Позиция X')+input('y','Позиция Y')+input('z','Позиция Z');
-  if (block.type==='Joystick') html += select('joystickId','Выбрать джойстик',`<option value="">Первый доступный</option>${(currentProject.uiScreens||[]).flatMap(screen=>(screen.elements||[]).filter(el=>el.type==='Joystick').map(el=>({...el,screenName:screen.name}))).map(el=>`<option value="${el.id}" ${c.joystickId===el.id?'selected':''}>${escapeHtml(el.screenName)} / ${escapeHtml(el.text||'Joystick')} · ${el.id.slice(0,5)}</option>`).join('')}`)+input('variableX','Выход X','text')+input('variableZ','Выход Y','text');
-  if (block.type==='Moving') html += select('movementMode','Режим движения','<option value="direction">Постоянное движение (пока удерживается)</option><option value="offset">Смещение на координаты</option><option value="variables">По переменным джойстика</option>')+select('side','Направление','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+input('speed','Скорость (м/с)')+select('variableX','Переменная X джойстика',varOptions)+select('variableZ','Переменная Z джойстика',varOptions);
+  if (block.type==='Text') html += input('value','Текстовое значение','text');
+  if (block.type==='Asset') html += select('assetId','Ресурс',`<option value="">Не выбран</option>${(currentProject.assets||[]).map(a=>`<option value="${a.id}" ${c.assetId===a.id?'selected':''}>${escapeHtml(a.name)} · ${a.type}</option>`).join('')}`);
+  if (block.type==='Joystick') html += select('joystickId','Выбрать джойстик',`<option value="">Первый доступный</option>${(currentProject.uiScreens||[]).flatMap(screen=>(screen.elements||[]).filter(el=>el.type==='Joystick').map(el=>({...el,screenName:screen.name}))).map(el=>`<option value="${el.id}" ${c.joystickId===el.id?'selected':''}>${escapeHtml(el.screenName)} / ${escapeHtml(el.text||'Joystick')} · ${el.id.slice(0,5)}</option>`).join('')}`)+input('variableX','Переменная выхода X','text')+input('variableY','Переменная выхода Y','text');
+  if (block.type==='Moving') html += select('movementMode','Режим движения','<option value="direction">Постоянное движение (пока удерживается)</option><option value="offset">Смещение на координаты</option><option value="variables">По переменным джойстика</option>')+select('side','Направление','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+input('speed','Скорость (м/с)')+select('variableX','Переменная X джойстика',varOptions)+select('variableY','Переменная Y джойстика',varOptions);
   if (block.type==='Loop') html += input('repeat','Количество повторений');
   if (['Moving','Size','Laser'].includes(block.type)) html += input('x',block.type==='Laser'?'Смещение X':'X')+input('y',block.type==='Laser'?'Смещение Y':'Y')+input('z',block.type==='Laser'?'Смещение Z':'Z');
   if (block.type==='Laser') html += input('distance','Длина луча')+input('radius','Радиус проверки')+select('variable','Записать результат в',varOptions)+select('side','Направление','<option value="Forward">Вперёд</option><option value="Backward">Назад</option><option value="Left">Влево</option><option value="Right">Вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+select('stopCondition','Условие остановки','<option value="Hit">При попадании</option><option value="NoHit">Если ничего не найдено</option>');
@@ -2230,17 +2233,47 @@ function zeroBlockFields(block) {
   return html;
 }
 function zeroPortLayout(block) {
-  const isEvent = ['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type);
-  const isEnd = block.type === 'Close';
-  const isBranch = ['Branching','ForkYesorno'].includes(block.type);
-  return {
-    input: !isEvent,
-    outputs: isEnd ? [] : block.type==='Joystick' ? ['x','y'] : isBranch ? ['yes','no'] : ['out'],
-    inputLabel: 'Вход', outputLabel: 'Выход'
+  const isEvent=['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type);
+  const isEnd=block.type==='Close',isBranch=['Branching','ForkYesorno'].includes(block.type);
+  const isDataSource=['Joystick','Text','Asset'].includes(block.type);
+  return {input:!isEvent&&!isDataSource,outputs:isEnd||isDataSource?[]:isBranch?['yes','no']:['out'],inputLabel:'Вход',outputLabel:'Выход'};
+}
+function zeroDataOutputs(block){
+  if(block.type==='Joystick')return [{name:'x',label:'X',valueType:'number'},{name:'y',label:'Y',valueType:'number'}];
+  if(block.type==='Text')return [{name:'value',label:'Текст',valueType:'text'}];
+  if(block.type==='Asset'){const asset=(currentProject?.assets||[]).find(item=>item.id===block.config?.assetId);const valueType=asset?.type==='texture'?'texture':asset?.type==='model'?'model':asset?.type==='audio'?'audio':'asset';return [{name:'assetId',label:'Ресурс',valueType}];}
+  if(['Number','NumericArray','Speed','Plus','Minus','Multiply','Divide','Transparency'].includes(block.type))return [{name:'value',label:'Значение',valueType:'number'}];
+  if(block.type==='Side')return [{name:'direction',label:'Направление',valueType:'direction'}];
+  if(block.type==='Yesorno'||block.type==='Life')return [{name:'value',label:'Да / Нет',valueType:'boolean'}];
+  if(block.type==='Color')return [{name:'value',label:'Цвет',valueType:'color'}];
+  return [];
+}
+function zeroDataInputs(block){
+  const numeric=(...names)=>names.map(name=>({name,label:({x:'X',y:'Y',z:'Z',speed:'Скорость',amount:'Значение',value:'Число',distance:'Дальность',radius:'Радиус',gameSpeed:'Скорость игры',repeat:'Повторы'}[name]||name.toUpperCase()),valueType:'number'}));
+  const inputs={
+    Moving:[...numeric('x','y','z','speed'),{name:'direction',label:'Направление',valueType:'direction'}],
+    Spawn:[...numeric('x','y','z'),{name:'name',label:'Имя',valueType:'text'}],
+    Size:numeric('x','y','z'),Laser:[...numeric('x','y','z','distance','radius'),{name:'direction',label:'Направление',valueType:'direction'}],
+    Speed:numeric('amount'),Gamespeed:numeric('gameSpeed'),Jumpup:numeric('amount'),Squat:numeric('amount'),Twist:numeric('amount'),Loop:numeric('repeat'),
+    Plus:numeric('value','amount'),Minus:numeric('value','amount'),Multiply:numeric('value','amount'),Divide:numeric('value','amount'),
+    Change:[{name:'value',label:'Новое значение',valueType:'any'}],ChangeTransparency:numeric('value'),ChangeColor:[{name:'color',label:'Цвет',valueType:'color'}],
+    Branching:[{name:'value',label:'Условие',valueType:'boolean'}],ForkYesorno:[{name:'value',label:'Условие',valueType:'boolean'}],
+    Physics:[{name:'enabled',label:'Включено',valueType:'boolean'}],Collision:[{name:'enabled',label:'Включено',valueType:'boolean'}],Life:[{name:'value',label:'Жив / мёртв',valueType:'boolean'}],
+    Writes:[{name:'text',label:'Текст',valueType:'text'}],
+    ChangeTexture:[{name:'assetId',label:'Текстура',valueType:'texture'}],ChangeModel:[{name:'assetId',label:'Модель',valueType:'model'}],
+    Changesound:[{name:'assetId',label:'Звук',valueType:'audio'}],Playsound:[{name:'assetId',label:'Звук',valueType:'audio'}],
+    Changinganimation:[{name:'animation',label:'Анимация',valueType:'text'}]
   };
+  return inputs[block.type]||[];
+}
+function zeroDataTypesCompatible(sourceType,targetType){return sourceType===targetType||targetType==='any'||(sourceType==='asset'&&['texture','model','audio'].includes(targetType));}
+function zeroNodePortTop(block,side,portName){
+  if(portName==='execIn'||portName==='execOut'||portName==='yes'||portName==='no')return portName==='no'?78:51;
+  const ports=side==='out'?zeroDataOutputs(block):zeroDataInputs(block),index=Math.max(0,ports.findIndex(item=>item.name===portName));
+  return 79+index*23;
 }
 function zeroBlockIcon(type) {
-  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥'};
+  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',Text:'T',Asset:'▧'};
   return icons[type]||'◇';
 }
 function renderZeroBoxPicker() {
@@ -2263,7 +2296,7 @@ function zeroHelpText(type) {
     Change:'Записывает новое значение в выбранную переменную.', Loop:'Повторяет следующий шаг указанное число раз.', Branching:'Разветвляет выполнение по условию переменной на выходы Yes и No.', ForkYesorno:'Проверяет переменную Да/Нет и выбирает выход Yes или No.', Close:'Останавливает текущую цепочку ZeroBox.',
     Writes:'Выводит сообщение или записывает текст в UI Text.', Laser:'Выпускает невидимый луч и записывает результат проверки в переменную.',
     ChangeTransparency:'Меняет прозрачность объекта или UI-элемента.', ChangeColor:'Меняет цвет объекта или UI-элемента.', ChangeTexture:'Назначает объекту текстуру из файлов проекта.', ChangeModel:'Заменяет модель объекта.', Changesound:'Назначает звуковой ресурс объекту.',
-    Changinganimation:'Запускает выбранную анимацию модели.', Playsound:'Запускает аудиофайл.', "Don'tSound":'Останавливает воспроизведение звука.', Pausesound:'Ставит воспроизведение на паузу.', Twist:'Поворачивает объект.', Collision:'Включает или выключает коллизию.', Physics:'Включает или выключает физический режим объекта или группы объектов.'
+    Changinganimation:'Запускает выбранную анимацию модели.', Text:'Передаёт текст в подключённый вход Write или другой текстовый вход.', Asset:'Передаёт выбранный ресурс в подключённый вход текстуры, модели или звука.', Playsound:'Запускает аудиофайл.', "Don'tSound":'Останавливает воспроизведение звука.', Pausesound:'Ставит воспроизведение на паузу.', Twist:'Поворачивает объект.', Collision:'Включает или выключает коллизию.', Physics:'Включает или выключает физический режим объекта или группы объектов.'
   };
   return help[type] || 'Блок выполняет действие в цепочке ZeroBox.';
 }
@@ -2279,6 +2312,8 @@ function addZeroBoxBlock(type, dropX=null, dropY=null) {
   const viewX=canvas ? canvas.scrollLeft+Math.max(24,(canvas.clientWidth-254)/2) : 360;
   const viewY=canvas ? canvas.scrollTop+Math.max(24,(canvas.clientHeight-180)/2) : 130;
   const block = {id:uid(), type, x:Math.max(0,Number.isFinite(dropX)?dropX:viewX), y:Math.max(0,Number.isFinite(dropY)?dropY:viewY), config:{...ZEROBOX_DEFAULTS}};
+  if(type==='Text')block.config.value='Введите текст';
+  if(type==='Asset')block.config.assetId='';
   if (type==='Size') Object.assign(block.config,{x:1,y:1,z:1});
   if (['Number','NumericArray','Yesorno','Transparency','Color'].includes(type)) {
     const dataType = type === 'NumericArray' ? 'NumericArray' : type === 'Number' ? 'Number' : type === 'Yesorno' ? 'Yesorno' : type;
@@ -2322,10 +2357,9 @@ function pasteZeroBlocks() {
   box.blocks.push(...pasted);box.connections||=[];box.connections.push(...links);
   selectedBlockIds=new Set(pasted.map(b=>b.id));selectedBlockId=pasted[0]?.id||null;renderWorkbench();scheduleSave();toast(`Вставлено блоков: ${pasted.length}`,'success');
 }
-function zeroNodePortPoint(block, side, type='exec', portName='') {
-  const nodeWidth=254, x=Number(block.x)||0, y=Number(block.y)||0;
-  const portY=portName==='no'?89:portName==='x'?61:portName==='y'?88:61;
-  return {x:side==='out'?x+nodeWidth:x,y:y+portY};
+function zeroNodePortPoint(block,side,type='exec',portName=''){
+  const nodeWidth=254,x=Number(block.x)||0,y=Number(block.y)||0;
+  return {x:side==='out'?x+nodeWidth:x,y:y+zeroNodePortTop(block,side,portName)+10};
 }
 function renderZeroWires(box) {
   const svg=$('#zero-wires');if(!svg)return;
@@ -2338,18 +2372,18 @@ function renderZeroWires(box) {
     const hit=path.cloneNode();hit.setAttribute('class','zero-wire-hit');hit.setAttribute('stroke-width','18');hit.dataset.connectionId=connection.id;hit.setAttribute('aria-label','Удалить провод');hit.setAttribute('tabindex','0');svg.appendChild(hit);
   }
 }
-function beginZeroWire(nodeId, side, type, port) {
+function beginZeroWire(nodeId,side,type,port,valueType=''){
   if(side==='in'){
     if(!pendingZeroPort){toast('Сначала нажми на выход другого блока','error');return;}
-    if(pendingZeroPort.type!==type){toast('Нельзя соединить разные типы портов','error');return;}
+    if(pendingZeroPort.type!==type||type==='data'&&!zeroDataTypesCompatible(pendingZeroPort.valueType,valueType)){toast('Несовместимые типы портов','error');return;}
     const box=currentProject.zeroBoxes.find(item=>item.id===selectedZeroBoxId);if(!box)return;
     if(pendingZeroPort.nodeId===nodeId){pendingZeroPort=null;renderWorkbench();return;}
     box.connections||=[];
     const duplicate=box.connections.some(c=>c.from?.nodeId===pendingZeroPort.nodeId&&c.from?.port===pendingZeroPort.port&&c.to?.nodeId===nodeId&&c.to?.port===port);
-    if(!duplicate)box.connections.push({id:uid(),type,from:{...pendingZeroPort},to:{nodeId,port}});
+    if(!duplicate)box.connections.push({id:uid(),type,valueType:type==='data'?pendingZeroPort.valueType:undefined,from:{nodeId:pendingZeroPort.nodeId,port:pendingZeroPort.port},to:{nodeId,port}});
     pendingZeroPort=null;renderWorkbench();scheduleSave();return;
   }
-  pendingZeroPort={nodeId,port,type};
+  pendingZeroPort={nodeId,port,type,valueType};
   $$('.zero-port.pending').forEach(el=>el.classList.remove('pending'));
   const node=$(`[data-node-id="${nodeId}"]`);node?.querySelector(`[data-port-side="out"][data-port-type="${type}"][data-port-name="${port}"]`)?.classList.add('pending');
   toast('Теперь нажми на совместимый вход другого блока','success');
@@ -2365,10 +2399,11 @@ function renderWorkbench() {
     box.connections ||= [];
     const nodes=box.blocks.map(block=>{
       const ports=zeroPortLayout(block);
-      const inputPort=ports.input?`<button class="zero-port input-port" data-port-side="in" data-port-type="exec" data-port-name="execIn" title="Вход выполнения"><i></i><span>Вход</span></button>`:'';
-      const dataInputs=block.type==='Moving'?['x','y'].map(name=>`<button class="zero-port input-port data-port" data-port-side="in" data-port-type="data" data-port-name="${name}" title="Вход ${name.toUpperCase()}"><i></i><span>${name.toUpperCase()}</span></button>`).join(''):'';
-      const outputPorts=ports.outputs.map(name=>{const data=block.type==='Joystick';const portType=data?'data':'exec';return `<button class="zero-port output-port ${data?'data-port':''} ${name==='yes'?'yes-port':name==='no'?'no-port':''}" data-port-side="out" data-port-type="${portType}" data-port-name="${name==='out'?'execOut':name}" title="Выход ${name}"><span>${data?name.toUpperCase():name==='yes'?'Да':name==='no'?'Нет':'Выход'}</span><i></i></button>`;}).join('');
-      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(block.type)}</strong><span class="node-kind">${ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
+      const inputPort=ports.input?`<button class="zero-port input-port" style="top:51px" data-port-side="in" data-port-type="exec" data-port-name="execIn" title="Вход выполнения"><i></i><span>Вход</span></button>`:'';
+      const dataInputs=zeroDataInputs(block).map(port=>`<button class="zero-port input-port data-port" style="top:${zeroNodePortTop(block,'in',port.name)}px" data-port-side="in" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Вход ${escapeAttr(port.label)}"><i></i><span>${escapeHtml(port.label)}</span></button>`).join('');
+      const outputPorts=ports.outputs.map(name=>`<button class="zero-port output-port ${name==='yes'?'yes-port':name==='no'?'no-port':''}" style="top:${zeroNodePortTop(block,'out',name==='out'?'execOut':name)}px" data-port-side="out" data-port-type="exec" data-port-name="${name==='out'?'execOut':name}" title="Выход ${name}"><span>${name==='yes'?'Да':name==='no'?'Нет':'Выход'}</span><i></i></button>`).join('');
+      const dataOutputs=zeroDataOutputs(block).map(port=>`<button class="zero-port output-port data-port" style="top:${zeroNodePortTop(block,'out',port.name)}px" data-port-side="out" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Выход ${escapeAttr(port.label)}"><span>${escapeHtml(port.label)}</span><i></i></button>`).join('');
+      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(block.type)}</strong><span class="node-kind">${ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}${dataOutputs}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
     }).join('');
     body.innerHTML = `<div class="workbench-grid zero-workbench-grid">
       <aside class="workbench-sidebar"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||type.toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(type)}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
@@ -2408,12 +2443,12 @@ function renderWorkbench() {
     zeroCanvas.addEventListener('drop',event=>{const type=event.dataTransfer.getData('application/x-zeroengine-block');const objectId=event.dataTransfer.getData('application/x-zeroengine-object');if(!type&&!objectId)return;event.preventDefault();const rect=zeroCanvas.getBoundingClientRect();const x=(event.clientX-rect.left+zeroCanvas.scrollLeft)/zeroZoom;const y=(event.clientY-rect.top+zeroCanvas.scrollTop)/zeroZoom;if(type)addZeroBoxBlock(type,x,y);else{const entity=findEntity(objectId);if(!entity)return;const block={id:uid(),type:'Moving',x:Math.max(0,x),y:Math.max(0,y),config:{...ZEROBOX_DEFAULTS,targetObjectId:entity.id,x:0,y:0,z:0}};box.blocks.push(block);selectedBlockId=block.id;selectedBlockIds=new Set([block.id]);renderWorkbench();scheduleSave();toast(`Объект «${entity.name}» добавлен в ZeroBox`, 'success');}});
     $$('[data-node-id]').forEach(card=>card.addEventListener('click',e=>{if(e.target.closest('button,input,select'))return;if(zeroMultiSelectMode||e.ctrlKey||e.metaKey||e.shiftKey){if(selectedBlockIds.has(card.dataset.nodeId))selectedBlockIds.delete(card.dataset.nodeId);else selectedBlockIds.add(card.dataset.nodeId);selectedBlockId=card.dataset.nodeId;}else{selectedBlockId=card.dataset.nodeId;selectedBlockIds=new Set([selectedBlockId]);}renderWorkbench();}));
     $$('[data-node-drag]').forEach(handle=>handle.addEventListener('pointerdown',event=>{if(event.button!==0||event.target.closest('button'))return;const node=box.blocks.find(b=>b.id===handle.dataset.nodeDrag);if(!node)return;if(!selectedBlockIds.has(node.id)){selectedBlockId=node.id;selectedBlockIds=new Set([node.id]);}event.preventDefault();handle.setPointerCapture?.(event.pointerId);const startX=event.clientX,startY=event.clientY,dragIds=selectedBlockIds.size>1&&selectedBlockIds.has(node.id)?[...selectedBlockIds]:[node.id],origins=dragIds.map(id=>{const b=box.blocks.find(x=>x.id===id);return {id,x:b.x||0,y:b.y||0};});const move=e=>{const dx=(e.clientX-startX)/zeroZoom,dy=(e.clientY-startY)/zeroZoom;origins.forEach(origin=>{const b=box.blocks.find(x=>x.id===origin.id);if(!b)return;b.x=Math.max(0,origin.x+dx);b.y=Math.max(0,origin.y+dy);const card=$(`[data-node-id="${b.id}"]`);if(card){card.style.left=`${b.x}px`;card.style.top=`${b.y}px`;}});renderZeroWires(box);};const up=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',up);handle.removeEventListener('pointercancel',up);scheduleSave();};handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',up);handle.addEventListener('pointercancel',up);}));
-    $$('[data-port-side]').forEach(port=>port.addEventListener('click',event=>{event.stopPropagation();const card=port.closest('[data-node-id]');beginZeroWire(card.dataset.nodeId,port.dataset.portSide,port.dataset.portType,port.dataset.portName);}));
+    $$('[data-port-side]').forEach(port=>port.addEventListener('click',event=>{event.stopPropagation();const card=port.closest('[data-node-id]');beginZeroWire(card.dataset.nodeId,port.dataset.portSide,port.dataset.portType,port.dataset.portName,port.dataset.portValueType||'');}));
     $$('.zero-wire-hit').forEach(path=>{const remove=event=>{event.preventDefault();event.stopPropagation();selectedConnectionId=path.dataset.connectionId;box.connections=box.connections.filter(c=>c.id!==selectedConnectionId);selectedConnectionId=null;renderWorkbench();scheduleSave();toast('Провод удалён','success');};path.addEventListener('click',remove);path.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')remove(event);});path.addEventListener('contextmenu',remove);});
     $$('[data-node-help]').forEach(button=>button.addEventListener('click',()=>showModal(`<div class="modal-header"><div><span class="panel-kicker">ZEROBOX HELP</span><h2 id="modal-title">${escapeHtml(button.dataset.nodeHelp)}</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><p>${escapeHtml(zeroHelpText(button.dataset.nodeHelp))}</p></div><div class="modal-footer"><button class="button button-primary" data-close-modal>Понятно</button></div>`)));
     $$('[data-node-copy]').forEach(button=>button.addEventListener('click',()=>{selectedBlockIds=new Set([button.dataset.nodeCopy]);selectedBlockId=button.dataset.nodeCopy;copyZeroBlocks();}));
     $$('[data-node-delete]').forEach(button=>button.addEventListener('click',()=>deleteZeroBlock(button.dataset.nodeDelete)));
-    $$('[data-block-field]').forEach(input=>input.addEventListener('change',()=>{const b=box.blocks.find(item=>item.id===input.closest('[data-node-id]').dataset.nodeId);if(!b)return;let val=input.value;if(input.type==='number')val=Number(val);if(input.type==='checkbox')val=input.checked;const key=input.dataset.blockField;const previous=b.config[key];b.config[key]=val;if(b.type==='Joystick'&&key==='joystickId'){const joystick=(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[]).find(el=>el.id===val&&el.type==='Joystick')||(currentProject.uiElements||[]).find(el=>el.id===val&&el.type==='Joystick');if(joystick){b.config.variableX=joystick.xVariable||'JoystickX';b.config.variableZ=joystick.yVariable||'JoystickY';}}if(key==='variable'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const clean=String(val||'Variable').trim().replace(/[^a-zA-Z0-9_А-Яа-я]/g,'_');b.config[key]=clean;box.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.zeroBoxes?.forEach(other=>other.blocks?.forEach(block=>{if(block.config?.variable===previous)block.config.variable=clean;}));}if(key==='value'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const v=currentProject.variables?.find(x=>x.name===b.config.variable);if(v)v.value=val;}scheduleSave();}));
+    $$('[data-block-field]').forEach(input=>input.addEventListener('change',()=>{const b=box.blocks.find(item=>item.id===input.closest('[data-node-id]').dataset.nodeId);if(!b)return;let val=input.value;if(input.type==='number')val=Number(val);if(input.type==='checkbox')val=input.checked;const key=input.dataset.blockField;const previous=b.config[key];b.config[key]=val;if(key==='variableY')b.config.variableZ=val;if(b.type==='Joystick'&&key==='joystickId'){const joystick=(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[]).find(el=>el.id===val&&el.type==='Joystick')||(currentProject.uiElements||[]).find(el=>el.id===val&&el.type==='Joystick');if(joystick){b.config.variableX=joystick.xVariable||'JoystickX';b.config.variableY=joystick.yVariable||'JoystickY';b.config.variableZ=b.config.variableY;}}if(key==='variable'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const clean=String(val||'Variable').trim().replace(/[^a-zA-Z0-9_А-Яа-я]/g,'_');b.config[key]=clean;box.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.zeroBoxes?.forEach(other=>other.blocks?.forEach(block=>{if(block.config?.variable===previous)block.config.variable=clean;}));}if(key==='value'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const v=currentProject.variables?.find(x=>x.name===b.config.variable);if(v)v.value=val;}scheduleSave();}));
     $('#zerobox-name').addEventListener('change',e=>{box.name=e.target.value.trim()||'ZeroBox';$('#workbench-title').textContent=`${box.name} — ZeroBox`;renderAssetPanel();scheduleSave();});
     $('#zerobox-target').addEventListener('change',e=>{box.targetObjectId=e.target.value;scheduleSave();});
     $('#add-zero-variable').addEventListener('click',createCustomVariable);
@@ -2600,7 +2635,10 @@ function processHeldZeroBoxes(deltaSeconds) {
   }
   const joystickVariables=new Set((currentProject.uiElements||[]).filter(el=>el.type==='Joystick').flatMap(el=>[el.xVariable||'JoystickX',el.yVariable||'JoystickY']));
   const joystickActive=(currentProject.variables||[]).some(v=>joystickVariables.has(v.name)&&Math.abs(Number(v.value)||0)>.02);
-  if(joystickActive)for(const box of currentProject.zeroBoxes||[])if(box.blocks.some(b=>b.type==='Moving'&&b.config?.movementMode==='variables'))runZeroBox(box,'manual','',dt);
+  if(joystickActive)for(const box of currentProject.zeroBoxes||[]){
+    const movingNodes=box.blocks.filter(node=>node.type==='Moving'&&(node.config?.movementMode==='variables'||(box.connections||[]).some(link=>link.type==='data'&&['x','y'].includes(link.to?.port)&&link.to?.nodeId===node.id&&box.blocks.some(source=>source.id===link.from?.nodeId&&source.type==='Joystick'))));
+    movingNodes.forEach(node=>runZeroBox(box,'manual','',dt,node.id));
+  }
 }
 function targetEntityForBlock(block) {
   const id=block.config?.targetObjectId;
@@ -2609,6 +2647,37 @@ function targetEntityForBlock(block) {
 function setEntityTransparency(entity,value) {
   const obj=sceneObjects.get(entity.id);const opacity=Math.max(0,Math.min(1,Number(value)||0));
   obj?.traverse(child=>{if(child.isMesh&&child.material){for(const mat of (Array.isArray(child.material)?child.material:[child.material])){mat.transparent=opacity<1;mat.opacity=opacity;mat.needsUpdate=true;}}});entity.material ||= {};entity.material.opacity=opacity;
+}
+function resolveZeroDataOutput(source,portName,box,seen=new Set()){
+  const config=source?.config||{};if(!source||seen.has(source.id))return null;seen.add(source.id);
+  if(source.type==='Text')return String(config.value??'');
+  if(source.type==='Asset')return config.assetId||null;
+  if(source.type==='Joystick'){
+    const screens=currentProject.uiScreens||[],allJoysticks=[...screens.flatMap(screen=>screen.elements||[]),(currentProject.uiElements||[])].flat().filter(el=>el.type==='Joystick');
+    const joystick=allJoysticks.find(el=>el.id===(config.joystickId||''))||allJoysticks[0];
+    const variableName=portName==='x'?(config.variableX||joystick?.xVariable||'JoystickX'):(config.variableY||config.variableZ||joystick?.yVariable||'JoystickY');
+    return Number((currentProject.variables||[]).find(v=>v.name===variableName)?.value)||0;
+  }
+  if(['Number','NumericArray','Transparency'].includes(source.type))return (currentProject.variables||[]).find(v=>v.name===config.variable)?.value??config.value??0;
+  if(source.type==='Side')return config.side||'Forward';
+  if(source.type==='Speed'){const incoming=zeroDataInputsForBlock(box,source,seen);return Number(incoming.amount??config.amount??config.speed)||0;}
+  if(source.type==='Yesorno')return (currentProject.variables||[]).find(v=>v.name===config.variable)?.value??(config.value==='true');
+  if(source.type==='Life'){const entity=targetEntityForBlock(source);return entity?entity.life!==false:(config.value===true||config.value==='true');}
+  if(source.type==='Color')return (currentProject.variables||[]).find(v=>v.name===config.variable)?.value??config.value??config.color??'#ffffff';
+  if(['Plus','Minus','Multiply','Divide'].includes(source.type)){
+    const incoming=zeroDataInputsForBlock(box,source,seen),base=Number(incoming.value??(currentProject.variables||[]).find(v=>v.name===config.variable)?.value)||0,amount=Number(incoming.amount??config.amount)||0;
+    return source.type==='Plus'?base+amount:source.type==='Minus'?base-amount:source.type==='Multiply'?base*amount:(amount===0?base:base/amount);
+  }
+  return null;
+}
+function zeroDataInputsForBlock(box,block,seen=new Set()){
+  const result={};
+  for(const connection of box.connections||[]){
+    if(connection.type!=='data'||connection.to?.nodeId!==block.id)continue;
+    const source=box.blocks.find(item=>item.id===connection.from?.nodeId);if(!source)continue;
+    result[connection.to.port]=resolveZeroDataOutput(source,connection.from?.port,box,new Set(seen));
+  }
+  return result;
 }
 function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBlockId=null) {
   if(!box)return 0;
@@ -2623,18 +2692,27 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
   if(eventName!=='manual'){
     const eventNode=eventBlockId?blocks.find(b=>b.id===eventBlockId):blocks.find(b=>b.type===eventName&&(!b.config?.buttonId||b.config.buttonId===uiElementId));if(!eventNode||eventNode.type!==eventName)return 0;
     current=isGraph?outgoing(eventNode.id,'execOut'):(blocks[byId.get(eventNode.id).i+1]?.id||null);
+  } else if(eventBlockId&&byId.has(eventBlockId)) {
+    current=eventBlockId;
   } else if(isGraph) {
     const incoming=new Set(connections.filter(c=>(c.type||'exec')==='exec').map(c=>c.to?.nodeId));
-    current=blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type))?.id||blocks[0]?.id||null;
-  } else current=blocks[0]?.id||null;
+    const dataSources=new Set(['Joystick','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset']);
+    current=blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type)&&!dataSources.has(b.type))?.id||blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type))?.id||null;
+  } else { const first=blocks.find(b=>!['Joystick','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset'].includes(b.type));current=first?.id||blocks[0]?.id||null; }
   const visited=new Map();
   while(current&&byId.has(current)&&executed<250){
-    const {b,i}=byId.get(current),c=b.config||{},entity=targetEntityForBlock(b),obj=entity&&sceneObjects.get(entity.id);
+    const {b,i}=byId.get(current),c={...(b.config||{})},dataInputs=zeroDataInputsForBlock(box,b),entity=targetEntityForBlock(b),obj=entity&&sceneObjects.get(entity.id);
+    for(const [port,value] of Object.entries(dataInputs)){if(port==='direction')c.side=value;else if(port==='speed')c.dataSpeed=value;else if(port==='amount')c.amount=value;else if(port==='value')c.value=value;else if(port==='gameSpeed')c.gameSpeed=value;else if(port==='color')c.color=value;else if(port==='text')c.text=value;else if(port==='name')c.spawnName=String(value??'SpawnedObject');else if(port==='assetId')c.assetId=value;else if(['x','y','z'].includes(port))c[`data${port.toUpperCase()}`]=Number(value)||0;else c[port]=value;}
+    if(b.type==='Moving'){
+      const incomingData=connections.filter(link=>link.type==='data'&&link.to?.nodeId===b.id);
+      const hasJoystick=incomingData.some(link=>blocks.some(source=>source.id===link.from?.nodeId&&source.type==='Joystick'&&['x','y'].includes(link.from?.port)));
+      if(hasJoystick)c.movementMode='variables';else if(['x','y','z'].some(key=>dataInputs[key]!==undefined))c.movementMode='offset';
+    }
     const visits=(visited.get(current)||0)+1;visited.set(current,visits);if(visits>Math.max(1,Math.min(30,Number(c.repeat)||1)))break;
     executed++;
     if(b.type==='Close')break;
     if(eventTypes.includes(b.type)){if(eventName==='manual'){current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}break;}
-    if(b.type==='Spawn'){executeSpawnBlock(b);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
+    if(b.type==='Spawn'){executeSpawnBlock({...b,config:c});current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
     if(b.type==='Delete'){executeDeleteBlock(b);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
     if(b.type==='Writes'){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui&&ui.type==='Text'){ui.text=String(c.text||'');renderGameUI();}else toast(String(c.text||'ZeroBox'),'success');}
     else if(b.type==='Side'){movingSide=c.side||'Forward';movingSideSet=true;}
@@ -2643,17 +2721,17 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     else if(b.type==='Speed'){movingSpeed=Math.max(0,Number(c.amount??c.speed)||1);movingSpeedSet=true;}
     else if(b.type==='Gamespeed')gameSpeedMultiplier=Math.max(.1,Math.min(4,Number(c.gameSpeed??c.amount)||1));
     else if(['Change','Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){let v=getVar(c.variable||'Value');if(v){v.value=c.value??c.amount;}}
-    else if(['Plus','Minus','Multiply','Divide'].includes(b.type)){let v=getVar(c.variable||'Value');if(v){const n=Number(v.value)||0,a=Number(c.amount)||0;v.value=b.type==='Plus'?n+a:b.type==='Minus'?n-a:b.type==='Multiply'?n*a:(a===0?n:n/a);}}
+    else if(['Plus','Minus','Multiply','Divide'].includes(b.type)){let v=getVar(c.variable||'Value');if(v){const n=Number(c.value??v.value)||0,a=Number(c.amount)||0;v.value=b.type==='Plus'?n+a:b.type==='Minus'?n-a:b.type==='Multiply'?n*a:(a===0?n:n/a);}}
     else if(b.type==='Loop'){
       // Loop repeats the next connected action, bounded to protect the browser from infinite execution.
       const nextId=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null),next=byId.get(nextId)?.b;
       if(next)for(let n=1;n<Math.min(20,Math.max(1,Number(c.repeat)||1));n++)executeZeroBoxAction(next);
     }
     else if(['ForkYesorno','Branching'].includes(b.type)){
-      const v=getVar(c.variable||'Value');const pass=String(v?.value??c.value)==='true'||Number(v?.value??c.value)>0;
+      const v=getVar(c.variable||'Value');const testValue=c.value!==undefined?c.value:v?.value;const pass=String(testValue)==='true'||Number(testValue)>0;
       current=isGraph?outgoing(b.id,pass?'yes':'no'):(blocks[i+(pass?1:2)]?.id||null);continue;
     }
-    else if(entity&&obj&&b.type==='Moving'){const xLink=connections.find(link=>link.to?.nodeId===b.id&&link.to?.port==='x'&&link.type==='data');const yLink=connections.find(link=>link.to?.nodeId===b.id&&link.to?.port==='y'&&link.type==='data');const xSource=blocks.find(item=>item.id===xLink?.from?.nodeId),ySource=blocks.find(item=>item.id===yLink?.from?.nodeId);const movementConfig={...c,side:movingSideSet?movingSide:(c.side||movingSide),speed:movingSpeedSet?movingSpeed:(Number(c.speed)||movingSpeed),deltaSeconds};if(xSource?.type==='Joystick')movementConfig.variableX=xSource.config?.variableX||movementConfig.variableX;if(ySource?.type==='Joystick')movementConfig.variableZ=ySource.config?.variableZ||movementConfig.variableZ;executeZeroBoxAction({...b,config:movementConfig},entity,obj);}
+    else if(entity&&obj&&b.type==='Moving'){const movementConfig={...c,side:c.side|| (movingSideSet?movingSide:movingSide),speed:c.dataSpeed!==undefined?Number(c.dataSpeed):(movingSpeedSet?movingSpeed:(Number(c.speed)||movingSpeed)),deltaSeconds};movementConfig.variableY=movementConfig.variableY||movementConfig.variableZ;executeZeroBoxAction({...b,config:movementConfig},entity,obj);}
     else if(entity&&obj)executeZeroBoxAction(b,entity,obj);
     current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);
   }
@@ -2664,7 +2742,7 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
 
 function executeSpawnBlock(block) {
   const c=block.config||{};const requested=c.spawnType||'cube';const primitives=['cube','sphere','plane','cylinder','cone','capsule','torus','torusKnot','dodecahedron','icosahedron','octahedron','tetrahedron'];
-  const options={name:String(c.spawnName||'SpawnedObject'),position:[Number(c.x)||0,Number(c.y)||.5,Number(c.z)||0]};
+  const options={name:String(c.spawnName||'SpawnedObject'),position:[Number(c.dataX??c.x)||0,Number(c.dataY??c.y)||.5,Number(c.dataZ??c.z)||0]};
   if(primitives.includes(requested))addObjectToScene('primitive',{...options,primitive:requested});
   else if(['player','spawn','camera','light','environmentLight','skybox'].includes(requested))addObjectToScene(requested,options);
   else toast(`Spawn: неизвестный тип ${requested}`,'error');
@@ -2685,13 +2763,13 @@ function executeZeroBoxAction(block,entity=null,obj=null) {
     const movementMode=c.movementMode||'direction';
     let v=[0,0,0];
     if(movementMode==='variables'){
-      const vx=Number((currentProject.variables||[]).find(x=>x.name===c.variableX)?.value)||0;
-      const vz=Number((currentProject.variables||[]).find(x=>x.name===c.variableZ)?.value)||0;
+      const vx=c.dataX!==undefined?Number(c.dataX):(Number((currentProject.variables||[]).find(x=>x.name===c.variableX)?.value)||0);
+      const vz=c.dataY!==undefined?Number(c.dataY):(Number((currentProject.variables||[]).find(x=>x.name===(c.variableY||c.variableZ))?.value)||0);
       const dir=new THREE.Vector3(vx,0,vz).clampLength(0,1);
       if(entity.type==='player')dir.applyAxisAngle(new THREE.Vector3(0,1,0),previewYaw);
       v=dir.toArray().map(n=>n*speed*dt);
     }else if(movementMode==='offset'){
-      v=[Number(c.x)||0,Number(c.y)||0,Number(c.z)||0].map(n=>n*speed*dt);
+      v=[Number(c.dataX??c.x)||0,Number(c.dataY??c.y)||0,Number(c.dataZ??c.z)||0].map(n=>n*speed*dt);
     }else{
       const dir=new THREE.Vector3(...sideVector);
       if(entity.type==='player')dir.applyAxisAngle(new THREE.Vector3(0,1,0),previewYaw);
@@ -2704,7 +2782,7 @@ function executeZeroBoxAction(block,entity=null,obj=null) {
     if(entity.physics?.enabled&&entity.physics.velocity){entity.physics.velocity[0]=0;entity.physics.velocity[2]=0;}
   }
   else if(block.type==='Twist'){entity.rotation[1]=(entity.rotation[1]||0)+amount;obj.rotation.y=THREE.MathUtils.degToRad(entity.rotation[1]);}
-  else if(block.type==='Size'){entity.scale=[Number(c.x??amount)||1,Number(c.y??amount)||1,Number(c.z??amount)||1];obj.scale.fromArray(entity.scale);}
+  else if(block.type==='Size'){entity.scale=[Number(c.dataX??c.x??amount)||1,Number(c.dataY??c.y??amount)||1,Number(c.dataZ??c.z??amount)||1];obj.scale.fromArray(entity.scale);}
   else if(block.type==='Squat'){entity.collision ||= {enabled:false,shape:'capsule',size:[.6,1.8,.6],offset:[0,.9,0]};entity.collision.standingSize ||= [...(entity.collision.size||[.6,1.8,.6])];entity.collision.size[1]=entity.collision.standingSize[1]*.5;entity.collision.offset[1]=entity.collision.standingSize[1]*.25;updateCollisionHelper(entity);}
   else if(block.type==='Jumpup'){
     entity.physics ||= {enabled:true,useGravity:true,mass:1,velocity:[0,0,0],linearDamping:.05};
@@ -2723,7 +2801,7 @@ function executeZeroBoxAction(block,entity=null,obj=null) {
   else if(block.type==='Collision'){entity.collision ||= {shape:'box',size:[1,1,1],offset:[0,0,0],isTrigger:false};entity.collision.enabled=c.enabled===true||c.enabled==='true';updateCollisionHelper(entity);}
   else if(block.type==='Physics'){entity.physics={...(entity.physics||{}),enabled:c.enabled===true||c.enabled==='true',useGravity:entity.physics?.useGravity!==false,mass:entity.physics?.mass||1,velocity:entity.physics?.velocity||[0,0,0],linearDamping:entity.physics?.linearDamping??.05};}
   else if(block.type==='Gamespeed'){gameSpeedMultiplier=Math.max(.1,Math.min(4,Number(c.gameSpeed??c.amount)||1));}
-  else if(block.type==='Life'){entity.life=c.enabled===true||c.enabled==='true';}
+  else if(block.type==='Life'){const value=c.value??c.enabled;entity.life=value===true||value==='true';}
   else if(block.type==='ChangeTexture'&&c.assetId){entity.material ||= {};entity.material.textureAssetId=c.assetId;applyTextureToSelectionFor(entity,c.assetId);}
   else if(block.type==='ChangeModel'&&c.assetId){entity.assetId=c.assetId;entity.type='model';createRuntimeObject(entity);}
   else if(block.type==='Changinganimation'){playImportedAnimation(entity,c.animation);}
@@ -2794,8 +2872,20 @@ function openModelStudio(){
     r.scene.add(new THREE.HemisphereLight(0xffffff,0x555b65,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,5);r.scene.add(key);
     r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);r.scene.add(new THREE.GridHelper(200,200,0x555b5b,0x343a3d));
     r.transform=new TransformControls(r.camera,canvas);r.transform.setSize((window.matchMedia?.('(pointer: coarse)').matches)?1.6:1.15);
-    r.transform.addEventListener('dragging-changed',event=>{r.orbit.enabled=!event.value;if(!event.value)pushModelHistory();});
-    r.transform.addEventListener('objectChange',()=>{renderModelFields();renderModelObjectList();});
+    r.componentPivot=new THREE.Object3D();r.scene.add(r.componentPivot);
+    r.transform.addEventListener('dragging-changed',event=>{
+      r.orbit.enabled=!event.value;
+      if(event.value&&r.mode!=='object')beginModelComponentTransform();
+      if(!event.value){
+        if(r.mode!=='object')finishModelComponentTransform();
+        else{syncModelTransformInputs();renderModelFields();renderModelObjectList();}
+        pushModelHistory();
+      }
+    });
+    r.transform.addEventListener('objectChange',()=>{
+      if(r.mode==='object')syncModelTransformInputs();
+      else applyModelComponentTransform();
+    });
     r.transformHelper=r.transform.getHelper?r.transform.getHelper():r.transform;
     if(r.transformHelper?.isObject3D)r.scene.add(r.transformHelper);
     r.raycaster=new THREE.Raycaster();r.pointer=new THREE.Vector2();
@@ -2843,91 +2933,324 @@ function addModelPrimitive(index){
   else mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72,metalness:0}));
   mesh.name=names[index];mesh.userData.modelName=mesh.name;mesh.position.x=modelStudio.root.children.filter(child=>!child.userData.reference).length*1.65;mesh.traverse?.(n=>{n.castShadow=true;n.receiveShadow=true;});modelStudio.root.add(mesh);selectModelMesh(mesh);focusModelObject(mesh);pushModelHistory();renderModelObjectList();
 }
-function clearModelComponentHelper(){const r=modelStudio;if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}r.componentTarget=null;}
+function clearModelComponentHelper(){
+  const r=modelStudio;
+  if(r.transform?.object===r.componentPivot)r.transform.detach();
+  if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
+  r.componentTarget=null;r.componentSelection=null;r.componentStart=null;
+}
+function componentVertices(target,indices){
+  const position=target?.geometry?.attributes?.position;if(!position)return [];
+  return indices.filter(i=>i>=0&&i<position.count).map(i=>new THREE.Vector3().fromBufferAttribute(position,i));
+}
+function uniqueComponentVertices(target,indices){
+  const unique=new Map();for(const vertex of componentVertices(target,indices))unique.set(modelPointKey(vertex),vertex);return [...unique.values()];
+}
+function syncModelComponentPivot(){
+  const r=modelStudio,selection=r.componentSelection;if(!selection||!r.componentPivot)return;
+  const target=selection.target,vertices=uniqueComponentVertices(target,selection.indices);if(!vertices.length)return;
+  const center=vertices.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/vertices.length);
+  target.updateMatrixWorld(true);r.componentPivot.position.copy(target.localToWorld(center.clone()));
+  const worldRotation=new THREE.Quaternion();target.getWorldQuaternion(worldRotation);
+  r.componentPivot.quaternion.copy(worldRotation);r.componentPivot.scale.set(1,1,1);r.componentPivot.updateMatrixWorld(true);
+}
+function beginModelComponentTransform(){
+  const r=modelStudio,selection=r.componentSelection;if(!selection)return;
+  const attr=selection.target.geometry?.attributes?.position;if(!attr)return;
+  selection.target.updateMatrixWorld(true);r.componentPivot.updateMatrixWorld(true);
+  r.componentStart={target:selection.target,indices:[...selection.indices],positions:selection.indices.map(i=>[attr.getX(i),attr.getY(i),attr.getZ(i)]),pivotMatrix:r.componentPivot.matrixWorld.clone()};
+}
+function applyModelComponentTransform(){
+  const r=modelStudio,start=r.componentStart,selection=r.componentSelection;if(!start||!selection||start.target!==selection.target)return;
+  const target=start.target,attr=target.geometry?.attributes?.position;if(!attr)return;
+  r.componentPivot.updateMatrixWorld(true);target.updateMatrixWorld(true);
+  const delta=r.componentPivot.matrixWorld.clone().multiply(start.pivotMatrix.clone().invert());
+  const inverseTarget=target.matrixWorld.clone().invert();
+  start.indices.forEach((index,i)=>{
+    const world=new THREE.Vector3(...start.positions[i]).applyMatrix4(target.matrixWorld).applyMatrix4(delta).applyMatrix4(inverseTarget);
+    attr.setXYZ(index,world.x,world.y,world.z);
+  });
+  attr.needsUpdate=true;target.geometry.computeVertexNormals();target.geometry.computeBoundingBox();target.geometry.computeBoundingSphere();
+  if(r.componentHelper){for(const child of [...r.componentHelper.children])disposeModelNode(child);r.componentHelper.clear();renderModelComponentMarker();}
+}
+function finishModelComponentTransform(){
+  modelStudio.componentStart=null;syncModelComponentPivot();renderModelFields();renderModelObjectList();
+}
+function renderModelComponentMarker(){
+  const r=modelStudio,selection=r.componentSelection;if(!selection||!r.componentHelper)return;
+  const target=selection.target,vertices=uniqueComponentVertices(target,selection.indices);if(!vertices.length)return;
+  target.updateMatrixWorld(true);const world=vertices.map(v=>v.clone().applyMatrix4(target.matrixWorld));
+  const material=new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false});
+  if(r.mode==='face'){
+    const center=world.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/world.length);
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(.045,12,8),material);marker.position.copy(center);marker.renderOrder=1001;r.componentHelper.add(marker);
+  }else if(r.mode==='vertex'){
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(.065,12,8),material);marker.position.copy(world[0]);marker.renderOrder=1001;r.componentHelper.add(marker);
+  }else if(r.mode==='edge'&&world.length>=2){
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(world.slice(0,2)),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false}));line.renderOrder=1001;r.componentHelper.add(line);
+  }
+}
+function modelPointKey(v){return `${Math.round(v.x*1e5)},${Math.round(v.y*1e5)},${Math.round(v.z*1e5)}`;}
+function modelTriangleInfo(geometry,faceIndex){
+  const p=geometry?.attributes?.position;if(!p)return null;const ids=[faceIndex*3,faceIndex*3+1,faceIndex*3+2];if(ids[2]>=p.count)return null;
+  const vertices=ids.map(i=>new THREE.Vector3().fromBufferAttribute(p,i));
+  const normal=vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0])).normalize();
+  return {faceIndex,ids,vertices,normal,keys:vertices.map(modelPointKey)};
+}
+function connectedCoplanarModelFaces(geometry,seedFace){
+  const position=geometry?.attributes?.position;if(!position)return [seedFace];
+  const count=Math.floor(position.count/3),infos=new Array(count),edgeMap=new Map();
+  for(let face=0;face<count;face++){
+    const info=modelTriangleInfo(geometry,face);infos[face]=info;if(!info)continue;
+    for(const [a,b] of [[0,1],[1,2],[2,0]]){const key=[info.keys[a],info.keys[b]].sort().join('|');if(!edgeMap.has(key))edgeMap.set(key,[]);edgeMap.get(key).push(face);}
+  }
+  const selected=new Set([seedFace]),queue=[seedFace],threshold=.9995;
+  while(queue.length){const face=queue.shift(),info=infos[face];if(!info)continue;
+    for(const [a,b] of [[0,1],[1,2],[2,0]]){
+      const key=[info.keys[a],info.keys[b]].sort().join('|');
+      for(const neighbor of edgeMap.get(key)||[]){if(selected.has(neighbor))continue;const other=infos[neighbor];if(other&&info.normal.dot(other.normal)>threshold){selected.add(neighbor);queue.push(neighbor);}}
+    }
+  }
+  return [...selected].sort((a,b)=>a-b);
+}
+function collectModelIndicesAtPoints(geometry,points){
+  const p=geometry?.attributes?.position;if(!p)return [];
+  const keys=new Set(points.map(modelPointKey)),out=[];
+  for(let i=0;i<p.count;i++){const v=new THREE.Vector3().fromBufferAttribute(p,i);if(keys.has(modelPointKey(v)))out.push(i);}
+  return out;
+}
+function selectModelComponent(hit){
+  const r=modelStudio,target=hit.object;
+  if(target.geometry?.index){const old=target.geometry;target.geometry=old.toNonIndexed();old.dispose();}
+  const geometry=target.geometry,positions=geometry?.attributes?.position;if(!positions)return;
+  const face=Math.max(0,hit.faceIndex??0),info=modelTriangleInfo(geometry,face);if(!info)return;
+  let indices=info.ids,faceIndices=[face];
+  if(r.mode==='vertex'){
+    const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
+    const nearest=info.vertices.reduce((best,v,i)=>v.distanceTo(localHit)<info.vertices[best].distanceTo(localHit)?i:best,0);
+    indices=collectModelIndicesAtPoints(geometry,[info.vertices[nearest]]);
+  }else if(r.mode==='edge'){
+    const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
+    const segmentDistance=(point,a,b)=>{const ab=b.clone().sub(a),lengthSq=ab.lengthSq();const t=lengthSq?THREE.MathUtils.clamp(point.clone().sub(a).dot(ab)/lengthSq,0,1):0;return point.distanceTo(a.addScaledVector(ab,t));};
+    const edges=[[0,1],[1,2],[2,0]].map(pair=>({pair,distance:segmentDistance(localHit,info.vertices[pair[0]],info.vertices[pair[1]])}));
+    edges.sort((a,b)=>a.distance-b.distance);
+    indices=collectModelIndicesAtPoints(geometry,edges[0].pair.map(i=>info.vertices[i]));
+  }else if(r.mode==='face'){
+    faceIndices=connectedCoplanarModelFaces(geometry,face);
+    indices=[...new Set(faceIndices.flatMap(faceId=>[faceId*3,faceId*3+1,faceId*3+2]))];
+  }
+  if(!indices.length)return;
+  clearModelComponentHelper();r.selected=target;r.componentTarget=target;r.componentSelection={target,indices,face,faceIndices,mode:r.mode};
+  r.componentHelper=new THREE.Group();r.scene.add(r.componentHelper);renderModelComponentMarker();
+  syncModelComponentPivot();r.transform.enabled=true;r.transform.attach(r.componentPivot);r.transform.setMode('translate');
+  const label=r.mode==='face'?`грань ${faceIndices.length>1?`(${faceIndices.length} треугольника)`:`${face}`}`:r.mode==='vertex'?`вершина ${indices[0]}`:`ребро ${face}`;
+  $('#model-selection-info').textContent=`${r.mode}: ${label}`;
+  renderModelFields();renderModelObjectList();
+}
 function selectModelObject(e){
   const r=modelStudio;if((e.pointerType==='mouse'&&e.button!==0)||r.transform?.dragging||!e.isPrimary)return;
   const rect=e.currentTarget.getBoundingClientRect();if(!rect.width||!rect.height)return;
   r.pointer.set((e.clientX-rect.left)/rect.width*2-1,-((e.clientY-rect.top)/rect.height)*2+1);
   r.root.updateMatrixWorld(true);r.raycaster.setFromCamera(r.pointer,r.camera);
   const hits=r.raycaster.intersectObjects(r.root.children,true).filter(hit=>hit.object.isMesh&&!hit.object.userData.reference&&hit.object.visible);
-  if(!hits.length){clearModelComponentHelper();r.selected=null;r.transform.detach();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent='Объект не выбран';return;}
+  if(!hits.length){clearModelComponentHelper();r.selected=null;r.mode='object';r.transform.detach();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent='Объект не выбран';return;}
   const hit=hits[0];
-  if(r.mode!=='object'){
-    clearModelComponentHelper();r.transform.detach();r.selected=hit.object;r.componentTarget=hit.object;r.componentHelper=new THREE.Group();
-    const geometry=hit.object.geometry.index?hit.object.geometry.toNonIndexed():hit.object.geometry;
-    const face=Math.max(0,hit.faceIndex??0),start=face*3,pos=geometry.attributes.position;
-    if(start+2<pos.count){
-      const vertices=[0,1,2].map(i=>new THREE.Vector3().fromBufferAttribute(pos,start+i).applyMatrix4(hit.object.matrixWorld));
-      if(r.mode==='face'){
-        // A point marker indicates the selected polygon without exposing the renderer's internal triangle tessellation.
-        const marker=new THREE.Mesh(new THREE.SphereGeometry(.045,12,8),new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false}));marker.position.copy(hit.point);marker.renderOrder=1001;r.componentHelper.add(marker);hit.object.userData.selectedFace=face;
-      }else if(r.mode==='vertex'){
-        const nearest=vertices.reduce((best,v,i)=>v.distanceTo(hit.point)<vertices[best].distanceTo(hit.point)?i:best,0);const dot=new THREE.Mesh(new THREE.SphereGeometry(.06,12,8),new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false}));dot.position.copy(vertices[nearest]);dot.renderOrder=1001;r.componentHelper.add(dot);hit.object.userData.selectedVertex=face*3+nearest;
-      }else if(r.mode==='edge'){
-        const candidates=[[0,1],[1,2],[2,0]].map(pair=>({pair,mid:vertices[pair[0]].clone().add(vertices[pair[1]]).multiplyScalar(.5)}));candidates.sort((a,b)=>a.mid.distanceTo(hit.point)-b.mid.distanceTo(hit.point));const pair=candidates[0].pair;const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([vertices[pair[0]],vertices[pair[1]]]),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false}));line.renderOrder=1001;r.componentHelper.add(line);
-      }
-    }
-    r.scene.add(r.componentHelper);$('#model-selection-info').textContent=`${r.mode}: ${r.mode==='face'?'грань '+face:r.mode==='vertex'?'вершина '+(hit.object.userData.selectedVertex??''): 'ребро '+face}`;renderModelFields();renderModelObjectList();return;
-  }
-  clearModelComponentHelper();let object=hit.object;while(object.parent&&object.parent!==r.root)object=object.parent;selectModelMesh(object);
+  if(r.mode!=='object'){selectModelComponent(hit);return;}
+  let object=hit.object;while(object.parent&&object.parent!==r.root)object=object.parent;selectModelMesh(object);
 }
 function selectModelMesh(mesh){
   clearModelComponentHelper();modelStudio.selected=mesh;modelStudio.mode='object';
+  syncModelTransformToolButtons('move');
   $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));
   modelStudio.transform.enabled=true;modelStudio.transform.attach(mesh);modelStudio.transform.setMode('translate');
   $('#model-selection-info').textContent=mesh.name||'Объект';renderModelFields();renderModelObjectList();
 }
+function deleteModelObject(object){
+  const r=modelStudio;if(!object)return;
+  const wasSelected=r.selected===object||(r.selected&&object.getObjectById?.(r.selected.id));
+  if(wasSelected){r.transform.detach();clearModelComponentHelper();r.selected=null;}
+  object.parent?.remove(object);disposeModelNode(object);
+  renderModelObjectList();renderModelFields();$('#model-selection-info').textContent=r.selected?.name||'Объект не выбран';pushModelHistory();
+}
 function renderModelObjectList(){
   const el=$('#model-object-list');if(!el)return;
-  el.innerHTML=modelStudio.root?modelStudio.root.children.filter(o=>!o.userData.reference).map((o,i)=>`<button class="model-object-row ${o===modelStudio.selected?'active':''}" data-model-object="${i}">◈ ${escapeHtml(o.name||'Object')}</button>`).join('')||'<small>Добавь модель слева</small>':'';
-  el.querySelectorAll('[data-model-object]').forEach(button=>button.addEventListener('click',()=>{const object=modelStudio.root.children.filter(item=>!item.userData.reference)[Number(button.dataset.modelObject)];if(object){selectModelMesh(object);focusModelObject(object);}}));
+  const objects=modelStudio.root?modelStudio.root.children.filter(o=>!o.userData.reference):[];
+  el.innerHTML=objects.map((o,i)=>`<div class="model-object-item"><button class="model-object-row ${o===modelStudio.selected||o.getObjectById?.(modelStudio.selected?.id)?'active':''}" data-model-object="${i}">◈ ${escapeHtml(o.name||'Object')}</button><button class="model-object-delete" data-model-delete="${i}" aria-label="Удалить ${escapeAttr(o.name||'Object')}" title="Удалить модель">×</button></div>`).join('')||'<small>Добавь модель слева</small>';
+  el.querySelectorAll('[data-model-object]').forEach(button=>button.addEventListener('click',()=>{const object=objects[Number(button.dataset.modelObject)];if(object){selectModelMesh(object);focusModelObject(object);}}));
+  el.querySelectorAll('[data-model-delete]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const object=objects[Number(button.dataset.modelDelete)];if(object)deleteModelObject(object);}));
+}
+function modelMeshesWithin(object){const result=[];object?.traverse?.(child=>{if(child.isMesh&&child.material)result.push(child);});if(object?.isMesh&&!result.includes(object)&&object.material)result.push(object);return result;}
+function modelMaterialList(object){return modelMeshesWithin(object).flatMap(mesh=>Array.isArray(mesh.material)?mesh.material:[mesh.material]).filter(Boolean);}
+function syncModelTransformInputs(){
+  const object=modelStudio.selected;if(!object)return;
+  const vectors={position:object.position.toArray(),rotation:[object.rotation.x,object.rotation.y,object.rotation.z].map(v=>THREE.MathUtils.radToDeg(v)),scale:object.scale.toArray()};
+  for(const [kind,values] of Object.entries(vectors))values.forEach((value,axis)=>{const field=$(`#model-transform-fields [data-model-vector="${kind}"][data-model-axis="${axis}"]`);if(field&&document.activeElement!==field)field.value=Number(value).toFixed(3);});
 }
 function renderModelFields(){
-  const el=$('#model-transform-fields'),o=modelStudio.selected;if(!el)return;if(!o){el.innerHTML='<small>Выбери объект в 3D-пространстве.</small>';return;}
-  const vec=(label,v,key)=>`<div class="model-vector-row"><b>${label}</b>${['X','Y','Z'].map((axis,i)=>`<label>${axis}<input type="number" step="0.01" data-model-vector="${key}" data-axis="${i}" value="${Number(v.getComponent(i)).toFixed(2)}"></label>`).join('')}</div>`;
-  const mat=o.material&&!Array.isArray(o.material)?o.material:null;
-  el.innerHTML=`<label class="field-label">Название<input class="field-input" id="model-object-name" value="${escapeAttr(o.name||'Object')}"></label>${vec('Положение',o.position,'position')}${vec('Вращение',new THREE.Vector3(THREE.MathUtils.radToDeg(o.rotation.x),THREE.MathUtils.radToDeg(o.rotation.y),THREE.MathUtils.radToDeg(o.rotation.z)),'rotation')}${vec('Масштаб',o.scale,'scale')}${mat?`<label class="field-label">Цвет<input type="color" id="model-object-color" value="#${mat.color.getHexString()}"></label><label class="field-label">Шероховатость<input type="range" id="model-roughness" min="0" max="1" step=".01" value="${mat.roughness}"></label><label class="field-label">Металличность<input type="range" id="model-metalness" min="0" max="1" step=".01" value="${mat.metalness}"></label>${mat.map?`<div class="model-vector-row"><b>UV Repeat</b><label>U<input id="model-uv-u" type="number" step=".1" value="${mat.map.repeat.x}"></label><label>V<input id="model-uv-v" type="number" step=".1" value="${mat.map.repeat.y}"></label></div><div class="model-vector-row"><b>UV Offset</b><label>U<input id="model-uv-ou" type="number" step=".01" value="${mat.map.offset.x}"></label><label>V<input id="model-uv-ov" type="number" step=".01" value="${mat.map.offset.y}"></label></div>`:''}`:''}`;
-  $('#model-object-name').addEventListener('change',event=>{o.name=event.target.value||'Object';renderModelObjectList();pushModelHistory();});
-  $$('[data-model-vector]').forEach(input=>input.addEventListener('change',()=>{const key=input.dataset.modelVector,axis=Number(input.dataset.axis),value=Number(input.value);if(!Number.isFinite(value))return;if(key==='rotation')o.rotation.setComponent(axis,THREE.MathUtils.degToRad(value));else o[key].setComponent(axis,value);o.updateMatrixWorld(true);pushModelHistory();}));
-  if(mat){$('#model-object-color')?.addEventListener('input',event=>mat.color.set(event.target.value));$('#model-roughness')?.addEventListener('input',event=>mat.roughness=Number(event.target.value));$('#model-metalness')?.addEventListener('input',event=>mat.metalness=Number(event.target.value));if(mat.map)[['model-uv-u','x','repeat'],['model-uv-v','y','repeat'],['model-uv-ou','x','offset'],['model-uv-ov','y','offset']].forEach(([id,axis,key])=>$('#'+id)?.addEventListener('change',event=>{const value=Number(event.target.value);if(Number.isFinite(value)){mat.map[key][axis]=value;mat.map.needsUpdate=true;}}));}
+  const transformHost=$('#model-transform-fields'),materialHost=$('#model-material-fields');if(!transformHost||!materialHost)return;
+  const object=modelStudio.selected;
+  if(!object){transformHost.innerHTML='<div class="modal-note">Выбери объект в 3D-окне или в списке.</div>';materialHost.innerHTML='<div class="modal-note">Материал не выбран.</div>';return;}
+  const vector=(kind,label,values)=>`<div class="model-vector-row"><b>${label}</b>${values.map((value,axis)=>`<label>${['X','Y','Z'][axis]}<input type="number" step="0.01" data-model-vector="${kind}" data-model-axis="${axis}" value="${Number(value).toFixed(3)}"></label>`).join('')}</div>`;
+  transformHost.innerHTML=`<label class="field-label">Имя объекта<input class="field-input" id="model-object-name" maxlength="80" value="${escapeAttr(object.name||'Object')}"></label>${vector('position','Позиция',object.position.toArray())}${vector('rotation','Вращение °',[object.rotation.x,object.rotation.y,object.rotation.z].map(v=>THREE.MathUtils.radToDeg(v)))}${vector('scale','Масштаб',object.scale.toArray())}<div class="modal-note">Трансформации можно менять здесь или манипулятором прямо в 3D-окне.</div>`;
+  const materials=modelMaterialList(object),first=materials[0],color=first?.color?`#${first.color.getHexString()}`:'#b8b8b8';
+  if(!first){materialHost.innerHTML='<div class="modal-note">У объекта пока нет редактируемого материала.</div>';return;}
+  const repeat=first.map?.repeat||{x:1,y:1},offset=first.map?.offset||{x:0,y:0};
+  materialHost.innerHTML=`<label class="field-label">Цвет<input class="field-input" type="color" data-model-material="color" value="${color}"></label><div class="model-vector-row"><b>UV повтор</b><label>U<input type="number" step="0.1" min="0.01" data-model-material="repeatX" value="${Number(repeat.x||1).toFixed(2)}"></label><label>V<input type="number" step="0.1" min="0.01" data-model-material="repeatY" value="${Number(repeat.y||1).toFixed(2)}"></label></div><div class="model-vector-row"><b>UV сдвиг</b><label>U<input type="number" step="0.05" data-model-material="offsetX" value="${Number(offset.x||0).toFixed(2)}"></label><label>V<input type="number" step="0.05" data-model-material="offsetY" value="${Number(offset.y||0).toFixed(2)}"></label></div><label class="field-label">Шероховатость <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="roughness" value="${Number(first.roughness??.7).toFixed(2)}"></label><label class="field-label">Металличность <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="metalness" value="${Number(first.metalness??0).toFixed(2)}"></label><small class="asset-meta">Изменение применяется ко всем материалам выбранной модели.</small>`;
+  const nameInput=$('#model-object-name');nameInput?.addEventListener('change',()=>{object.name=nameInput.value.trim()||'Object';renderModelObjectList();$('#model-selection-info').textContent=object.name;pushModelHistory();});
+  transformHost.querySelectorAll('[data-model-vector]').forEach(field=>field.addEventListener('change',()=>{
+    const kind=field.dataset.modelVector,axis=Number(field.dataset.modelAxis),value=Number(field.value);if(!Number.isFinite(value))return;
+    if(kind==='position')object.position.setComponent(axis,value);else if(kind==='rotation')object.rotation.setComponent(axis,THREE.MathUtils.degToRad(value));else object.scale.setComponent(axis,value);
+    object.updateMatrixWorld(true);if(modelStudio.mode!=='object'&&modelStudio.componentSelection)syncModelComponentPivot();
+    modelStudio.transform?.updateMatrixWorld?.();renderModelObjectList();pushModelHistory();
+  }));
+  materialHost.querySelectorAll('[data-model-material]').forEach(field=>field.addEventListener('change',()=>{
+    const key=field.dataset.modelMaterial,raw=field.value;let value=raw;
+    if(field.type==='number'){value=Number(raw);if(!Number.isFinite(value))return;}
+    modelMeshesWithin(object).forEach(mesh=>{for(const material of (Array.isArray(mesh.material)?mesh.material:[mesh.material])){
+      if(key==='color')material.color?.set(value);
+      else if(key==='roughness'&&'roughness'in material)material.roughness=THREE.MathUtils.clamp(value,0,1);
+      else if(key==='metalness'&&'metalness'in material)material.metalness=THREE.MathUtils.clamp(value,0,1);
+      else if(material.map){if(key==='repeatX')material.map.repeat.x=Math.max(.01,value);if(key==='repeatY')material.map.repeat.y=Math.max(.01,value);if(key==='offsetX')material.map.offset.x=value;if(key==='offsetY')material.map.offset.y=value;material.map.needsUpdate=true;}
+      material.needsUpdate=true;
+    }});pushModelHistory();
+  }));
 }
 function setModelMode(mode){
-  modelStudio.mode=mode;$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===mode));
-  if(mode==='object'){clearModelComponentHelper();modelStudio.transform.enabled=true;if(modelStudio.selected)modelStudio.transform.attach(modelStudio.selected);}
-  else{clearModelComponentHelper();modelStudio.transform.detach();modelStudio.transform.enabled=false;}
-  $('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — выбери элемент на модели`;
+  const r=modelStudio;r.mode=mode;clearModelComponentHelper();syncModelTransformToolButtons('move');
+  $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===mode));
+  if(mode==='object'){r.transform.enabled=true;if(r.selected)r.transform.attach(r.selected);else r.transform.detach();}
+  else{r.transform.detach();r.transform.enabled=true;}
+  $('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — нажми на модель, чтобы выбрать компонент`;
 }
 function mirrorModelObject(axis){
   const object=modelStudio.selected;if(!object||![0,1,2].includes(axis)){toast('Сначала выбери объект','error');return;}
   const value=object.scale.getComponent(axis);object.scale.setComponent(axis,Math.abs(value)<1e-6?-1:-value);object.updateMatrixWorld(true);
   pushModelHistory();renderModelFields();toast(`Зеркалирование по оси ${['X','Y','Z'][axis]} выполнено`,'success');
 }
+function modelFaceMaterialIndex(geometry,faceIndex){
+  const start=faceIndex*3;const group=geometry.groups?.find(item=>start>=item.start&&start<item.start+item.count);return group?.materialIndex||0;
+}
+function makeModelTriangleMesh(target,triangles,name){
+  const positions=[];triangles.forEach(tri=>tri.forEach(v=>positions.push(v.x,v.y,v.z)));
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('uv',new THREE.Float32BufferAttribute(Array.from({length:triangles.length},()=>[0,0,1,0,1,1]).flat(),2));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+  const source=Array.isArray(target.material)?target.material[0]:target.material;
+  const material=source?.clone?.()||new THREE.MeshStandardMaterial({color:0x999999});
+  const mesh=new THREE.Mesh(geometry,material);mesh.name=name;mesh.castShadow=true;mesh.receiveShadow=true;target.add(mesh);return mesh;
+}
+function makeModelRim(target,outer,inner,name){
+  const triangles=[];for(let i=0;i<3;i++){const j=(i+1)%3;triangles.push([outer[i],outer[j],inner[j]],[outer[i],inner[j],inner[i]]);}return makeModelTriangleMesh(target,triangles,name);
+}
+function subdivideModelFaces(target,faceIndices){
+  const source=target.geometry,position=source?.attributes?.position;if(!position)return false;
+  const triangleCount=Math.floor(position.count/3),wanted=new Set(faceIndices.filter(i=>i>=0&&i<triangleCount));if(!wanted.size)return false;
+  const attributeNames=Object.keys(source.attributes),data={};attributeNames.forEach(name=>data[name]=[]);
+  const newGroups=[];let outVertex=0;
+  const readVertex=index=>{const row={};attributeNames.forEach(name=>{const attr=source.attributes[name];row[name]=Array.from({length:attr.itemSize},(_,i)=>attr.array[index*attr.itemSize+i]);});return row;};
+  const midpoint=(a,b)=>{const row={};attributeNames.forEach(name=>row[name]=a[name].map((v,i)=>(v+b[name][i])*.5));return row;};
+  const appendTriangle=(tri,materialIndex)=>{const start=outVertex;tri.forEach(vertex=>{attributeNames.forEach(name=>data[name].push(...vertex[name]));outVertex++;});const prev=newGroups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else newGroups.push({start,count:3,materialIndex});};
+  for(let face=0;face<triangleCount;face++){
+    const a=readVertex(face*3),b=readVertex(face*3+1),c=readVertex(face*3+2),materialIndex=modelFaceMaterialIndex(source,face);
+    if(!wanted.has(face)){appendTriangle([a,b,c],materialIndex);continue;}
+    const ab=midpoint(a,b),bc=midpoint(b,c),ca=midpoint(c,a);
+    [[a,ab,ca],[ab,b,bc],[ca,bc,c],[ab,bc,ca]].forEach(tri=>appendTriangle(tri,materialIndex));
+  }
+  const next=new THREE.BufferGeometry();attributeNames.forEach(name=>{const attr=source.attributes[name],Typed=attr.array.constructor;next.setAttribute(name,new THREE.BufferAttribute(new Typed(data[name]),attr.itemSize,attr.normalized));});
+  newGroups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();return true;
+}
+function extractModelBoundaryLoop(geometry,faceIndices){
+  const p=geometry?.attributes?.position;if(!p)return [];
+  const edges=new Map();
+  for(const face of faceIndices||[]){const ids=[face*3,face*3+1,face*3+2];if(ids[2]>=p.count)continue;const v=ids.map(i=>new THREE.Vector3().fromBufferAttribute(p,i));
+    for(const [a,b] of [[0,1],[1,2],[2,0]]){const ka=modelPointKey(v[a]),kb=modelPointKey(v[b]),key=[ka,kb].sort().join('|');const existing=edges.get(key);if(existing)existing.count++;else edges.set(key,{a:v[a],b:v[b],ka,kb,count:1});}
+  }
+  const boundary=[...edges.values()].filter(edge=>edge.count===1);if(!boundary.length)return [];
+  const loop=[boundary[0].a.clone()],used=new Set([0]);let current=boundary[0].kb;
+  while(used.size<boundary.length){const next=boundary.findIndex((edge,index)=>!used.has(index)&&(edge.ka===current||edge.kb===current));if(next<0)break;used.add(next);const edge=boundary[next];if(edge.ka===current){loop.push(edge.a.clone());current=edge.kb;}else{loop.push(edge.b.clone());current=edge.ka;}if(current===modelPointKey(loop[0]))break;}
+  if(loop.length>1&&modelPointKey(loop.at(-1))===modelPointKey(loop[0]))loop.pop();
+  return loop.length>=3?loop:[];
+}
+function makeModelPolygonRim(target,outer,inner,name){
+  const triangles=[];for(let i=0;i<outer.length;i++){const j=(i+1)%outer.length;triangles.push([outer[i],outer[j],inner[j]],[outer[i],inner[j],inner[i]]);}return triangles.length?makeModelTriangleMesh(target,triangles,name):null;
+}
+
+function removeModelTriangles(target,faceIndices){
+  const source=target?.geometry,position=source?.attributes?.position;if(!position)return false;
+  const total=Math.floor(position.count/3),remove=new Set(faceIndices.filter(face=>Number.isInteger(face)&&face>=0&&face<total));if(!remove.size)return false;
+  const next=new THREE.BufferGeometry(),attributeNames=Object.keys(source.attributes),data={};attributeNames.forEach(name=>data[name]=[]);
+  const groups=[];let vertexOffset=0;
+  for(let face=0;face<total;face++){
+    if(remove.has(face))continue;
+    const materialIndex=modelFaceMaterialIndex(source,face),start=vertexOffset;
+    for(let corner=0;corner<3;corner++){
+      const index=face*3+corner;
+      for(const name of attributeNames){const attribute=source.attributes[name],offset=index*attribute.itemSize;for(let k=0;k<attribute.itemSize;k++)data[name].push(attribute.array[offset+k]);}
+      vertexOffset++;
+    }
+    const previous=groups.at(-1);if(previous&&previous.materialIndex===materialIndex&&previous.start+previous.count===start)previous.count+=3;else groups.push({start,count:3,materialIndex});
+  }
+  for(const name of attributeNames){const attribute=source.attributes[name],Typed=attribute.array.constructor;next.setAttribute(name,new THREE.BufferAttribute(new Typed(data[name]),attribute.itemSize,attribute.normalized));}
+  groups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));
+  next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();return true;
+}
+
+function applyModelComponentTool(tool){
+  const r=modelStudio,selection=r.componentSelection;if(!selection){toast('Сначала выбери точку, ребро или грань на модели','error');return false;}
+  const target=selection.target,geometry=target.geometry,pos=geometry?.attributes?.position;if(!pos)return false;
+  const indices=selection.indices,vertices=componentVertices(target,indices);if(!vertices.length)return false;
+  const center=vertices.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/vertices.length);
+  if(tool==='joint'){
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(.075,14,10),new THREE.MeshStandardMaterial({color:0xffc45c,metalness:.35,roughness:.35}));marker.name=`Joint_${target.name||'Object'}`;marker.position.copy(center);target.add(marker);
+  }else if(tool==='delete'){
+    const triangleCount=Math.floor(pos.count/3),removeFaces=new Set();
+    if(selection.mode==='face') (selection.faceIndices||[selection.face]).forEach(face=>removeFaces.add(face));
+    else for(let face=0;face<triangleCount;face++)if([0,1,2].some(corner=>indices.includes(face*3+corner)))removeFaces.add(face);
+    if(!removeModelTriangles(target,[...removeFaces])){toast('Не удалось удалить выбранную геометрию','error');return false;}
+  }else if(tool==='duplicate'){
+    if(selection.mode!=='face'){toast('Дублирование компонента доступно для грани','error');return false;}
+    const faceIndices=selection.faceIndices||[selection.face],triangles=faceIndices.map(face=>[0,1,2].map(offset=>new THREE.Vector3().fromBufferAttribute(pos,face*3+offset)));
+    const normal=vertices[1]?.clone().sub(vertices[0]).cross(vertices[2]?.clone().sub(vertices[0])).normalize()||new THREE.Vector3(0,1,0);
+    triangles.forEach(tri=>tri.forEach(v=>v.addScaledVector(normal,.12)));makeModelTriangleMesh(target,triangles,`${target.name||'Face'} Copy`);
+  }else if(tool==='cut'){
+    if(selection.mode!=='face'){toast('Для разреза выбери грань','error');return false;}
+    if(!subdivideModelFaces(target,selection.faceIndices||[selection.face])){toast('Не удалось разделить грань','error');return false;}
+  }else if(['extrude','inset','bevel','sharpen'].includes(tool)){
+    if(selection.mode!=='face'){toast('Для этой операции выбери грань','error');return false;}
+    const faceIndices=selection.faceIndices||[selection.face],boundary=extractModelBoundaryLoop(geometry,faceIndices);
+    if(tool==='extrude'||tool==='inset'||tool==='bevel'){
+      if(boundary.length<3){toast('Не удалось определить границу грани','error');return false;}
+      const normal=vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0])).normalize();
+      const moved=boundary.map(v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(center,tool==='inset'?.22:.14).addScaledVector(normal,tool==='inset'?-0.09:-0.025));
+      makeModelPolygonRim(target,boundary,moved,`${target.name||'Object'}_${tool}`);
+      const moveMap=new Map();boundary.forEach((v,i)=>moveMap.set(modelPointKey(v),moved[i]));
+      indices.forEach(index=>{const old=new THREE.Vector3().fromBufferAttribute(pos,index),next=moveMap.get(modelPointKey(old));if(next)pos.setXYZ(index,next.x,next.y,next.z);});
+    }else{
+      indices.forEach(index=>{const v=new THREE.Vector3().fromBufferAttribute(pos,index),next=center.clone().add(v.sub(center).multiplyScalar(1.18));pos.setXYZ(index,next.x,next.y,next.z);});
+    }
+    pos.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+  }
+  if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
+  r.componentSelection=null;r.componentTarget=null;r.componentStart=null;r.transform.detach();
+  pushModelHistory();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent=tool==='joint'?'Шарнир создан':`Инструмент: ${tool}`;return true;
+}
+function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale'].includes(tool)&&button.dataset.modelTool===tool));}
 function setModelTool(tool){
   const r=modelStudio,mesh=r.selected;if(!mesh){toast('Сначала выбери объект','error');return;}
-  if(['move','rotate','scale'].includes(tool)){r.mode='object';r.transform.enabled=true;r.transform.attach(mesh);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[tool]);$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));return;}
+  if(['move','rotate','scale'].includes(tool)){
+    syncModelTransformToolButtons(tool);
+    if(r.mode!=='object'&&!r.componentSelection){toast('Сначала выбери точку, ребро или грань','error');return;}
+    r.transform.enabled=true;r.transform.attach(r.mode==='object'?mesh:r.componentPivot);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[tool]);
+    if(r.mode==='object')$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));
+    return;
+  }
+  if(['extrude','inset','cut','bevel','sharpen','joint'].includes(tool)||(['delete','duplicate'].includes(tool)&&r.mode!=='object')){applyModelComponentTool(tool);return;}
+  syncModelTransformToolButtons('');
   r.transform.enabled=false;
   if(tool==='duplicate'){const copy=cloneModelObjectDeep(mesh);copy.name=`${mesh.name||'Object'} Copy`;copy.position.x+=1;(mesh.parent||r.root).add(copy);selectModelMesh(copy);pushModelHistory();return;}
-  if(tool==='delete'){mesh.parent?.remove(mesh);disposeModelNode(mesh);r.transform.detach();r.selected=null;clearModelComponentHelper();renderModelObjectList();renderModelFields();pushModelHistory();return;}
+  if(tool==='delete'){deleteModelObject(mesh);return;}
   if(tool==='merge'){
-    const meshes=r.root.children.filter(object=>object.isMesh&&!object.userData.reference);
-    if(meshes.length<2){toast('Для объединения нужны минимум два отдельных объекта','error');return;}
-    const group=new THREE.Group();group.name='Merged Model';
-    meshes.forEach(item=>{item.updateMatrix();const geometry=item.geometry.clone();geometry.applyMatrix4(item.matrix);const part=new THREE.Mesh(geometry,item.material.clone());part.name=item.name;group.add(part);});
-    r.root.remove(...meshes);r.root.add(group);selectModelMesh(group);pushModelHistory();return;
-  }
-  if(['extrude','inset','cut','bevel','sharpen','joint'].includes(tool)){
-    const target=r.componentTarget||mesh;if(!target.geometry){toast('Для этой операции выбери геометрию и режим «Грани»','error');return;}
-    const geometry=target.geometry.clone();if(!geometry.index){/* already non-indexed */}
-    const indexed=geometry.index?geometry.toNonIndexed():geometry.clone();const face=target.userData.selectedFace;
-    if(face===undefined){toast('Сначала выбери грань в режиме «Грани»','error');return;}
-    const positions=indexed.attributes.position,start=face*3;if(start+2>=positions.count){toast('Не удалось определить выбранную грань','error');return;}
-    const a=new THREE.Vector3().fromBufferAttribute(positions,start),b=new THREE.Vector3().fromBufferAttribute(positions,start+1),c=new THREE.Vector3().fromBufferAttribute(positions,start+2),normal=b.clone().sub(a).cross(c.clone().sub(a)).normalize(),center=a.clone().add(b).add(c).multiplyScalar(1/3);
-    if(tool==='joint'){const joint=new THREE.Group();joint.name=`Joint_${target.name||'Object'}`;joint.position.copy(center).applyMatrix4(target.matrixWorld);const marker=new THREE.Mesh(new THREE.SphereGeometry(.07,12,8),new THREE.MeshStandardMaterial({color:0xffc45c}));joint.add(marker);r.root.add(joint);}
-    else{
-      for(let i=0;i<3;i++){const original=new THREE.Vector3().fromBufferAttribute(positions,start+i),value=original.clone();if(tool==='bevel'||tool==='inset')value.lerp(center,tool==='bevel'?.12:.08).addScaledVector(normal,tool==='bevel'?.025:.06);else if(tool==='sharpen')value.copy(center).addScaledVector(original.sub(center),1.12);else if(tool==='extrude')value.addScaledVector(normal,.25);else if(tool==='cut')value.lerp(center,.04);positions.setXYZ(start+i,value.x,value.y,value.z);}
-      positions.needsUpdate=true;indexed.computeVertexNormals();target.geometry.dispose();target.geometry=indexed;
-    }
-    pushModelHistory();renderModelObjectList();renderModelFields();return;
+    const objects=r.root.children.filter(object=>!object.userData.reference);
+    if(objects.length<2){toast('Для объединения нужны минимум два объекта','error');return;}
+    const group=new THREE.Group();group.name='Merged Model';objects.forEach(item=>{r.root.remove(item);group.add(item);});r.root.add(group);selectModelMesh(group);pushModelHistory();return;
   }
 }
 function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}setModelTool(tool);}
