@@ -8,6 +8,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import JSZip from 'jszip';
+import { FULL_I18N } from './locales.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -38,7 +39,7 @@ const typeOf = name => {
   return 'file';
 };
 const iconFor = type => ({model:'📦',texture:'🖼️',script:'〈〉',zerobox:'◇',audio:'🎵',scene:'🎬',json:'{}',material:'🎨',binary:'📄',file:'📄',folder:'📁',primitive:'◈',camera:'📷',player:'♟',spawn:'⌖',light:'💡'})[type] || '📄';
-const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: true, objects: [], skyboxAssetId: null });
+const DEFAULT_SCENE = () => ({ id: uid(), name: ({ru:'Главная сцена',uk:'Головна сцена',en:'Main Scene',kk:'Негізгі сахна'}[currentLanguage] || 'Main Scene'), background: '#171717', grid: true, objects: [], skyboxAssetId: null });
 
 let db = null;
 let currentProject = null;
@@ -85,7 +86,6 @@ let heldKeys = new Set();
 let heldButtonIds = new Set();
 let heldZeroTimers = new Map();
 let previewYaw = 0, previewPitch = -0.18;
-let editorCameraMode = 'perspective';
 let currentLanguage = 'ru';
 let localizationObserver = null;
 let translatingNow = false;
@@ -107,6 +107,7 @@ function toggleTheme() {
 }
 
 const I18N = {
+  ru: {},
   uk: {
     'Светлая тема':'Світла тема','Тёмная тема':'Темна тема','Новый проект':'Новий проєкт','Импорт проекта':'Імпорт проєкту','Мои проекты':'Мої проєкти','Пока нет проектов':'Поки немає проєктів','Сцена готова к работе':'Сцена готова до роботи','Добавить объект':'Додати об’єкт','Иерархия':'Ієрархія','Свойства':'Властивості','Файлы':'Файли','Сцены':'Сцени','Интерфейс':'Інтерфейс','Сохранить ZIP':'Зберегти ZIP','Просмотр':'Перегляд','На главную':'На головну','Создать проект':'Створити проєкт','Название':'Назва','Описание':'Опис','Сменить тему':'Змінити тему','Положение камеры':'Положення камери','Коллизия':'Колізія','Редактор коллизии':'Редактор колізії','Включить коллизию':'Увімкнути колізію','Применить коллизию':'Застосувати колізію','Камера':'Камера','Перспектива':'Перспектива','Свободная':'Вільна','Математика':'Математика','Логика':'Логіка','Действия':'Дії','Визуал':'Візуал','Звук':'Звук','Типы переменных':'Типи змінних','Игровое время':'Ігровий час','Библиотека блоков':'Бібліотека блоків','Новая переменная':'Нова змінна','Удалить':'Видалити','Копировать':'Копіювати','Вставить':'Вставити','Справка по блокам':'Довідка блоків','Сохранить':'Зберегти','Сохранить изменения':'Зберегти зміни','Отмена':'Скасувати','Применить':'Застосувати','Понятно':'Зрозуміло','Активный объект':'Активний об’єкт','Целевой объект':'Цільовий об’єкт','Выход':'Вихід','Вход':'Вхід','Папка':'Тека','Импорт файлов':'Імпорт файлів','Импорт папки':'Імпорт теки','Создать':'Створити','Масса':'Маса','кг':'кг','Север / вперёд':'Північ / уперед','Юг / назад':'Південь / назад','Запад / влево':'Захід / ліворуч','Восток / вправо':'Схід / праворуч','Вперёд':'Уперед','Назад':'Назад','Вверх':'Угору','Вниз':'Униз','Button':'Кнопка','Text':'Текст','Scale':'Шкала','Slider':'Повзунок','Background':'Тло','События':'Події','Player':'Гравець','Straightaway':'Одразу','Buttonclicked':'Кнопку натиснуто','Buttonpressed':'Кнопка утримується','ButtonResting':'Кнопку відпущено','Moving':'Переміщення','Side':'Напрямок','Speed':'Швидкість','Squat':'Присідання','Jumpup':'Стрибок','Life':'Життя','Number':'Число','NumericArray':'Числовий масив','Minus':'Відняти','Plus':'Додати','Divide':'Поділити','Multiply':'Помножити','Size':'Розмір','Change':'Змінити','Loop':'Цикл','Branching':'Розгалуження','ForkYesorno':'Так/Ні','Close':'Закрити','Laser':'Промінь','Twist':'Обертати','Collision':'Колізія','Physics':'Фізика','Gamespeed':'Швидкість гри','Writes':'Вивести текст','ChangeTransparency':'Змінити прозорість','ChangeColor':'Змінити колір','ChangeTexture':'Змінити текстуру','ChangeModel':'Змінити модель','Changinganimation':'Змінити анімацію','Changesound':'Змінити звук','Playsound':'Відтворити звук',"Don'tSound":'Зупинити звук','Pausesound':'Пауза звуку','Yesorno':'Так/Ні','Transparency':'Прозорість','Color':'Колір','Связать с переменной':'Зв’язати зі змінною','Ширина':'Ширина','Высота':'Висота','Текст':'Текст','Цвет':'Колір','Игровой просмотр':'Ігровий перегляд'
   },
@@ -160,10 +161,35 @@ Object.assign(I18N.kk,{
   'Игровая камера Player':'Player ойын камерасы','Проекция игровой камеры':'Ойын камерасының проекциясы','Перспективная':'Перспективалық','Расположение камеры относительно Player':'Камераның Player-ге қатысты орны','В голове — от первого лица':'Баста — бірінші тұлға','За спиной — от третьего лица':'Артында — үшінші тұлға','Сверху — вид на игрока':'Үстінен — ойыншы көрінісі','Произвольное положение':'Еркін орын','Настроить положение в 3D':'3D ішінде орнын баптау','Вид камеры редактора':'Редактор камерасының көрінісі','Вид редактора: Перспектива':'Редактор көрінісі: Перспектива','Вид редактора: Свободная':'Редактор көрінісі: Еркін','Эти настройки принадлежат выбранному объекту Player и сохраняются в проекте. На обзор камеры самого редактора они не влияют. В 3D-редакторе можно перетащить камеру в любое место относительно модели игрока.':'Бұл баптаулар таңдалған Player нысанына тиесілі және жобамен бірге сақталады. Олар редактор камерасына әсер етпейді. 3D редакторында камераны ойыншы моделіне қатысты кез келген орынға жылжытуға болады.','Перетаскивай синюю камеру относительно модели Player. Это меняет только игровую камеру выбранного Player, а не вид редактора сцены. Gizmo и числовые значения синхронизируются.':'Көк камераны Player моделіне қатысты жылжытыңыз. Бұл тек таңдалған Player ойын камерасын өзгертеді, редактор көрінісін өзгертпейді. Gizmo мен сандар синхрондалады.'
 });
 
+for (const language of ['ru', 'uk', 'en', 'kk']) Object.assign(I18N[language] ||= {}, FULL_I18N[language] || {});
+
+function translateSourceText(source, dictionary) {
+  if (Object.prototype.hasOwnProperty.call(dictionary, source)) return dictionary[source];
+  const rules = [
+    [/^Удалить проект «(.+)» из браузера\?$/, name => ({uk:`Видалити проєкт «${name}» із браузера?`,en:`Delete project “${name}” from the browser?`,kk:`«${name}» жобасын браузерден жою керек пе?`}[currentLanguage])],
+    [/^Клавиша (.+) назначена$/, key => ({uk:`Клавішу ${key} призначено`,en:`Key ${key} assigned`,kk:`${key} пернесі тағайындалды`}[currentLanguage])],
+    [/^Объект «(.+)» перемещён на сцену$/, name => ({uk:`Об’єкт «${name}» переміщено на сцену`,en:`Object “${name}” moved to the scene`,kk:`«${name}» нысаны сахнаға жылжытылды`}[currentLanguage])],
+    [/^Объект «(.+)» удалён$/, name => ({uk:`Об’єкт «${name}» видалено`,en:`Object “${name}” deleted`,kk:`«${name}» нысаны жойылды`}[currentLanguage])],
+    [/^Папка «(.+)» создана$/, name => ({uk:`Теку «${name}» створено`,en:`Folder “${name}” created`,kk:`«${name}» қалтасы жасалды`}[currentLanguage])],
+    [/^Открыта сцена «(.+)»$/, name => ({uk:`Сцену «${name}» відкрито`,en:`Scene “${name}” opened`,kk:`«${name}» сахнасы ашылды`}[currentLanguage])],
+    [/^(.+) назначен объекту (.+)$/, (box,name) => ({uk:`${box} призначено об’єкту ${name}`,en:`${box} assigned to ${name}`,kk:`${box} нысанға тағайындалды: ${name}`}[currentLanguage])],
+    [/^Масштаб модели нормализован ×(.+)$/, scale => ({uk:`Масштаб моделі нормалізовано ×${scale}`,en:`Model scale normalized ×${scale}`,kk:`Модель масштабы ×${scale} мәніне қалыптандырылды`}[currentLanguage])],
+    [/^Не удалось загрузить «(.+)»$/, name => ({uk:`Не вдалося завантажити «${name}»`,en:`Could not load “${name}”`,kk:`«${name}» жүктелмеді`}[currentLanguage])],
+    [/^Выбран: (.+)$/, name => ({uk:`Вибрано: ${name}`,en:`Selected: ${name}`,kk:`Таңдалды: ${name}`}[currentLanguage])],
+    [/^(.+) костей в импортированном скелете · клипы GLTF\/FBX доступны выше\.$/, count => ({uk:`${count} кісток в імпортованому скелеті · кліпи GLTF/FBX доступні вище.`,en:`${count} bones in imported rig · GLTF/FBX clips are available above.`,kk:`Импортталған қаңқада ${count} сүйек бар · GLTF/FBX клиптері жоғарыда қолжетімді.`}[currentLanguage])]
+  ];
+  for (const [pattern, format] of rules) { const match = source.match(pattern); if (match) return format(...match.slice(1)); }
+  return source;
+}
+
 function setLanguage(lang) {
   currentLanguage = ['ru','uk','en','kk'].includes(lang) ? lang : 'ru';
   try { localStorage.setItem('zeroengine-language', currentLanguage); } catch {}
   document.documentElement.lang = currentLanguage;
+  const pageTitles = {ru:'ZeroEngine — Браузерный игровой движок',uk:'ZeroEngine — Браузерний ігровий рушій',en:'ZeroEngine — Browser Game Engine',kk:'ZeroEngine — Браузерлік ойын қозғалтқышы'};
+  document.title = pageTitles[currentLanguage] || pageTitles.ru;
+  const metaDescription = document.querySelector('meta[name="description"]');
+  if (metaDescription) metaDescription.content = ({ru:'ZeroEngine — браузерный редактор игровых сцен и ресурсов.',uk:'ZeroEngine — браузерний редактор ігрових сцен і ресурсів.',en:'ZeroEngine — a browser-based editor for game scenes and assets.',kk:'ZeroEngine — ойын сахналары мен ресурстарын өңдеуге арналған браузерлік редактор.'})[currentLanguage];
   ['#language-select-home','#language-select-editor'].forEach(sel => { const el=$(sel); if(el) el.value=currentLanguage; });
   translateDocument();
 }
@@ -180,7 +206,7 @@ function translateDocument(root=document) {
     if (!source || raw !== lastTranslatedTextNodes.get(node)) { source = raw; originalTextNodes.set(node, source); }
     const leading = source.match(/^\s*/)?.[0] || '', trailing = source.match(/\s*$/)?.[0] || '';
     const core = source.trim();
-    const result = dictionary[core] ?? core;
+    const result = translateSourceText(core, dictionary);
     const translated = leading + result + trailing;
     if (node.nodeValue !== translated) node.nodeValue = translated;
     lastTranslatedTextNodes.set(node, translated);
@@ -541,7 +567,8 @@ function init3DEditor() {
   window.addEventListener('blur',()=>{if(isPlaying){heldKeys.clear();for(const id of [...heldButtonIds]){const el=currentProject?.uiElements?.find(x=>x.id===id);if(el&&!el.sticky){el.pressed=false;heldButtonIds.delete(id);dispatchZeroBoxEvent('ButtonResting',id);}}}});
   // No input capture or player movement in the current preview mode.
   editorReady = true;
-  setEditorCameraMode($('#viewport-camera-mode')?.value||'perspective');
+  const viewportHud = $('.hud-top-left');
+  if (viewportHud) viewportHud.innerHTML = `<span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span>`;
   resizeRenderer();
   renderer.setAnimationLoop(renderFrame);
 }
@@ -1386,51 +1413,6 @@ function runZeroScript(code) {
   toast('ZeroScript выполнен', 'success');
 }
 
-function setEditorCameraMode(mode='perspective') {
-  editorCameraMode = mode === 'free' ? 'free' : 'perspective';
-  if (!scene || !renderer) return;
-  const width = Math.max(1, $('#viewport-wrap')?.clientWidth || window.innerWidth);
-  const height = Math.max(1, $('#viewport-wrap')?.clientHeight || window.innerHeight);
-  const aspect = width / height;
-  const attached = transform?.object || (selectedId ? sceneObjects.get(selectedId) : null);
-  if (!editorCamera || !editorCamera.isPerspectiveCamera) {
-    const oldPosition = editorCamera?.position.clone() || new THREE.Vector3(7, 6, 9);
-    const oldTarget = orbit?.target.clone() || new THREE.Vector3(0, .8, 0);
-    orbit?.dispose();
-    if (transform) { scene.remove(transform.getHelper()); transform.dispose?.(); }
-    editorCamera = new THREE.PerspectiveCamera(55, aspect, .05, 4000);
-    editorCamera.position.copy(oldPosition);
-    orbit = new OrbitControls(editorCamera, $('#viewport-canvas'));
-    orbit.enableDamping = true;
-    orbit.dampingFactor = .08;
-    orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
-    orbit.target.copy(oldTarget);
-    orbit.maxPolarAngle = Math.PI * .495;
-    transform = new TransformControls(editorCamera, $('#viewport-canvas'));
-    transform.setMode('translate');
-    transform.setSize(.85);
-    transform.addEventListener('dragging-changed', event => { if (event.value) snapshotHistory(); orbit.enabled = !event.value && !isPlaying; });
-    transform.addEventListener('objectChange', () => { syncSelectedTransform(); updateInspectorTransformValues(); });
-    transform.addEventListener('mouseUp', () => scheduleSave());
-    scene.add(transform.getHelper());
-    if (attached && !isPlaying) transform.attach(attached);
-  }
-  if (editorCameraMode === 'perspective') {
-    editorCamera.fov = 55;
-    editorCamera.position.set(7, 6, 9);
-    orbit.target.set(0, .8, 0);
-  } else {
-    editorCamera.fov = 70;
-  }
-  editorCamera.aspect = aspect;
-  editorCamera.updateProjectionMatrix();
-  orbit.update();
-  const select = $('#viewport-camera-mode');
-  if (select && select.value !== editorCameraMode) select.value = editorCameraMode;
-  const label = $('.hud-top-left');
-  if (label) label.innerHTML = `<span class="hud-dot"></span> ${editorCameraMode.toUpperCase()} <span class="hud-separator">•</span> <span id="fps-label">${$('#fps-label')?.textContent || '60 FPS'}</span>`;
-  resizeRenderer();
-}
 function getPlayerCameraAnchor(mount) {
   if (mount.mode === 'head') return new THREE.Vector3(0, 1.6, 0);
   if (mount.mode === 'top') return new THREE.Vector3(0, .65, 0);
@@ -1667,7 +1649,6 @@ function bindUI() {
   $$('[data-transform]').forEach(button => button.addEventListener('click', () => setTransformMode(button.dataset.transform)));
   $('#focus-object').addEventListener('click', focusSelectedObject);
   $('#grid-toggle').addEventListener('click', () => { activeSceneData().grid = !activeSceneData().grid; gridHelper.visible = axesHelper.visible = activeSceneData().grid; scheduleSave(); });
-  $('#viewport-camera-mode')?.addEventListener('change',e=>setEditorCameraMode(e.target.value));
   $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · ПКМ — перемещать обзор · Колесо — приблизить/отдалить · Gizmo — двигать выбранный объект')); 
   $('#import-files-button').addEventListener('click', () => $('#asset-files-input').click());
   $('#import-folder-button').addEventListener('click', () => $('#asset-folder-input').click());
