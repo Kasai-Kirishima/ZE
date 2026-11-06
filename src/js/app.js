@@ -61,6 +61,7 @@ let isPlaying = false;
 let previewCamera = null;
 let playSnapshot = null;
 let selectedBlockIds = new Set();
+let zeroMultiSelectMode = false;
 let zeroBlockClipboard = null;
 let pendingZeroPort = null;
 let zeroNodeDrag = null;
@@ -299,8 +300,16 @@ function normalizeProject(project) {
   project.assetFolders ||= [];
   project.zeroBoxes ||= [];
   project.uiElements ||= [];
+  project.uiScreens ||= [];
+  if (!project.uiScreens.length) project.uiScreens.push({id:uid(),name:'Главный экран',elements:clone(project.uiElements)});
+  project.activeUIScreenId ||= project.uiScreens[0].id;
+  const activeScreen=project.uiScreens.find(screen=>screen.id===project.activeUIScreenId)||project.uiScreens[0];
+  if(activeScreen)project.activeUIScreenId=activeScreen.id;
+  if (activeScreen && (!project.uiElements.length || project.uiElements===undefined)) project.uiElements=clone(activeScreen.elements||[]);
   project.variables ||= [];
   if (!project.variables.some(v => v.name === 'Value')) project.variables.unshift({id:uid(),name:'Value',type:'Number',value:0,system:true});
+  const activeScreenForLoad=project.uiScreens.find(screen=>screen.id===project.activeUIScreenId)||project.uiScreens[0];
+  if(activeScreenForLoad) project.uiElements=clone(activeScreenForLoad.elements||project.uiElements||[]);
   project.zeroBoxes.forEach(box => { box.blocks ||= []; box.blocks=box.blocks.filter(block=>block.type!=='Walking'); box.variables ||= []; box.connections ||= []; box.blocks.forEach((block,index)=>{ block.config ||= {...ZEROBOX_DEFAULTS}; if(!Number.isFinite(block.x)) block.x=360+(index%3)*330; if(!Number.isFinite(block.y)) block.y=130+Math.floor(index/3)*250; }); box.connections=box.connections.filter(c=>box.blocks.some(b=>b.id===c.from?.nodeId)&&box.blocks.some(b=>b.id===c.to?.nodeId)); });
   project.scenes.forEach(sceneItem => (sceneItem.data.objects || []).forEach(entity => {
     if (entity.type === 'player') {
@@ -450,16 +459,19 @@ function scheduleSave() {
   saveTimer = setTimeout(() => saveProject(false), 700);
 }
 async function saveProject(showToast = true) {
-  if (!currentProject || isPlaying) return;
+  if (!currentProject || isPlaying) return false;
   try {
+    if(currentProject.uiScreens?.length){const active=currentProject.uiScreens.find(screen=>screen.id===currentProject.activeUIScreenId);if(active)active.elements=clone(currentProject.uiElements||[]);}
     currentProject.updatedAt = new Date().toISOString();
     await putProject(currentProject);
     $('#save-indicator').textContent = 'Все изменения сохранены';
     if (showToast) toast('Проект сохранён в браузере', 'success');
+    return true;
   } catch (error) {
     console.error(error);
     $('#save-indicator').textContent = 'Ошибка локального сохранения';
     toast('Не удалось сохранить проект. Экспортируй ZIP.', 'error');
+    return false;
   }
 }
 
@@ -477,7 +489,7 @@ async function exportProjectZip() {
     scenes: exportingProject.scenes.map(({id,name,data}) => ({id,name,data})),
     scripts: exportingProject.scripts,
     materials: exportingProject.materials || [],
-    zeroBoxes: exportingProject.zeroBoxes || [], uiElements: exportingProject.uiElements || [], variables: exportingProject.variables || [], assetFolders: exportingProject.assetFolders || [],
+    zeroBoxes: exportingProject.zeroBoxes || [], uiElements: exportingProject.uiElements || [], uiScreens: exportingProject.uiScreens || [], activeUIScreenId: exportingProject.activeUIScreenId || null, variables: exportingProject.variables || [], assetFolders: exportingProject.assetFolders || [],
     assets: exportingProject.assets.map(({id,name,type,size,folder,path}) => ({id,name,type,size,folder,path}))
   };
   zip.file('project.json', JSON.stringify(projectJson, null, 2));
@@ -500,7 +512,7 @@ async function importProjectZip(file) {
     if (!manifestFile) throw new Error('В архиве нет project.json — это не ZIP-проект ZeroEngine.');
     const manifest = JSON.parse(await manifestFile.async('string'));
     if (manifest.format !== 'ZeroEngineProject') throw new Error('Неизвестный формат проекта.');
-    const project = normalizeProject({ ...manifest, id: uid(), updatedAt: new Date().toISOString(), assets: [], materials: manifest.materials || [], scripts: manifest.scripts || [], zeroBoxes: manifest.zeroBoxes || [], uiElements: manifest.uiElements || [], assetFolders: manifest.assetFolders || [], variables: manifest.variables || [] });
+    const project = normalizeProject({ ...manifest, id: uid(), updatedAt: new Date().toISOString(), assets: [], materials: manifest.materials || [], scripts: manifest.scripts || [], zeroBoxes: manifest.zeroBoxes || [], uiElements: manifest.uiElements || [], uiScreens: manifest.uiScreens || [], activeUIScreenId: manifest.activeUIScreenId || null, assetFolders: manifest.assetFolders || [], variables: manifest.variables || [] });
     for (const meta of manifest.assets || []) {
       const entry = zip.file(meta.path);
       if (!entry) continue;
@@ -1755,9 +1767,13 @@ function bindPreviewCameraInput() {
 
 
 // ---------- Play mode ----------
-function startPlayMode() {
+async function startPlayMode() {
   if (isPlaying) return;
-  if(saveTimer){clearTimeout(saveTimer);saveTimer=null;saveProject(false);}
+  if (workbenchMode || !$('#workbench-overlay').classList.contains('hidden')) { toast('Сначала закрой ZeroBox или UI Designer', 'error'); return; }
+  if(saveTimer){clearTimeout(saveTimer);saveTimer=null;}
+  const saved=await saveProject(false);
+  if(!saved){toast('Тест недоступен: не удалось сохранить ZeroBox и проект', 'error');return;}
+  if((currentProject.zeroBoxes||[]).some(box=>!Array.isArray(box.blocks)||!Array.isArray(box.connections))){toast('Тест недоступен: сначала исправь и сохрани ZeroBox', 'error');return;}
   playSnapshot = clone(currentProject);
   playSnapshot.assets = (currentProject.assets || []).map((asset, index) => ({...playSnapshot.assets[index], blob: asset.blob}));
   isPlaying = true;
@@ -2041,7 +2057,7 @@ function bindUI() {
   $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
   $('#close-workbench').addEventListener('click', closeWorkbench);
   $('#open-settings-workbench').addEventListener('click',openDeviceSettings);
-  $('#workbench-save').addEventListener('click', () => { scheduleSave(); toast('Изменения редактора сохранены', 'success'); });
+  $('#workbench-save').addEventListener('click', async () => { const ok=await saveProject(false); if(ok)toast('ZeroBox и интерфейсы сохранены','success'); });
   $('#workbench-run').addEventListener('click', () => { const box = currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if (box) runZeroBox(box, 'manual'); else toast('Выбери ZeroBox', 'error'); });
   $('#stop-play-button').addEventListener('click', stopPlayMode);
   $('#toggle-hierarchy').addEventListener('click', () => $('#hierarchy-panel').classList.toggle('open'));
@@ -2127,6 +2143,7 @@ function deleteScene(sceneId) {
 const ZEROBOX_CATEGORIES = [
   {name:'События', icon:'⚡', color:'#e4a64c', items:['Straightaway','Buttonclicked','Buttonpressed','ButtonResting']},
   {name:'Player', icon:'♟', color:'#68b7d8', items:['Side','Speed','Squat','Jumpup','Life']},
+  {name:'Управление', icon:'✥', color:'#65c6bd', items:['Joystick']},
   {name:'Математика', icon:'∑', color:'#aa91e8', items:['Number','NumericArray','Minus','Plus','Divide','Multiply','Size']},
   {name:'Логика', icon:'⑂', color:'#d68abd', items:['Change','Loop','Branching','ForkYesorno','Close']},
   {name:'Движение и физика', icon:'↗', color:'#83c77b', items:['Moving','Twist','Collision','Physics','Gamespeed','Laser']},
@@ -2140,7 +2157,7 @@ const ZEROBOX_DEFAULTS = {
   x:0, y:0, z:0, color:'#a5ef4c', enabled:true, key:'', buttonId:'', distance:25,
   repeat:3, condition:'true', assetId:'', animation:'', text:'Hello from ZeroBox',
   sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableZ:'JoystickY',
-  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject'
+  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', variableX:'JoystickX', variableZ:'JoystickY'
 };
 function createZeroBox() {
   const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[]};
@@ -2155,15 +2172,25 @@ function openWorkbench(mode, boxId=null) {
     if (!selectedZeroBoxId || !currentProject.zeroBoxes.some(b=>b.id===selectedZeroBoxId)) selectedZeroBoxId = currentProject.zeroBoxes[0]?.id;
     if (!selectedZeroBoxId) { createZeroBox(); return; }
   }
+  closeModelStudioIfOpenForWorkbench();
   $('#workbench-overlay').classList.remove('hidden');
+  $('#editor-screen').classList.add('workspace-locked');
   $('#workbench-title').textContent = mode === 'zerobox' ? 'ZeroBox — визуальная логика' : 'Интерфейс — UI Designer';
   $('#workbench-subtitle').textContent = mode === 'zerobox' ? 'События, переменные и цепочки действий' : 'Размещение элементов на экране камеры';
   $('#workbench-run').style.display = mode === 'zerobox' ? '' : 'none';
+  if($('#zerobox-multiselect'))$('#zerobox-multiselect').style.display = mode === 'zerobox' ? '' : 'none';
   renderWorkbench();
 }
 function closeWorkbench() {
-  $('#workbench-overlay').classList.add('hidden'); workbenchMode = null; scheduleSave();
+  $('#workbench-overlay').classList.add('hidden'); $('#editor-screen').classList.remove('workspace-locked'); workbenchMode = null; scheduleSave();
 }
+function closeModelStudioIfOpenForWorkbench(){const studio=$('#model-studio');if(studio&&!studio.classList.contains('hidden'))closeModelStudio();}
+function syncUIScreen(){const screen=currentProject?.uiScreens?.find(item=>item.id===currentProject.activeUIScreenId);if(screen)screen.elements=clone(currentProject.uiElements||[]);}
+function switchUIScreen(id){if(!currentProject)return;syncUIScreen();const screen=currentProject.uiScreens.find(item=>item.id===id);if(!screen)return;currentProject.activeUIScreenId=id;currentProject.uiElements=clone(screen.elements||[]);selectedUIElementId=null;if(isPlaying){renderGameUI();return;}renderWorkbench();scheduleSave();}
+function createUIScreen(){syncUIScreen();const screen={id:uid(),name:`Экран ${currentProject.uiScreens.length+1}`,elements:[]};currentProject.uiScreens.push(screen);currentProject.activeUIScreenId=screen.id;currentProject.uiElements=[];selectedUIElementId=null;renderWorkbench();scheduleSave();}
+function duplicateUIScreen(){syncUIScreen();const source=currentProject.uiScreens.find(item=>item.id===currentProject.activeUIScreenId);if(!source)return;const screen={id:uid(),name:`${source.name} — копия`,elements:clone(source.elements||[])};screen.elements.forEach(el=>el.id=uid());currentProject.uiScreens.push(screen);currentProject.activeUIScreenId=screen.id;currentProject.uiElements=clone(screen.elements);selectedUIElementId=null;renderWorkbench();scheduleSave();}
+function renameUIScreen(){const screen=currentProject.uiScreens.find(item=>item.id===currentProject.activeUIScreenId);if(!screen)return;const name=prompt('Название интерфейса',screen.name);if(name?.trim()){screen.name=name.trim();renderWorkbench();scheduleSave();}}
+function deleteUIScreen(){if(currentProject.uiScreens.length<=1){toast('Нельзя удалить последний интерфейс','error');return;}const id=currentProject.activeUIScreenId;currentProject.uiScreens=currentProject.uiScreens.filter(item=>item.id!==id);currentProject.activeUIScreenId=currentProject.uiScreens[0].id;currentProject.uiElements=clone(currentProject.uiScreens[0].elements||[]);selectedUIElementId=null;renderWorkbench();scheduleSave();}
 function zeroBlockFields(block) {
   const c = block.config ||= {...ZEROBOX_DEFAULTS};
   const objectOptions = `<option value="">Активный объект</option>${(activeSceneData()?.objects||[]).map(e=>`<option value="${e.id}" ${c.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}`;
@@ -2179,6 +2206,7 @@ function zeroBlockFields(block) {
   if (['Speed','Jumpup','Squat','Twist','Minus','Plus','Divide','Multiply'].includes(block.type)) html += input('amount','Значение');
   if (block.type==='Gamespeed') html += input('gameSpeed','Множитель времени (0.1–4)');
   if (block.type==='Spawn') html += select('spawnType','Тип создаваемого объекта','<option value="cube">Куб</option><option value="sphere">Сфера</option><option value="plane">Плоскость</option><option value="cylinder">Цилиндр</option><option value="cone">Конус</option><option value="capsule">Капсула</option><option value="player">Player</option><option value="spawn">Player Start</option><option value="camera">Camera</option><option value="light">Point Light</option><option value="environmentLight">Environment Light</option>')+input('spawnName','Название объекта','text')+input('x','Позиция X')+input('y','Позиция Y')+input('z','Позиция Z');
+  if (block.type==='Joystick') html += select('joystickId','Выбрать джойстик',`<option value="">Первый доступный</option>${(currentProject.uiScreens||[]).flatMap(screen=>(screen.elements||[]).filter(el=>el.type==='Joystick').map(el=>({...el,screenName:screen.name}))).map(el=>`<option value="${el.id}" ${c.joystickId===el.id?'selected':''}>${escapeHtml(el.screenName)} / ${escapeHtml(el.text||'Joystick')} · ${el.id.slice(0,5)}</option>`).join('')}`)+input('variableX','Выход X','text')+input('variableZ','Выход Y','text');
   if (block.type==='Moving') html += select('movementMode','Режим движения','<option value="direction">Постоянное движение (пока удерживается)</option><option value="offset">Смещение на координаты</option><option value="variables">По переменным джойстика</option>')+select('side','Направление','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+input('speed','Скорость (м/с)')+select('variableX','Переменная X джойстика',varOptions)+select('variableZ','Переменная Z джойстика',varOptions);
   if (block.type==='Loop') html += input('repeat','Количество повторений');
   if (['Moving','Size','Laser'].includes(block.type)) html += input('x',block.type==='Laser'?'Смещение X':'X')+input('y',block.type==='Laser'?'Смещение Y':'Y')+input('z',block.type==='Laser'?'Смещение Z':'Z');
@@ -2207,12 +2235,12 @@ function zeroPortLayout(block) {
   const isBranch = ['Branching','ForkYesorno'].includes(block.type);
   return {
     input: !isEvent,
-    outputs: isEnd ? [] : isBranch ? ['yes','no'] : ['out'],
+    outputs: isEnd ? [] : block.type==='Joystick' ? ['x','y'] : isBranch ? ['yes','no'] : ['out'],
     inputLabel: 'Вход', outputLabel: 'Выход'
   };
 }
 function zeroBlockIcon(type) {
-  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉'};
+  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥'};
   return icons[type]||'◇';
 }
 function renderZeroBoxPicker() {
@@ -2296,7 +2324,7 @@ function pasteZeroBlocks() {
 }
 function zeroNodePortPoint(block, side, type='exec', portName='') {
   const nodeWidth=254, x=Number(block.x)||0, y=Number(block.y)||0;
-  const portY=portName==='no'?89:61;
+  const portY=portName==='no'?89:portName==='x'?61:portName==='y'?88:61;
   return {x:side==='out'?x+nodeWidth:x,y:y+portY};
 }
 function renderZeroWires(box) {
@@ -2338,8 +2366,9 @@ function renderWorkbench() {
     const nodes=box.blocks.map(block=>{
       const ports=zeroPortLayout(block);
       const inputPort=ports.input?`<button class="zero-port input-port" data-port-side="in" data-port-type="exec" data-port-name="execIn" title="Вход выполнения"><i></i><span>Вход</span></button>`:'';
-      const outputPorts=ports.outputs.map(name=>`<button class="zero-port output-port ${name==='yes'?'yes-port':name==='no'?'no-port':''}" data-port-side="out" data-port-type="exec" data-port-name="${name==='out'?'execOut':name}" title="Выход ${name}"><span>${name==='yes'?'Да':name==='no'?'Нет':'Выход'}</span><i></i></button>`).join('');
-      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(block.type)}</strong><span class="node-kind">${ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}<span class="port-type-label">EXEC</span>${outputPorts}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
+      const dataInputs=block.type==='Moving'?['x','y'].map(name=>`<button class="zero-port input-port data-port" data-port-side="in" data-port-type="data" data-port-name="${name}" title="Вход ${name.toUpperCase()}"><i></i><span>${name.toUpperCase()}</span></button>`).join(''):'';
+      const outputPorts=ports.outputs.map(name=>{const data=block.type==='Joystick';const portType=data?'data':'exec';return `<button class="zero-port output-port ${data?'data-port':''} ${name==='yes'?'yes-port':name==='no'?'no-port':''}" data-port-side="out" data-port-type="${portType}" data-port-name="${name==='out'?'execOut':name}" title="Выход ${name}"><span>${data?name.toUpperCase():name==='yes'?'Да':name==='no'?'Нет':'Выход'}</span><i></i></button>`;}).join('');
+      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(block.type)}</strong><span class="node-kind">${ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
     }).join('');
     body.innerHTML = `<div class="workbench-grid zero-workbench-grid">
       <aside class="workbench-sidebar"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||type.toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(type)}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
@@ -2351,7 +2380,8 @@ function renderWorkbench() {
     $('#zero-zoom-out')?.addEventListener('click',()=>setZeroZoom(zeroZoom*.85));$('#zero-zoom-in')?.addEventListener('click',()=>setZeroZoom(zeroZoom*1.18));$('#zero-zoom-reset')?.addEventListener('click',()=>setZeroZoom(1));
     if(previousScroll){activeZeroBoxCanvas.scrollLeft=previousScroll.left;activeZeroBoxCanvas.scrollTop=previousScroll.top;}
     $$('[data-add-block]').forEach(b=>{
-      b.addEventListener('click',()=>addZeroBoxBlock(b.dataset.addBlock));
+      b.addEventListener('click',()=>{if(b.dataset.suppressPaletteClick==='1'){delete b.dataset.suppressPaletteClick;return;}addZeroBoxBlock(b.dataset.addBlock);});
+      b.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse'||event.button!==0)return;const type=b.dataset.addBlock,startX=event.clientX,startY=event.clientY;let moved=false;b.setPointerCapture?.(event.pointerId);const move=e=>{if(Math.hypot(e.clientX-startX,e.clientY-startY)>12)moved=true;};const up=e=>{b.removeEventListener('pointermove',move);b.removeEventListener('pointerup',up);b.removeEventListener('pointercancel',up);if(!moved)return;b.dataset.suppressPaletteClick='1';const rect=zeroCanvas.getBoundingClientRect();if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)return;const x=(e.clientX-rect.left+zeroCanvas.scrollLeft)/zeroZoom,y=(e.clientY-rect.top+zeroCanvas.scrollTop)/zeroZoom;addZeroBoxBlock(type,x,y);};b.addEventListener('pointermove',move);b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up);});
       b.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-block',b.dataset.addBlock);event.dataTransfer.effectAllowed='copy';});
     });
     renderZeroBoxPicker();
@@ -2376,25 +2406,29 @@ function renderWorkbench() {
     zeroCanvas.addEventListener('contextmenu',event=>event.preventDefault());
     zeroCanvas.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('application/x-zeroengine-block')||event.dataTransfer.types.includes('application/x-zeroengine-object'))event.preventDefault();});
     zeroCanvas.addEventListener('drop',event=>{const type=event.dataTransfer.getData('application/x-zeroengine-block');const objectId=event.dataTransfer.getData('application/x-zeroengine-object');if(!type&&!objectId)return;event.preventDefault();const rect=zeroCanvas.getBoundingClientRect();const x=(event.clientX-rect.left+zeroCanvas.scrollLeft)/zeroZoom;const y=(event.clientY-rect.top+zeroCanvas.scrollTop)/zeroZoom;if(type)addZeroBoxBlock(type,x,y);else{const entity=findEntity(objectId);if(!entity)return;const block={id:uid(),type:'Moving',x:Math.max(0,x),y:Math.max(0,y),config:{...ZEROBOX_DEFAULTS,targetObjectId:entity.id,x:0,y:0,z:0}};box.blocks.push(block);selectedBlockId=block.id;selectedBlockIds=new Set([block.id]);renderWorkbench();scheduleSave();toast(`Объект «${entity.name}» добавлен в ZeroBox`, 'success');}});
-    $$('[data-node-id]').forEach(card=>card.addEventListener('click',e=>{if(e.target.closest('button,input,select'))return;if(e.ctrlKey||e.metaKey||e.shiftKey){if(selectedBlockIds.has(card.dataset.nodeId))selectedBlockIds.delete(card.dataset.nodeId);else selectedBlockIds.add(card.dataset.nodeId);selectedBlockId=card.dataset.nodeId;}else{selectedBlockId=card.dataset.nodeId;selectedBlockIds=new Set([selectedBlockId]);}renderWorkbench();}));
+    $$('[data-node-id]').forEach(card=>card.addEventListener('click',e=>{if(e.target.closest('button,input,select'))return;if(zeroMultiSelectMode||e.ctrlKey||e.metaKey||e.shiftKey){if(selectedBlockIds.has(card.dataset.nodeId))selectedBlockIds.delete(card.dataset.nodeId);else selectedBlockIds.add(card.dataset.nodeId);selectedBlockId=card.dataset.nodeId;}else{selectedBlockId=card.dataset.nodeId;selectedBlockIds=new Set([selectedBlockId]);}renderWorkbench();}));
     $$('[data-node-drag]').forEach(handle=>handle.addEventListener('pointerdown',event=>{if(event.button!==0||event.target.closest('button'))return;const node=box.blocks.find(b=>b.id===handle.dataset.nodeDrag);if(!node)return;if(!selectedBlockIds.has(node.id)){selectedBlockId=node.id;selectedBlockIds=new Set([node.id]);}event.preventDefault();handle.setPointerCapture?.(event.pointerId);const startX=event.clientX,startY=event.clientY,dragIds=selectedBlockIds.size>1&&selectedBlockIds.has(node.id)?[...selectedBlockIds]:[node.id],origins=dragIds.map(id=>{const b=box.blocks.find(x=>x.id===id);return {id,x:b.x||0,y:b.y||0};});const move=e=>{const dx=(e.clientX-startX)/zeroZoom,dy=(e.clientY-startY)/zeroZoom;origins.forEach(origin=>{const b=box.blocks.find(x=>x.id===origin.id);if(!b)return;b.x=Math.max(0,origin.x+dx);b.y=Math.max(0,origin.y+dy);const card=$(`[data-node-id="${b.id}"]`);if(card){card.style.left=`${b.x}px`;card.style.top=`${b.y}px`;}});renderZeroWires(box);};const up=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',up);handle.removeEventListener('pointercancel',up);scheduleSave();};handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',up);handle.addEventListener('pointercancel',up);}));
     $$('[data-port-side]').forEach(port=>port.addEventListener('click',event=>{event.stopPropagation();const card=port.closest('[data-node-id]');beginZeroWire(card.dataset.nodeId,port.dataset.portSide,port.dataset.portType,port.dataset.portName);}));
     $$('.zero-wire-hit').forEach(path=>{const remove=event=>{event.preventDefault();event.stopPropagation();selectedConnectionId=path.dataset.connectionId;box.connections=box.connections.filter(c=>c.id!==selectedConnectionId);selectedConnectionId=null;renderWorkbench();scheduleSave();toast('Провод удалён','success');};path.addEventListener('click',remove);path.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')remove(event);});path.addEventListener('contextmenu',remove);});
     $$('[data-node-help]').forEach(button=>button.addEventListener('click',()=>showModal(`<div class="modal-header"><div><span class="panel-kicker">ZEROBOX HELP</span><h2 id="modal-title">${escapeHtml(button.dataset.nodeHelp)}</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><p>${escapeHtml(zeroHelpText(button.dataset.nodeHelp))}</p></div><div class="modal-footer"><button class="button button-primary" data-close-modal>Понятно</button></div>`)));
     $$('[data-node-copy]').forEach(button=>button.addEventListener('click',()=>{selectedBlockIds=new Set([button.dataset.nodeCopy]);selectedBlockId=button.dataset.nodeCopy;copyZeroBlocks();}));
     $$('[data-node-delete]').forEach(button=>button.addEventListener('click',()=>deleteZeroBlock(button.dataset.nodeDelete)));
-    $$('[data-block-field]').forEach(input=>input.addEventListener('change',()=>{const b=box.blocks.find(item=>item.id===input.closest('[data-node-id]').dataset.nodeId);if(!b)return;let val=input.value;if(input.type==='number')val=Number(val);if(input.type==='checkbox')val=input.checked;const key=input.dataset.blockField;const previous=b.config[key];b.config[key]=val;if(key==='variable'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const clean=String(val||'Variable').trim().replace(/[^a-zA-Z0-9_А-Яа-я]/g,'_');b.config[key]=clean;box.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.zeroBoxes?.forEach(other=>other.blocks?.forEach(block=>{if(block.config?.variable===previous)block.config.variable=clean;}));}if(key==='value'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const v=currentProject.variables?.find(x=>x.name===b.config.variable);if(v)v.value=val;}scheduleSave();}));
+    $$('[data-block-field]').forEach(input=>input.addEventListener('change',()=>{const b=box.blocks.find(item=>item.id===input.closest('[data-node-id]').dataset.nodeId);if(!b)return;let val=input.value;if(input.type==='number')val=Number(val);if(input.type==='checkbox')val=input.checked;const key=input.dataset.blockField;const previous=b.config[key];b.config[key]=val;if(b.type==='Joystick'&&key==='joystickId'){const joystick=(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[]).find(el=>el.id===val&&el.type==='Joystick')||(currentProject.uiElements||[]).find(el=>el.id===val&&el.type==='Joystick');if(joystick){b.config.variableX=joystick.xVariable||'JoystickX';b.config.variableZ=joystick.yVariable||'JoystickY';}}if(key==='variable'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const clean=String(val||'Variable').trim().replace(/[^a-zA-Z0-9_А-Яа-я]/g,'_');b.config[key]=clean;box.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.zeroBoxes?.forEach(other=>other.blocks?.forEach(block=>{if(block.config?.variable===previous)block.config.variable=clean;}));}if(key==='value'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const v=currentProject.variables?.find(x=>x.name===b.config.variable);if(v)v.value=val;}scheduleSave();}));
     $('#zerobox-name').addEventListener('change',e=>{box.name=e.target.value.trim()||'ZeroBox';$('#workbench-title').textContent=`${box.name} — ZeroBox`;renderAssetPanel();scheduleSave();});
     $('#zerobox-target').addEventListener('change',e=>{box.targetObjectId=e.target.value;scheduleSave();});
     $('#add-zero-variable').addEventListener('click',createCustomVariable);
     $('#export-zerobox').addEventListener('click',()=>downloadBlob(new Blob([JSON.stringify({name:box.name,blocks:box.blocks,connections:box.connections||[],variables:box.variables||[]},null,2)],{type:'application/json'}),`${safeName(box.name)}.zbox`));
     $('#zerobox-copy-selection').addEventListener('click',copyZeroBlocks);
+    $('#zerobox-multiselect').classList.toggle('active',zeroMultiSelectMode);
+    $('#zerobox-multiselect').addEventListener('click',()=>{zeroMultiSelectMode=!zeroMultiSelectMode;$('#zerobox-multiselect').classList.toggle('active',zeroMultiSelectMode);toast(zeroMultiSelectMode?'Мультивыбор включён':'Мультивыбор выключен','success');});
     $('#zerobox-paste-selection').addEventListener('click',pasteZeroBlocks);
     $('#zerobox-help').addEventListener('click',renderZeroBoxHelp);
     renderZeroWires(box);
   } else {
-    body.innerHTML = `<div class="ui-designer-grid"><aside class="ui-palette"><div class="workbench-section-title">ЭЛЕМЕНТЫ UI</div>${[['Button','▣ Кнопка'],['Text','T Текст'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай элементы на макете. Размеры и координаты задаются справа.</div></aside><div class="ui-stage-wrap"><div class="ui-design-stage" id="ui-design-stage"></div></div><aside class="ui-property-panel" id="ui-property-panel"></aside></div>`;
+    body.innerHTML = `<div class="ui-designer-grid"><aside class="ui-palette"><div class="workbench-section-title">ИНТЕРФЕЙСЫ</div><select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select><div class="ui-screen-actions"><button id="ui-screen-new">＋</button><button id="ui-screen-duplicate">▢</button><button id="ui-screen-rename">✎</button><button id="ui-screen-delete">×</button></div><div class="workbench-section-title">ЭЛЕМЕНТЫ UI</div>${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай элементы на макете. Размеры и координаты задаются справа.</div></aside><div class="ui-stage-wrap"><div class="ui-design-stage" id="ui-design-stage"></div></div><aside class="ui-property-panel" id="ui-property-panel"></aside></div>`;
     const stage=$('#ui-design-stage'); renderUIStage(stage,true);
+    $('#ui-screen-select').addEventListener('change',e=>switchUIScreen(e.target.value));
+    $('#ui-screen-new').addEventListener('click',createUIScreen);$('#ui-screen-duplicate').addEventListener('click',duplicateUIScreen);$('#ui-screen-rename').addEventListener('click',renameUIScreen);$('#ui-screen-delete').addEventListener('click',deleteUIScreen);
     $$('[data-add-ui]').forEach(b=>b.addEventListener('click',()=>addUIElement(b.dataset.addUi)));
     renderUIProperties();
   }
@@ -2406,12 +2440,13 @@ function createCustomVariable() {
   $('#variable-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#variable-name').value.trim();const type=$('#variable-type').value;if(!name)return;if(currentProject.variables.some(v=>v.name===name)){toast('Переменная с таким именем уже существует','error');return;}let value=$('#variable-value').value;if(type==='Number'||type==='NumericArray'||type==='Transparency')value=Number(value)||0;else if(type==='Yesorno')value=value==='true'||value==='1';box.variables||=[];box.variables.push({id:uid(),name,type,value});currentProject.variables||=[];currentProject.variables.push({id:uid(),name,type,value});closeModal();renderWorkbench();scheduleSave();});
 }
 function defaultUIElement(type) {
-  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='Text'?'Text':'',value:60,max:100,color:type==='Background'?'#182b35':'#2b462f',opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:''};
+  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':'',value:60,max:100,color:type==='Background'?'#182b35':'#2b462f',opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:''};
   if(type==='Scale')Object.assign(base,{x:8,y:82,w:28,h:6});
   if(type==='Slider')Object.assign(base,{x:62,y:82,w:28,h:7});
   if(type==='Background')Object.assign(base,{x:25,y:25,w:50,h:50});
   if(type==='CameraControlArea')Object.assign(base,{x:48,y:8,w:48,h:82,color:'#ffffff'});
   if(type==='Joystick')Object.assign(base,{x:4,y:66,w:22,h:30,xVariable:'JoystickX',yVariable:'JoystickY'});
+  if(type==='ScreenButton')base.targetScreenId=currentProject.uiScreens.find(screen=>screen.id!==currentProject.activeUIScreenId)?.id||'';
   return base;
 }
 function addUIElement(type) {
@@ -2425,7 +2460,7 @@ function renderUIStage(host, design=false) {
   (currentProject.uiElements||[]).forEach(el=>{
     const node=document.createElement('div');node.className=`ui-element ${el.type==='Text'?'text-element':''} ${el.type==='Background'?'background-element':''} ${design&&selectedUIElementId===el.id?'selected':''}`;
     node.dataset.uiId=el.id;node.style.left=`${el.x}%`;node.style.top=`${el.y}%`;node.style.width=`${el.w}%`;node.style.height=`${el.h}%`;node.style.zIndex=el.type==='Background'?'0':'2';node.style.opacity=String(el.opacity??1);
-    if(el.type==='Button'){const b=document.createElement('button');b.type='button';b.textContent=el.text||'Button';if(el.color)b.style.background=el.color;if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
+    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');if(el.color)b.style.background=el.color;if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
     else if(el.type==='Text'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);node.textContent=String(el.text||'Text').replaceAll('{value}',String(v?.value??''));node.style.fontSize=`${el.fontSize||22}px`;node.style.color=el.color||'#ffffff';}
     else if(el.type==='Scale'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);const current=v?Number(v.value):Number(el.value)||0;const track=document.createElement('div');track.className='ui-scale-track';const fill=document.createElement('div');fill.className='ui-scale-fill';fill.style.width=`${Math.max(0,Math.min(100,current/(Number(el.max)||100)*100))}%`;fill.style.background=el.color||'#a5ef4c';track.appendChild(fill);node.appendChild(track);}
     else if(el.type==='Slider'){const input=document.createElement('input');input.type='range';input.min='0';input.max=String(el.max||100);input.style.accentColor=el.color||'#a5ef4c';const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);input.value=String(v? v.value : el.value||0);if(!design)input.addEventListener('input',()=>{el.value=Number(input.value);if(v)v.value=el.value;scheduleSave();});node.appendChild(input);}
@@ -2434,10 +2469,10 @@ function renderUIStage(host, design=false) {
     else if(el.type==='Joystick'){node.classList.add('joystick-widget');const base=document.createElement('div');base.className='joystick-base';const knob=document.createElement('div');knob.className='joystick-knob';base.appendChild(knob);node.appendChild(base);if(!design){let pointerId=null;const update=e=>{const r=base.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,rad=Math.max(1,Math.min(r.width,r.height)*.34);const dx=e.clientX-cx,dy=e.clientY-cy,len=Math.hypot(dx,dy),k=len>rad?rad/len:1,nx=dx*k,ny=dy*k;knob.style.transform=`translate(${nx}px,${ny}px)`;const xv=(currentProject.variables||[]).find(v=>v.name===(el.xVariable||'JoystickX'));const yv=(currentProject.variables||[]).find(v=>v.name===(el.yVariable||'JoystickY'));if(xv)xv.value=THREE.MathUtils.clamp(nx/rad,-1,1);if(yv)yv.value=THREE.MathUtils.clamp(-ny/rad,-1,1);};const end=()=>{pointerId=null;knob.style.transform='translate(0,0)';for(const name of [el.xVariable||'JoystickX',el.yVariable||'JoystickY']){const v=(currentProject.variables||[]).find(x=>x.name===name);if(v)v.value=0;}};base.addEventListener('pointerdown',e=>{pointerId=e.pointerId;base.setPointerCapture(e.pointerId);update(e);e.preventDefault();});base.addEventListener('pointermove',e=>{if(pointerId===e.pointerId)update(e);});base.addEventListener('pointerup',end);base.addEventListener('pointercancel',end);}}
     if(design){
       if(selectedUIElementId===el.id)['nw','n','ne','e','se','s','sw','w'].forEach(direction=>{const handle=document.createElement('span');handle.className=`ui-resize-handle ui-resize-${direction}`;handle.dataset.uiResize=direction;handle.setAttribute('aria-label',`Изменить размер ${direction}`);node.appendChild(handle);});
-    } else if(el.type==='Button'){
+    } else if(el.type==='Button'||el.type==='ScreenButton'){
       const button=node.querySelector('button');
       const press=()=>{if(el.sticky){if(el.pressed){el.pressed=false;heldButtonIds.delete(el.id);dispatchZeroBoxEvent('ButtonResting',el.id);dispatchZeroBoxEvent('Buttonclicked',el.id);}else{el.pressed=true;heldButtonIds.add(el.id);dispatchZeroBoxEvent('Buttonpressed',el.id,1/60);}}else{el.pressed=true;heldButtonIds.add(el.id);button.classList.add('sticky-on');dispatchZeroBoxEvent('Buttonpressed',el.id,1/60);}};
-      const release=()=>{if(!el.sticky){el.pressed=false;heldButtonIds.delete(el.id);button.classList.remove('sticky-on');dispatchZeroBoxEvent('ButtonResting',el.id);dispatchZeroBoxEvent('Buttonclicked',el.id);}};
+      const release=()=>{if(!el.sticky){el.pressed=false;heldButtonIds.delete(el.id);button.classList.remove('sticky-on');dispatchZeroBoxEvent('ButtonResting',el.id);dispatchZeroBoxEvent('Buttonclicked',el.id);if(el.type==='ScreenButton'&&el.targetScreenId)switchUIScreen(el.targetScreenId);}};
       button.addEventListener('pointerdown',e=>{button.setPointerCapture?.(e.pointerId);press();});button.addEventListener('pointerup',release);button.addEventListener('pointercancel',release);button.addEventListener('lostpointercapture',release);
     }
     host.appendChild(node);
@@ -2486,18 +2521,20 @@ function renderUIProperties() {
   const el=currentProject.uiElements.find(item=>item.id===selectedUIElementId);
   if(!el){panel.innerHTML='<div class="workbench-section-title">СВОЙСТВА</div><div class="modal-note">Выбери элемент на макете или добавь новый.</div>';return;}
   const field=(key,label,type='number',value=el[key])=>`<label class="field-label">${label}<input class="field-input" data-ui-field="${key}" type="${type}" value="${escapeAttr(value??'')}" /></label>`;
-  panel.innerHTML=`<div class="workbench-section-title">СВОЙСТВА ЭЛЕМЕНТА</div><b>${el.type}</b><div class="ui-property-grid">${field('x','X, %')}${field('y','Y, %')}${field('w','Ширина, %')}${field('h','Высота, %')}</div>${field('text','Текст','text')}${field('color','Цвет','color')}${el.type==='Text'?field('fontSize','Размер текста'):''}${['Scale','Slider'].includes(el.type)?field('value','Значение'):''}${['Scale','Slider'].includes(el.type)?field('max','Максимум'):''}${['Text','Scale','Slider'].includes(el.type)?`<label class="field-label">Связать с переменной<select class="field-select" id="ui-variable"><option value="">Без связи</option>${(currentProject.variables||[]).map(v=>`<option value="${escapeAttr(v.name)}" ${el.variableName===v.name?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}</select></label>`:''}${el.type==='Text'?'<div class="modal-note">В тексте используй {value}, чтобы вывести текущее значение связанной переменной.</div>':''}${el.type==='Button'?`<label class="check-line"><input type="checkbox" id="ui-sticky" ${el.sticky?'checked':''}/> Залипающая кнопка</label><label class="field-label">Назначить клавишу <span>${escapeHtml(el.keyLabel||el.key||'не назначена')}</span><button class="button button-quiet" id="ui-assign-key">Нажми клавишу на клавиатуре</button></label><label class="field-label">Запуск ZeroBox<select class="field-select" id="ui-zerobox"><option value="">Нет</option>${currentProject.zeroBoxes.map(b=>`<option value="${b.id}" ${el.zeroBoxId===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}</select></label>`:''}${el.type==='Joystick'?`<div class="modal-note">Джойстик записывает оси в NumericArray/Number переменные для блока Moving.</div>${field('xVariable','Переменная X','text')}${field('yVariable','Переменная Y','text')}`:''}${el.type==='CameraControlArea'?'<div class="modal-note">Прозрачная сенсорная область для вращения игровой камеры. Размещай поверх свободного участка экрана.</div>':''}<button class="button button-danger" id="ui-delete-element">Удалить элемент</button><div class="modal-note">Координаты и размеры задаются в процентах от выбранного разрешения.</div>`;
+  panel.innerHTML=`<div class="workbench-section-title">СВОЙСТВА ЭЛЕМЕНТА</div><b>${el.type}</b><div class="ui-property-grid">${field('x','X, %')}${field('y','Y, %')}${field('w','Ширина, %')}${field('h','Высота, %')}</div>${field('text','Текст','text')}${field('color','Цвет','color')}${el.type==='Text'?field('fontSize','Размер текста'):''}${['Scale','Slider'].includes(el.type)?field('value','Значение'):''}${['Scale','Slider'].includes(el.type)?field('max','Максимум'):''}${['Text','Scale','Slider'].includes(el.type)?`<label class="field-label">Связать с переменной<select class="field-select" id="ui-variable"><option value="">Без связи</option>${(currentProject.variables||[]).map(v=>`<option value="${escapeAttr(v.name)}" ${el.variableName===v.name?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}</select></label>`:''}${el.type==='Text'?'<div class="modal-note">В тексте используй {value}, чтобы вывести текущее значение связанной переменной.</div>':''}${['Button','ScreenButton'].includes(el.type)?`<label class="check-line"><input type="checkbox" id="ui-sticky" ${el.sticky?'checked':''}/> Залипающая кнопка</label><label class="field-label">Назначить клавишу <span>${escapeHtml(el.keyLabel||el.key||'не назначена')}</span><button class="button button-quiet" id="ui-assign-key">Нажми клавишу на клавиатуре</button></label><label class="field-label">Запуск ZeroBox<select class="field-select" id="ui-zerobox"><option value="">Нет</option>${currentProject.zeroBoxes.map(b=>`<option value="${b.id}" ${el.zeroBoxId===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}</select></label>${el.type==='ScreenButton'?`<label class="field-label">Открыть интерфейс<select class="field-select" id="ui-target-screen">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${el.targetScreenId===screen.id?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select></label>`:''}`:''}${el.type==='Joystick'?`<div class="modal-note">Джойстик записывает оси в NumericArray/Number переменные для блока Moving.</div>${field('xVariable','Переменная X','text')}${field('yVariable','Переменная Y','text')}`:''}${el.type==='CameraControlArea'?'<div class="modal-note">Прозрачная сенсорная область для вращения игровой камеры. Размещай поверх свободного участка экрана.</div>':''}<button class="button button-danger" id="ui-delete-element">Удалить элемент</button><div class="modal-note">Координаты и размеры задаются в процентах от выбранного разрешения.</div>`;
   $$('[data-ui-field]').forEach(input=>input.addEventListener('change',()=>{el[input.dataset.uiField]=input.type==='number'?Number(input.value):input.value;renderWorkbench();scheduleSave();}));
   $('#ui-variable')?.addEventListener('change',e=>{el.variableName=e.target.value||'';renderWorkbench();scheduleSave();});
   $('#ui-sticky')?.addEventListener('change',e=>{el.sticky=e.target.checked;scheduleSave();});
   $('#ui-assign-key')?.addEventListener('click',()=>{uiKeyCaptureId=el.id;toast('Нажми нужную клавишу на клавиатуре', 'success');});
   $('#ui-zerobox')?.addEventListener('change',e=>{el.zeroBoxId=e.target.value;scheduleSave();});
+  $('#ui-target-screen')?.addEventListener('change',e=>{el.targetScreenId=e.target.value;scheduleSave();});
   $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
 }
 function renderGameUI() { const layer=$('#game-ui-layer');if(layer)renderUIStage(layer,false); }
 function triggerUIKey(event) {
   const key=event.key.toLowerCase();
-  for(const el of currentProject?.uiElements||[]){
+  const activeScreen=currentProject?.uiScreens?.find(screen=>screen.id===currentProject.activeUIScreenId);
+  for(const el of (activeScreen?.elements||currentProject?.uiElements||[])){
     if(el.type!=='Button'||!el.key||el.key.toLowerCase()!==key)continue;
     if(el.sticky){
       el.pressed=!el.pressed;
@@ -2511,7 +2548,8 @@ function triggerUIKey(event) {
 }
 function triggerZeroBoxKeyUp(event) {
   const key=event.key.toLowerCase();heldKeys.delete(key);
-  for(const el of currentProject?.uiElements||[]){
+  const keyScreen=currentProject?.uiScreens?.find(screen=>screen.id===currentProject.activeUIScreenId);
+  for(const el of (keyScreen?.elements||currentProject?.uiElements||[])){
     if(el.type==='Button'&&el.key?.toLowerCase()===key&&!el.sticky){
       el.pressed=false;heldButtonIds.delete(el.id);
       dispatchZeroBoxEvent('ButtonResting',el.id);
@@ -2576,7 +2614,7 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
   if(!box)return 0;
   const blocks=box.blocks||[], connections=box.connections||[];
   const eventTypes=['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'];
-  const isGraph=connections.length>0;
+  const isGraph=connections.some(connection=>(connection.type||'exec')==='exec');
   const vars=currentProject.variables||[];const getVar=name=>vars.find(v=>v.name===name);
   let movingSide='Forward',movingSideSet=false,movingSpeed=1,movingSpeedSet=false,executed=0;
   const byId=new Map(blocks.map((b,i)=>[b.id,{b,i}]));
@@ -2615,7 +2653,7 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
       const v=getVar(c.variable||'Value');const pass=String(v?.value??c.value)==='true'||Number(v?.value??c.value)>0;
       current=isGraph?outgoing(b.id,pass?'yes':'no'):(blocks[i+(pass?1:2)]?.id||null);continue;
     }
-    else if(entity&&obj&&b.type==='Moving')executeZeroBoxAction({...b,config:{...c,side:movingSideSet?movingSide:(c.side||movingSide),speed:movingSpeedSet?movingSpeed:(Number(c.speed)||movingSpeed),deltaSeconds}},entity,obj);
+    else if(entity&&obj&&b.type==='Moving'){const xLink=connections.find(link=>link.to?.nodeId===b.id&&link.to?.port==='x'&&link.type==='data');const yLink=connections.find(link=>link.to?.nodeId===b.id&&link.to?.port==='y'&&link.type==='data');const xSource=blocks.find(item=>item.id===xLink?.from?.nodeId),ySource=blocks.find(item=>item.id===yLink?.from?.nodeId);const movementConfig={...c,side:movingSideSet?movingSide:(c.side||movingSide),speed:movingSpeedSet?movingSpeed:(Number(c.speed)||movingSpeed),deltaSeconds};if(xSource?.type==='Joystick')movementConfig.variableX=xSource.config?.variableX||movementConfig.variableX;if(ySource?.type==='Joystick')movementConfig.variableZ=ySource.config?.variableZ||movementConfig.variableZ;executeZeroBoxAction({...b,config:movementConfig},entity,obj);}
     else if(entity&&obj)executeZeroBoxAction(b,entity,obj);
     current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);
   }

@@ -1,4 +1,4 @@
-# ZeroEngine 0.9.3
+# ZeroEngine 0.9.4
 
 ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
 
@@ -19,7 +19,7 @@ The **3D-моделирование** entry is on the home screen. Choose an exi
 - Early face push/inset/bevel/sharpen/cut/joint tools, image reference planes, image texture assignment, basic canvas paint, material controls and UV repeat/offset.
 - GLB export to project `Assets/Models`; saved assets are included in project ZIP export. A selected model can be converted into a `Player` entity.
 
-## Changes in 0.9.3
+## Changes in 0.9.4
 
 - Responsive editor layout for desktop, phone portrait and phone landscape; the editor follows the real viewport orientation and uses compact landscape controls.
 - Added device and resolution preferences (PC, tablet, phone portrait/landscape, automatic and custom resolution). The selected target resolution controls the UI Designer preview aspect ratio.
@@ -49,3 +49,12 @@ This remains an early browser modeling workspace, not a Blender replacement. Com
 ## Project data
 
 Projects are stored locally in IndexedDB. Export ZIP regularly to back them up or move them to another device.
+
+## ZeroEngine 0.9.4
+
+- ZeroBox and UI Designer now open as exclusive full-screen workspaces; the scene is blocked until the workspace is closed.
+- Play Mode first persists the project and refuses to start if saving fails or no ZeroBox exists.
+- ZeroBox supports touch multi-selection, copying selected blocks, moving nodes by touch, and dragging palette blocks onto the workspace.
+- Added a `Joystick` logic block with selectable UI joystick and X/Y data ports. Connect its X/Y outputs to the matching data inputs on `Moving` to drive movement from that joystick.
+- UI Designer supports multiple named interfaces, duplication/deletion, and screen-navigation buttons.
+- Mobile workspaces use a desktop-like tool layout adapted into stacked panels, keeping the canvas and properties accessible.
