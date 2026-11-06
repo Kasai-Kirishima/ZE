@@ -158,3 +158,34 @@
 :root[data-theme="light"] .collision-preview{background:#ededed;border-color:#c9c9c9;}
 :root[data-theme="light"] .collision-preview-grid{background-image:linear-gradient(#00000012 1px,transparent 1px),linear-gradient(90deg,#00000012 1px,transparent 1px);}
 @media(max-width:600px){.collision-editor-body{grid-template-columns:1fr;}.collision-editor-body>.check-line:first-child,.collision-editor-body>.field-label,.collision-editor-body>.modal-note{grid-column:1;}.collision-preview{height:120px;}}
+
+
+/* ZeroEngine 0.7 — camera controls, joystick, add-object tab and ZeroBox tools */
+.asset-add-tab{font-size:20px!important;min-width:34px;color:var(--text)!important;border:1px dashed var(--line2)!important;border-radius:6px;margin-left:4px}
+.asset-search{width:100%;margin:0 0 10px;max-width:420px}
+.asset-card[hidden],.node-category[hidden],.node-palette[hidden]{display:none!important}
+.zero-canvas-tools{position:sticky;top:8px;left:8px;z-index:8;display:flex;align-items:center;gap:5px;width:max-content;padding:5px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 92%,transparent);border-radius:7px;backdrop-filter:blur(8px)}
+.zero-canvas-tools button{min-width:28px;height:26px;border:1px solid var(--line2);border-radius:4px;background:var(--panel2);color:var(--text);font-size:12px}
+.zero-canvas-tools span{min-width:42px;text-align:center;font:9px var(--mono);color:var(--muted)}
+.zero-node-surface{transform-origin:0 0}
+.camera-control-area{touch-action:none!important;user-select:none;-webkit-user-select:none;cursor:crosshair}
+.ui-design-stage .camera-control-area{background:repeating-linear-gradient(135deg,#ffffff09 0 8px,#ffffff02 8px 16px)!important;border:1px dashed #aaa!important;color:#ddd;font:9px var(--mono);}
+.joystick-element{overflow:visible!important;touch-action:none!important;user-select:none;-webkit-user-select:none;}
+.joystick-base{width:min(100%,100%);height:min(100%,100%);aspect-ratio:1;border:2px solid #ddd9;background:#1118;border-radius:50%;display:grid;place-items:center;position:relative;box-shadow:inset 0 0 0 5px #ffffff0a,0 2px 15px #0005;}
+.joystick-base:before,.joystick-base:after{content:"";position:absolute;background:#ffffff22;pointer-events:none}.joystick-base:before{width:1px;height:80%}.joystick-base:after{height:1px;width:80%}
+.joystick-knob{width:40%;height:40%;border-radius:50%;background:linear-gradient(145deg,#eee,#777);border:2px solid #fff;box-shadow:0 3px 9px #0008;position:relative;z-index:1;pointer-events:none}
+.game-ui-layer .camera-control-area{cursor:crosshair;touch-action:none;}
+.game-ui-layer .joystick-element{cursor:grab;touch-action:none;}
+.play-hint{pointer-events:none}
+.spatial-editor-body{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(210px,.8fr);gap:12px;min-height:340px}
+.spatial-preview{position:relative;min-height:300px;background:#141414;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.spatial-preview canvas{width:100%;height:100%;min-height:300px;display:block;touch-action:none}
+.spatial-controls{display:flex;flex-direction:column;gap:10px;min-width:0}
+.spatial-tools{display:flex;gap:5px;flex-wrap:wrap}
+.spatial-collision-preview{height:300px;min-height:300px;display:block;padding:0;background:#141414}
+.spatial-collision-preview canvas{width:100%;height:100%;min-height:250px;display:block;touch-action:none}
+.add-object-categories{display:grid;gap:13px}
+.add-object-category h3{font-size:11px;margin:2px 0 8px;color:var(--text)}
+.add-object-grid{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:760px){.spatial-editor-body{grid-template-columns:1fr}.spatial-preview,.spatial-preview canvas{min-height:220px}.spatial-collision-preview{height:230px;min-height:230px}.add-object-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.workbench-header-actions #zerobox-select-network,.workbench-header-actions #zerobox-delete-selection{display:none}}
+@media(max-width:520px){.add-object-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.asset-add-tab{min-width:27px}.spatial-editor-body{padding:0}.spatial-preview,.spatial-preview canvas{min-height:190px}}

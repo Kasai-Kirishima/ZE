@@ -26,7 +26,7 @@
           <div class="brand-mark">Z<span>E</span></div>
           <div><div class="brand-name">ZERO<span>ENGINE</span></div><div class="brand-subtitle">BROWSER GAME ENGINE</div></div>
         </div>
-        <div class="home-head-actions"><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.6.0</span></div></div>
+        <div class="home-head-actions"><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.8.0</span></div></div>
       </header>
 
       <main class="home-main">
@@ -99,7 +99,7 @@
           </div>
           <div id="viewport-wrap" class="viewport-wrap">
             <canvas id="viewport-canvas"></canvas>
-            <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
+            <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> ISOMETRIC / FREE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
             <div class="viewport-hud hud-bottom-left">ЛКМ — обзор <span>·</span> ПКМ — панорама <span>·</span> Колесо — масштаб</div>
             <div class="viewport-center-hint" id="viewport-empty-hint"><div class="hint-cross">＋</div><strong>Сцена готова к работе</strong><span>Добавь объект через кнопку «＋» или панель инструментов.</span></div>
             <div class="viewport-drop-overlay" id="viewport-drop-overlay"><div>Отпусти файлы, чтобы импортировать ассеты</div></div>
@@ -124,6 +124,7 @@
               <button class="asset-tab" data-asset-tab="scenes">▧ <span>Сцены</span></button>
               <button class="asset-tab" data-asset-tab="scripts">〈〉 <span>ZeroScript</span></button>
               <button class="asset-tab" data-asset-tab="zeroboxes">◇ <span>ZeroBox</span></button>
+              <button class="asset-tab asset-add-tab" id="asset-add-tab" type="button" title="Добавить объект">＋</button>
             </div>
             <div class="asset-actions">
               <span class="asset-path" id="asset-path">Assets / All</span>
@@ -143,7 +144,7 @@
         <header class="workbench-header">
           <button class="button button-quiet" id="close-workbench">← В сцену</button>
           <div class="workbench-title"><strong id="workbench-title">ZeroBox</strong><span id="workbench-subtitle">Визуальная логика проекта</span></div>
-          <div class="workbench-header-actions"><button class="button button-quiet" id="zerobox-copy-selection" title="Копировать выбранные блоки">▢ Копировать</button><button class="button button-quiet" id="zerobox-paste-selection" title="Вставить блоки">▣ Вставить</button><button class="button button-quiet" id="zerobox-help">? Help</button><button class="button button-quiet" id="workbench-run">▶ Проверить</button><button class="button button-primary" id="workbench-save">Сохранить</button></div>
+          <div class="workbench-header-actions"><button class="button button-quiet" id="zerobox-select-network" title="Выделить всю связанную сеть">Сеть</button><button class="button button-quiet" id="zerobox-delete-selection" title="Удалить выделенные блоки">Удалить сеть</button><button class="button button-quiet" id="zerobox-copy-selection" title="Копировать выбранные блоки">▢ Копировать</button><button class="button button-quiet" id="zerobox-paste-selection" title="Вставить блоки">▣ Вставить</button><button class="button button-quiet" id="zerobox-help">? Help</button><button class="button button-quiet" id="workbench-run">▶ Проверить</button><button class="button button-primary" id="workbench-save">Сохранить</button></div>
         </header>
         <div id="workbench-body" class="workbench-body"></div>
       </section>

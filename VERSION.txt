@@ -1,3 +1,1 @@
-ZeroEngine 0.6.0
-Browser Game Engine
-GitHub Pages ready
+0.8.0
