@@ -526,14 +526,28 @@ function init3DEditor() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color('#171717');
   scene.environment = null; // No default environment illumination or startup lights.
-  editorCamera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
+  editorCamera = new THREE.PerspectiveCamera(55, 1, 0.01, 10000);
   editorCamera.position.set(7, 6, 9);
   orbit = new OrbitControls(editorCamera, canvas);
+  orbit.enabled = true;
+  orbit.enableRotate = true;
+  orbit.enablePan = true;
+  orbit.enableZoom = true;
   orbit.enableDamping = true;
   orbit.dampingFactor = .08;
-  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  orbit.rotateSpeed = .9;
+  orbit.panSpeed = 1;
+  orbit.zoomSpeed = 1;
+  orbit.screenSpacePanning = true;
+  orbit.zoomToCursor = true;
+  // Left drag rotates, middle drag is an alternate orbit gesture, right drag pans.
+  // The wheel remains dedicated to zoom/dolly.
+  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
   orbit.target.set(0, 0.8, 0);
-  orbit.maxPolarAngle = Math.PI * .495;
+  orbit.minDistance = .05;
+  orbit.maxDistance = 10000;
+  orbit.minPolarAngle = .001;
+  orbit.maxPolarAngle = Math.PI - .001;
   gridHelper = new THREE.GridHelper(100, 100, 0x53645b, 0x334139);
   gridHelper.material.transparent = true; gridHelper.material.opacity = .55;
   scene.add(gridHelper);
@@ -1648,8 +1662,9 @@ function bindUI() {
   $('#undo-button').addEventListener('click', undo); $('#redo-button').addEventListener('click', redo);
   $$('[data-transform]').forEach(button => button.addEventListener('click', () => setTransformMode(button.dataset.transform)));
   $('#focus-object').addEventListener('click', focusSelectedObject);
+  $('#focus-scene').addEventListener('click', focusAllScene);
   $('#grid-toggle').addEventListener('click', () => { activeSceneData().grid = !activeSceneData().grid; gridHelper.visible = axesHelper.visible = activeSceneData().grid; scheduleSave(); });
-  $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · ПКМ — перемещать обзор · Колесо — приблизить/отдалить · Gizmo — двигать выбранный объект')); 
+  $('#viewport-help').addEventListener('click', () => toast('ЛКМ или СКМ — вращать камеру · ПКМ или Shift+ЛКМ — панорама · Колесо — приблизить/отдалить · Кнопка ⛶ — показать всю сцену · Gizmo — двигать объект')); 
   $('#import-files-button').addEventListener('click', () => $('#asset-files-input').click());
   $('#import-folder-button').addEventListener('click', () => $('#asset-folder-input').click());
   $('#new-folder-button').addEventListener('click', createAssetFolder);
@@ -2239,10 +2254,41 @@ function playCustomAnimation(entity,animation){if(!animation?.keys?.length)retur
 function updateCustomAnimations(delta){if(!activeCustomAnimations.size)return;for(const[id,state]of activeCustomAnimations){const entity=findEntity(id),obj=sceneObjects.get(id),anim=entity?.animations?.find(a=>a.id===state.animationId);if(!entity||!obj||!anim?.keys?.length){activeCustomAnimations.delete(id);continue;}const duration=Math.max(.1,anim.keys.at(-1).time);state.time=(state.time+delta)%duration;let a=anim.keys[0],b=anim.keys.at(-1);for(let i=0;i<anim.keys.length-1;i++){if(state.time>=anim.keys[i].time&&state.time<=anim.keys[i+1].time){a=anim.keys[i];b=anim.keys[i+1];break;}}const span=Math.max(.0001,b.time-a.time),t=THREE.MathUtils.clamp((state.time-a.time)/span,0,1);obj.position.fromArray(a.position.map((v,i)=>THREE.MathUtils.lerp(v,b.position[i],t)));obj.scale.fromArray(a.scale.map((v,i)=>THREE.MathUtils.lerp(v,b.scale[i],t)));obj.rotation.set(...a.rotation.map((v,i)=>THREE.MathUtils.lerp(v,b.rotation[i],t)));entity.position=obj.position.toArray();entity.rotation=[obj.rotation.x,obj.rotation.y,obj.rotation.z].map(v=>THREE.MathUtils.radToDeg(v));entity.scale=obj.scale.toArray();}}
 function createBasicSkeleton(entity){const object=sceneObjects.get(entity.id);if(!object)return;if(entity.rig?.bones?.length){toast('Скелет уже создан','success');return;}entity.rig={bones:[{name:'Root',parent:null,position:[0,0,0]},{name:'Spine',parent:'Root',position:[0,.7,0]},{name:'Head',parent:'Spine',position:[0,.6,0]},{name:'LeftArm',parent:'Spine',position:[-.45,.35,0]},{name:'RightArm',parent:'Spine',position:[.45,.35,0]}]};attachStoredRig(entity,object);scheduleSave();renderInspector();toast('Создана базовая иерархия костей. Skin weights пока не редактируются.','success');}
 
+function fitCameraToBounds(bounds, padding = 1.35) {
+  if (!orbit || !editorCamera || bounds.isEmpty()) return;
+  const center = bounds.getCenter(new THREE.Vector3());
+  const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+  const radius = Math.max(.5, sphere.radius);
+  const fov = THREE.MathUtils.degToRad(editorCamera.fov || 55);
+  const distance = Math.min(9000, Math.max(2, radius / Math.sin(fov / 2) * padding));
+  let direction = editorCamera.position.clone().sub(orbit.target);
+  if (direction.lengthSq() < 1e-8) direction.set(1, .7, 1);
+  direction.normalize();
+  orbit.target.copy(center);
+  editorCamera.position.copy(center).addScaledVector(direction, distance);
+  editorCamera.near = Math.max(.01, Math.min(.1, distance / 1000));
+  editorCamera.far = Math.max(10000, distance * 20);
+  editorCamera.updateProjectionMatrix();
+  orbit.minDistance = Math.max(.02, radius / 1000);
+  orbit.maxDistance = Math.max(10000, distance * 20);
+  orbit.update();
+}
 function focusSelectedObject() {
-  const object = sceneObjects.get(selectedId); if (!object) { toast('Сначала выбери объект', 'error'); return; }
-  const box = new THREE.Box3().setFromObject(object); const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3()).length();
-  orbit.target.copy(center); const direction = editorCamera.position.clone().sub(center).normalize(); editorCamera.position.copy(center).add(direction.multiplyScalar(Math.max(3, size * 1.7))); orbit.update();
+  const object = sceneObjects.get(selectedId);
+  if (!object) { focusAllScene(); return; }
+  fitCameraToBounds(new THREE.Box3().setFromObject(object), 1.5);
+}
+function focusAllScene() {
+  const bounds = new THREE.Box3();
+  for (const object of sceneObjects.values()) bounds.expandByObject(object);
+  if (bounds.isEmpty()) {
+    orbit.target.set(0, .8, 0);
+    editorCamera.position.set(7, 6, 9);
+    editorCamera.near = .01; editorCamera.far = 10000;
+    editorCamera.updateProjectionMatrix(); orbit.update();
+    return;
+  }
+  fitCameraToBounds(bounds, 1.45);
 }
 
 // ---------- Startup ----------

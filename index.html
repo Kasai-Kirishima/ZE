@@ -93,6 +93,7 @@
                 <button class="tool-button" data-transform="scale" title="Масштаб (R)">⌗</button>
               </div>
               <button class="tool-button" id="focus-object" title="Сфокусироваться на объекте">◎</button>
+              <button class="tool-button" id="focus-scene" title="Показать всю сцену">⛶</button>
               <button class="tool-button" id="grid-toggle" title="Сетка">▦</button>
               <button class="tool-button" id="viewport-help" title="Управление камерой">?</button>
             </div>
@@ -100,7 +101,7 @@
           <div id="viewport-wrap" class="viewport-wrap">
             <canvas id="viewport-canvas"></canvas>
             <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
-            <div class="viewport-hud hud-bottom-left">ЛКМ — обзор <span>·</span> ПКМ — панорама <span>·</span> Колесо — масштаб</div>
+            <div class="viewport-hud hud-bottom-left">ЛКМ / СКМ — вращение <span>·</span> ПКМ / Shift+ЛКМ — панорама <span>·</span> Колесо — масштаб</div>
             <div class="viewport-center-hint" id="viewport-empty-hint"><div class="hint-cross">＋</div><strong>Сцена готова к работе</strong><span>Добавь объект через кнопку «＋» или панель инструментов.</span></div>
             <div class="viewport-drop-overlay" id="viewport-drop-overlay"><div>Отпусти файлы, чтобы импортировать ассеты</div></div>
             <div class="play-overlay hidden" id="play-overlay">
