@@ -1,4 +1,4 @@
-# ZeroEngine 0.9.2
+# ZeroEngine 0.9.3
 
 ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
 
@@ -18,6 +18,13 @@ The **3D-моделирование** entry is on the home screen. Choose an exi
 - Component pick modes for vertices, edges and faces. Face selection uses a marker instead of drawing a triangle, since Three.js renders buffer geometry as triangles internally.
 - Early face push/inset/bevel/sharpen/cut/joint tools, image reference planes, image texture assignment, basic canvas paint, material controls and UV repeat/offset.
 - GLB export to project `Assets/Models`; saved assets are included in project ZIP export. A selected model can be converted into a `Player` entity.
+
+## Changes in 0.9.3
+
+- Responsive editor layout for desktop, phone portrait and phone landscape; the editor follows the real viewport orientation and uses compact landscape controls.
+- Added device and resolution preferences (PC, tablet, phone portrait/landscape, automatic and custom resolution). The selected target resolution controls the UI Designer preview aspect ratio.
+- Model Studio uses touch-friendly tabs on small screens: 3D view, tools and properties. The viewport is resized when changing tabs, touch gestures rotate/zoom/pan, and larger transform handles are used on touch devices.
+- UI Designer elements can be moved by touch and resized with eight on-element handles. Position and size fields remain available in properties.
 
 ## Fixes in 0.9.2
 
