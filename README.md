@@ -1,105 +1,27 @@
-# ZeroEngine 0.7.4
+# ZeroEngine 0.9.0
 
-ZeroEngine — браузерный прототип игрового движка. Запускается из `index.html` и подходит для публикации через GitHub Pages.
+ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
 
-## Структура проекта
+## Run
 
-```text
-ZeroEngine/
-├── index.html
-├── VERSION.txt
-├── LICENSE
-├── .nojekyll
-├── assets/
-│   ├── icons/
-│   ├── models/
-│   ├── textures/
-│   ├── materials/
-│   ├── audio/
-│   └── skyboxes/
-├── src/
-│   ├── css/styles.css
-│   └── js/
-│       ├── app.js
-│       └── locales.js
-└── docs/THIRD-PARTY-NOTICES.md
-```
+Open `index.html` through a local static server or publish the repository root with GitHub Pages. Do not upload the ZIP as a single website file: extract it and upload the folder contents.
 
-## Обновления 0.7.0–0.7.3
+## Zero Model Studio
 
-- Единая перспектива: редактор и игровая камера Player используют перспективную проекцию; обзор сцены свободно вращается и перемещается стандартными OrbitControls.
-- Для Player сохраняются расположение камеры, крепление, FOV и 3D-смещение; отдельный 3D-редактор показывает объект-основу и камеру, её можно перемещать и масштабировать.
-- Отдельное 3D-окно коллизий показывает именно выбранный объект, форму коллайдера, размеры и смещение.
-- Создание объектов через `＋` разделено на вкладки: базовые формы, дополнительные формы и игровые объекты.
-- ZeroBox получил увеличенное рабочее поле 26000×18000, библиотеку блоков с иконками и категориями, поиск, масштабирование и изменяемую ширину библиотеки/панели свойств.
-- Панели и нижний файловый док редактора можно менять по ширине/высоте; иерархию и инспектор можно перетаскивать на противоположную сторону или менять местами кнопкой ⇄. Размеры и расположение сохраняются в браузере.
-- `Buttonpressed` повторно запускает связанную цепочку каждый кадр, пока клавиша или UI-кнопка удерживается. `ButtonResting` и `Buttonclicked` вызываются после отпускания.
-- Исправлен `Moving`: отдельного `Walking` больше нет. Для ходьбы соедини `Buttonpressed → Side → Speed → Moving`, выбери цель `Player` (либо оставь автоматическую цель в Play Mode) и режим «Постоянное движение». Движение повторяется с delta time, пока кнопка/клавиша удерживается; отпускание прекращает ходьбу. Режимы координат и переменных поддерживают направленное перемещение и джойстик. Вертикальная скорость физики больше не обнуляется при ходьбе, поэтому гравитация и прыжки остаются рабочими.
-- Если цель блока `Moving` не задана, в Play Mode выбирается Player, если он есть.
-- Добавлены переводы интерфейса RU (исходный язык), UK (украинский), EN (английский) и KK (казахский); выбор сохраняется.
-- Тестовый режим остаётся изолированным от сохранения проекта.
+Open a project and choose **3D-модели** in the editor toolbar. The separate studio includes:
 
-## Камера Player в 0.7.2
+- Ten starter shapes: cube, UV sphere, plane, cylinder, cone, capsule, torus, torus knot, icosphere and a stylized monkey-head primitive.
+- Import of GLB/GLTF, FBX, OBJ and STL files (GLB is recommended; GLTF with external dependencies may need those files to be available).
+- Object-level move, rotate, scale, numeric position/rotation/scale fields, duplicate, copy/paste and delete.
+- Object grouping/join prototype, component selection modes for vertices, edges and faces, and early face push/inset/bevel/sharpen/cut/joint tools.
+- Image reference planes, image texture assignment, basic canvas paint layer, material color/roughness/metalness, and UV repeat/offset controls.
+- GLB export directly into the project `Assets/Models` library. The saved asset is included in project ZIP export.
+- Convert the selected model into a `Player` entity. The generated Player uses the imported model asset and receives a capsule collision preset and a back-mounted camera setting.
 
-- Настройки игровой камеры находятся в Inspector у выбранного объекта **Player** — это не настройка главного меню и не камера редактора.
-- Игровая камера Player всегда использует перспективную проекцию. Отдельного переключателя проекции больше нет.
-- Отдельно выбирается расположение камеры относительно Player: в голове (первое лицо), за спиной (третье лицо), сверху или произвольно.
-- Кнопка «Настроить положение в 3D» открывает отдельную сцену с моделью выбранного Player и синей камерой. Камеру можно перетаскивать; её положение сохраняется в `cameraMount` этого Player.
-- Редактор сцены возвращён к классическому 3D-виду, как до добавления изометрии: одна перспективная камера, обычный обзор OrbitControls, сетка, оси и манипулятор TransformControls. Переключателя перспективы/изометрии/свободного режима в панели сцены больше нет. Камера редактора и игровая камера Player независимы.
-- Новые Player по умолчанию используют перспективную игровую камеру с расположением за спиной. При открытии старых проектов прежние параметры проекции удаляются автоматически; расположение и смещение камеры сохраняются.
+## Modeling limitations
 
-## Запуск
+This is an early browser modeling workspace, not a full Blender replacement. Vertex/edge/face modes currently provide component picking, and face operations act on the selected triangle of the current buffer geometry. The cut, joint, join and bevel operations are prototypes; there is no full topology kernel, boolean solver, edge-loop system, skin-weight editor, automatic UV unwrap, or production-grade texture painting yet. Imported mesh data is preserved best when exported as GLB.
 
-### Локально
+## Project data
 
-Открой папку через локальный HTTP-сервер. Например, установи расширение Live Server в VS Code или выполни `python -m http.server 8000`, затем открой `http://localhost:8000`. Запуск через `file://` не рекомендуется: браузер может блокировать ES-модули.
-
-### GitHub Pages
-
-1. Создай репозиторий на GitHub.
-2. Загрузи содержимое этой папки в корень ветки `main`.
-3. Открой **Settings → Pages**.
-4. Выбери **Deploy from a branch → main → / (root)**.
-5. Сохрани и открой опубликованный адрес.
-
-## Импорт моделей
-
-Для Blender рекомендуется экспортировать `.glb` или `.gltf` с включёнными материалами и текстурами. Также поддерживаются FBX, OBJ, STL и PLY. `.blend` импортируется не напрямую — его нужно экспортировать из Blender.
-
-## Сохранение проектов
-
-Проекты сохраняются в локальном IndexedDB браузера. Для переноса на другое устройство используй экспорт проекта ZIP. Play Mode использует временный снимок проекта; тестовые изменения не записываются.
-
-## Текущие технические ограничения
-
-Это ранняя браузерная версия. Физика пока базовая: гравитация, масса как свойство тела, затухание, простые AABB-коллизии и перемещение Player с блокировкой препятствий. Это ещё не полноценный rigid-body solver. ZeroBox выполняет последовательности и ветвления; типизированные data-провода и расширенная отладка будут дальнейшими этапами. Камера редактора и редакторы камеры/коллизий требуют WebGL.
-
-Three.js и JSZip загружаются из CDN, поэтому для открытия редактора нужен интернет.
-
-## Перемещение Player через ZeroBox
-
-1. Создай элемент `Player` и при необходимости настрой его капсульную коллизию.
-2. Создай `Buttonpressed` и укажи клавишу (например, `W`) либо конкретную UI-кнопку.
-3. Соедини выход события с `Side`, затем с `Speed`, затем с `Moving`.
-4. В `Moving` выбери цель `Player` или оставь «Активный объект» — в Play Mode движок автоматически выберет Player, если он существует.
-5. Выбери режим «Постоянное движение (пока удерживается)» и скорость в м/с.
-
-`Buttonpressed` повторяет цепочку во время удержания. После отпускания повтор прекращается. Для бокового и обратного движения создай отдельные кнопки и сети с нужным `Side`.
-
-
-## ZeroEngine 0.7.3 — классическая 3D-сцена и полная локализация
-
-- Восстановлен классический центральный 3D viewport: перспективная камера, вращение ЛКМ, панорама ПКМ, приближение/отдаление колесом, сетка и оси, выбор объектов и gizmo перемещения/вращения/масштаба.
-- Убран переключатель режима камеры редактора. Расположение игровой камеры по-прежнему настраивается только в Inspector выбранного Player и в его 3D-редакторе.
-- Локализация расширена для динамических окон, инспектора, коллизий, физики, источников света, материалов, импорта, Scene Manager, ZeroBox, UI Designer, анимаций, подсказок, ошибок и уведомлений. Доступны русский, украинский, английский и казахский языки.
-- Добавлен отдельный файл `src/js/locales.js` для расширенных словарей интерфейса.
-
-
-## Исправление камеры редактора в 0.7.4
-
-- Убран прежний предел вращения камеры около горизонта: теперь можно осматривать сцену сверху, снизу и со всех сторон.
-- ЛКМ и средняя кнопка мыши вращают камеру; ПКМ панорамирует; Shift+ЛКМ — альтернативная панорама; колесо мыши приближает и отдаляет.
-- Колесо больше не конкурирует со средней кнопкой за зум; включено приближение к позиции курсора.
-- Увеличены пределы дальности камеры для больших сцен и импортированных моделей.
-- Кнопка ⛶ кадрирует всю сцену; кнопка ◎ кадрирует выбранный объект, а при отсутствии выделения также показывает всю сцену.
-- Центр вращения переносится к центру выбранного объекта/сцены при кадрировании, но не сбрасывается сам после каждого действия.
+Projects are stored locally in IndexedDB. Export ZIP regularly to back them up or move them to another device. Models saved from the Model Studio are regular project assets and are included in ZIP exports.

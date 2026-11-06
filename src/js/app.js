@@ -7,8 +7,8 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import JSZip from 'jszip';
-import { FULL_I18N } from './locales.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -22,7 +22,8 @@ const extensions = {
   script: ['zs'],
   zerobox: ['zbox'],
   audio: ['mp3','wav','ogg','m4a','aac'],
-  scene: ['zescene']
+  scene: ['zescene'],
+  material: ['zemat']
 };
 const extOf = name => String(name).split('.').pop().toLowerCase();
 const typeOf = name => {
@@ -33,19 +34,21 @@ const typeOf = name => {
   if (extensions.zerobox.includes(ext)) return 'zerobox';
   if (extensions.audio.includes(ext)) return 'audio';
   if (extensions.scene.includes(ext)) return 'scene';
-  if (ext === 'mtl') return 'material';
+  if (ext === 'mtl' || ext === 'zemat') return 'material';
   if (ext === 'bin') return 'binary';
   if (ext === 'json') return 'json';
   return 'file';
 };
-const iconFor = type => ({model:'📦',texture:'🖼️',script:'〈〉',zerobox:'◇',audio:'🎵',scene:'🎬',json:'{}',material:'🎨',binary:'📄',file:'📄',folder:'📁',primitive:'◈',camera:'📷',player:'♟',spawn:'⌖',light:'💡'})[type] || '📄';
-const DEFAULT_SCENE = () => ({ id: uid(), name: ({ru:'Главная сцена',uk:'Головна сцена',en:'Main Scene',kk:'Негізгі сахна'}[currentLanguage] || 'Main Scene'), background: '#171717', grid: true, objects: [], skyboxAssetId: null });
+const iconFor = type => ({model:'📦',texture:'🖼️',script:'〈〉',zerobox:'◇',audio:'🎵',scene:'🎬',json:'{}',material:'🎨',environmentLight:'☼',binary:'📄',file:'📄',folder:'📁',primitive:'◈',camera:'📷',player:'♟',spawn:'⌖',light:'💡'})[type] || '📄';
+const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: true, objects: [], skyboxAssetId: null });
 
 let db = null;
 let currentProject = null;
 let currentTab = 'assets';
 let assetFolderFilter = 'All';
 let selectedId = null;
+let selectedIds = new Set();
+let selectionHelpers = new Map();
 let selectedAssetId = null;
 let sceneObjects = new Map();
 let objectUrls = new Map();
@@ -86,6 +89,9 @@ let heldKeys = new Set();
 let heldButtonIds = new Set();
 let heldZeroTimers = new Map();
 let previewYaw = 0, previewPitch = -0.18;
+let editorCameraMode = 'perspective';
+let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, root:null, selected:null, mode:'object', raycaster:null, pointer:null, clipboard:null, history:[], reference:null, paintTexture:null, raf:0 };
+const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey'];
 let currentLanguage = 'ru';
 let localizationObserver = null;
 let translatingNow = false;
@@ -107,7 +113,6 @@ function toggleTheme() {
 }
 
 const I18N = {
-  ru: {},
   uk: {
     'Светлая тема':'Світла тема','Тёмная тема':'Темна тема','Новый проект':'Новий проєкт','Импорт проекта':'Імпорт проєкту','Мои проекты':'Мої проєкти','Пока нет проектов':'Поки немає проєктів','Сцена готова к работе':'Сцена готова до роботи','Добавить объект':'Додати об’єкт','Иерархия':'Ієрархія','Свойства':'Властивості','Файлы':'Файли','Сцены':'Сцени','Интерфейс':'Інтерфейс','Сохранить ZIP':'Зберегти ZIP','Просмотр':'Перегляд','На главную':'На головну','Создать проект':'Створити проєкт','Название':'Назва','Описание':'Опис','Сменить тему':'Змінити тему','Положение камеры':'Положення камери','Коллизия':'Колізія','Редактор коллизии':'Редактор колізії','Включить коллизию':'Увімкнути колізію','Применить коллизию':'Застосувати колізію','Камера':'Камера','Перспектива':'Перспектива','Свободная':'Вільна','Математика':'Математика','Логика':'Логіка','Действия':'Дії','Визуал':'Візуал','Звук':'Звук','Типы переменных':'Типи змінних','Игровое время':'Ігровий час','Библиотека блоков':'Бібліотека блоків','Новая переменная':'Нова змінна','Удалить':'Видалити','Копировать':'Копіювати','Вставить':'Вставити','Справка по блокам':'Довідка блоків','Сохранить':'Зберегти','Сохранить изменения':'Зберегти зміни','Отмена':'Скасувати','Применить':'Застосувати','Понятно':'Зрозуміло','Активный объект':'Активний об’єкт','Целевой объект':'Цільовий об’єкт','Выход':'Вихід','Вход':'Вхід','Папка':'Тека','Импорт файлов':'Імпорт файлів','Импорт папки':'Імпорт теки','Создать':'Створити','Масса':'Маса','кг':'кг','Север / вперёд':'Північ / уперед','Юг / назад':'Південь / назад','Запад / влево':'Захід / ліворуч','Восток / вправо':'Схід / праворуч','Вперёд':'Уперед','Назад':'Назад','Вверх':'Угору','Вниз':'Униз','Button':'Кнопка','Text':'Текст','Scale':'Шкала','Slider':'Повзунок','Background':'Тло','События':'Події','Player':'Гравець','Straightaway':'Одразу','Buttonclicked':'Кнопку натиснуто','Buttonpressed':'Кнопка утримується','ButtonResting':'Кнопку відпущено','Moving':'Переміщення','Side':'Напрямок','Speed':'Швидкість','Squat':'Присідання','Jumpup':'Стрибок','Life':'Життя','Number':'Число','NumericArray':'Числовий масив','Minus':'Відняти','Plus':'Додати','Divide':'Поділити','Multiply':'Помножити','Size':'Розмір','Change':'Змінити','Loop':'Цикл','Branching':'Розгалуження','ForkYesorno':'Так/Ні','Close':'Закрити','Laser':'Промінь','Twist':'Обертати','Collision':'Колізія','Physics':'Фізика','Gamespeed':'Швидкість гри','Writes':'Вивести текст','ChangeTransparency':'Змінити прозорість','ChangeColor':'Змінити колір','ChangeTexture':'Змінити текстуру','ChangeModel':'Змінити модель','Changinganimation':'Змінити анімацію','Changesound':'Змінити звук','Playsound':'Відтворити звук',"Don'tSound":'Зупинити звук','Pausesound':'Пауза звуку','Yesorno':'Так/Ні','Transparency':'Прозорість','Color':'Колір','Связать с переменной':'Зв’язати зі змінною','Ширина':'Ширина','Высота':'Висота','Текст':'Текст','Цвет':'Колір','Игровой просмотр':'Ігровий перегляд'
   },
@@ -161,35 +166,40 @@ Object.assign(I18N.kk,{
   'Игровая камера Player':'Player ойын камерасы','Проекция игровой камеры':'Ойын камерасының проекциясы','Перспективная':'Перспективалық','Расположение камеры относительно Player':'Камераның Player-ге қатысты орны','В голове — от первого лица':'Баста — бірінші тұлға','За спиной — от третьего лица':'Артында — үшінші тұлға','Сверху — вид на игрока':'Үстінен — ойыншы көрінісі','Произвольное положение':'Еркін орын','Настроить положение в 3D':'3D ішінде орнын баптау','Вид камеры редактора':'Редактор камерасының көрінісі','Вид редактора: Перспектива':'Редактор көрінісі: Перспектива','Вид редактора: Свободная':'Редактор көрінісі: Еркін','Эти настройки принадлежат выбранному объекту Player и сохраняются в проекте. На обзор камеры самого редактора они не влияют. В 3D-редакторе можно перетащить камеру в любое место относительно модели игрока.':'Бұл баптаулар таңдалған Player нысанына тиесілі және жобамен бірге сақталады. Олар редактор камерасына әсер етпейді. 3D редакторында камераны ойыншы моделіне қатысты кез келген орынға жылжытуға болады.','Перетаскивай синюю камеру относительно модели Player. Это меняет только игровую камеру выбранного Player, а не вид редактора сцены. Gizmo и числовые значения синхронизируются.':'Көк камераны Player моделіне қатысты жылжытыңыз. Бұл тек таңдалған Player ойын камерасын өзгертеді, редактор көрінісін өзгертпейді. Gizmo мен сандар синхрондалады.'
 });
 
-for (const language of ['ru', 'uk', 'en', 'kk']) Object.assign(I18N[language] ||= {}, FULL_I18N[language] || {});
 
-function translateSourceText(source, dictionary) {
-  if (Object.prototype.hasOwnProperty.call(dictionary, source)) return dictionary[source];
-  const rules = [
-    [/^Удалить проект «(.+)» из браузера\?$/, name => ({uk:`Видалити проєкт «${name}» із браузера?`,en:`Delete project “${name}” from the browser?`,kk:`«${name}» жобасын браузерден жою керек пе?`}[currentLanguage])],
-    [/^Клавиша (.+) назначена$/, key => ({uk:`Клавішу ${key} призначено`,en:`Key ${key} assigned`,kk:`${key} пернесі тағайындалды`}[currentLanguage])],
-    [/^Объект «(.+)» перемещён на сцену$/, name => ({uk:`Об’єкт «${name}» переміщено на сцену`,en:`Object “${name}” moved to the scene`,kk:`«${name}» нысаны сахнаға жылжытылды`}[currentLanguage])],
-    [/^Объект «(.+)» удалён$/, name => ({uk:`Об’єкт «${name}» видалено`,en:`Object “${name}” deleted`,kk:`«${name}» нысаны жойылды`}[currentLanguage])],
-    [/^Папка «(.+)» создана$/, name => ({uk:`Теку «${name}» створено`,en:`Folder “${name}” created`,kk:`«${name}» қалтасы жасалды`}[currentLanguage])],
-    [/^Открыта сцена «(.+)»$/, name => ({uk:`Сцену «${name}» відкрито`,en:`Scene “${name}” opened`,kk:`«${name}» сахнасы ашылды`}[currentLanguage])],
-    [/^(.+) назначен объекту (.+)$/, (box,name) => ({uk:`${box} призначено об’єкту ${name}`,en:`${box} assigned to ${name}`,kk:`${box} нысанға тағайындалды: ${name}`}[currentLanguage])],
-    [/^Масштаб модели нормализован ×(.+)$/, scale => ({uk:`Масштаб моделі нормалізовано ×${scale}`,en:`Model scale normalized ×${scale}`,kk:`Модель масштабы ×${scale} мәніне қалыптандырылды`}[currentLanguage])],
-    [/^Не удалось загрузить «(.+)»$/, name => ({uk:`Не вдалося завантажити «${name}»`,en:`Could not load “${name}”`,kk:`«${name}» жүктелмеді`}[currentLanguage])],
-    [/^Выбран: (.+)$/, name => ({uk:`Вибрано: ${name}`,en:`Selected: ${name}`,kk:`Таңдалды: ${name}`}[currentLanguage])],
-    [/^(.+) костей в импортированном скелете · клипы GLTF\/FBX доступны выше\.$/, count => ({uk:`${count} кісток в імпортованому скелеті · кліпи GLTF/FBX доступні вище.`,en:`${count} bones in imported rig · GLTF/FBX clips are available above.`,kk:`Импортталған қаңқада ${count} сүйек бар · GLTF/FBX клиптері жоғарыда қолжетімді.`}[currentLanguage])]
-  ];
-  for (const [pattern, format] of rules) { const match = source.match(pattern); if (match) return format(...match.slice(1)); }
-  return source;
-}
+// ZeroEngine 0.8.0 viewport, selection, object actions and material library vocabulary.
+Object.assign(I18N.uk,{
+  'Материалы':'Матеріали','Новый материал':'Новий матеріал','Сохранить материал':'Зберегти матеріал','Сохранить материал в библиотеку':'Зберегти матеріал до бібліотеки','Сохранить материал в библиотеку проекта':'Зберегти матеріал до бібліотеки проєкту','Библиотека материалов':'Бібліотека матеріалів','Выбери сохранённый материал':'Обери збережений матеріал','Применить материал':'Застосувати матеріал','Создать материал':'Створити матеріал','Экспортировать .zemat':'Експортувати .zemat','Удалить материал':'Видалити матеріал','Окружной свет':'Навколишнє світло','Окружной источник света':'Джерело навколишнього світла','Большая сфера':'Велика сфера','Куб':'Куб','Форма области':'Форма області','Размер области (м)':'Розмір області (м)','Цвет верхнего света':'Колір верхнього світла','Цвет нижнего света':'Колір нижнього світла','Освещает сцену со всех сторон через Hemisphere Light. Тени не создаёт. Область отображается только как ориентир в редакторе.':'Освітлює сцену з усіх боків через Hemisphere Light. Не створює тіней. Область показана лише як орієнтир у редакторі.','Выбрано объектов:':'Вибрано об’єктів:','Shift/Ctrl + клик':'Shift/Ctrl + клацання','Удалено объектов:':'Видалено об’єктів:','Тип создаваемого объекта':'Тип об’єкта для створення','Удаляемый объект':'Об’єкт для видалення','Название объекта':'Назва об’єкта','Spawn':'Створити об’єкт','Delete':'Видалити об’єкт','PERSPECTIVE':'ПЕРСПЕКТИВА','Колесо — приблизить или отдалить сцену':'Коліщатко — наблизити або віддалити сцену','Сохранение материалов и текстур':'Збереження матеріалів і текстур'
+});
+Object.assign(I18N.en,{
+  'Материалы':'Materials','Новый материал':'New material','Сохранить материал':'Save material','Сохранить материал в библиотеку':'Save material to library','Сохранить материал в библиотеку проекта':'Save material to the project library','Библиотека материалов':'Material library','Выбери сохранённый материал':'Choose a saved material','Применить материал':'Apply material','Создать материал':'Create material','Экспортировать .zemat':'Export .zemat','Удалить материал':'Delete material','Окружной свет':'Environment light','Окружной источник света':'Environment light source','Большая сфера':'Large sphere','Куб':'Cube','Форма области':'Influence shape','Размер области (м)':'Area size (m)','Цвет верхнего света':'Sky light color','Цвет нижнего света':'Ground light color','Освещает сцену со всех сторон через Hemisphere Light. Тени не создаёт. Область отображается только как ориентир в редакторе.':'Illuminates the scene from all sides using Hemisphere Light. It does not cast shadows. The boundary is an editor-only guide.','Выбрано объектов:':'Selected objects:','Shift/Ctrl + клик':'Shift/Ctrl + click','Удалено объектов:':'Deleted objects:','Тип создаваемого объекта':'Spawn object type','Удаляемый объект':'Object to delete','Название объекта':'Object name','Spawn':'Spawn','Delete':'Delete','PERSPECTIVE':'PERSPECTIVE','Колесо — приблизить или отдалить сцену':'Scroll wheel to zoom the scene','Сохранение материалов и текстур':'Material and texture storage'
+});
+Object.assign(I18N.kk,{
+  'Материалы':'Материалдар','Новый материал':'Жаңа материал','Сохранить материал':'Материалды сақтау','Сохранить материал в библиотеку':'Материалды кітапханаға сақтау','Сохранить материал в библиотеку проекта':'Материалды жоба кітапханасына сақтау','Библиотека материалов':'Материалдар кітапханасы','Выбери сохранённый материал':'Сақталған материалды таңда','Применить материал':'Материалды қолдану','Создать материал':'Материал жасау','Экспортировать .zemat':' .zemat экспорттау','Удалить материал':'Материалды жою','Окружной свет':'Қоршаған жарық','Окружной источник света':'Қоршаған жарық көзі','Большая сфера':'Үлкен шар','Куб':'Текше','Форма области':'Аймақ пішіні','Размер области (м)':'Аймақ өлшемі (м)','Цвет верхнего света':'Жоғарғы жарық түсі','Цвет нижнего света':'Төменгі жарық түсі','Освещает сцену со всех сторон через Hemisphere Light. Тени не создаёт. Область отображается только как ориентир в редакторе.':'Hemisphere Light арқылы сахнаны барлық жағынан жарықтандырады. Көлеңке түсірмейді. Шекарасы тек редакторда бағдар ретінде көрсетіледі.','Выбрано объектов:':'Таңдалған нысандар:','Shift/Ctrl + клик':'Shift/Ctrl + басу','Удалено объектов:':'Жойылған нысандар:','Тип создаваемого объекта':'Жасалатын нысан түрі','Удаляемый объект':'Жойылатын нысан','Название объекта':'Нысан атауы','Spawn':'Жасау','Delete':'Жою','PERSPECTIVE':'ПЕРСПЕКТИВА','Колесо — приблизить или отдалить сцену':'Дөңгелек — сахнаны жақындату/алыстату','Сохранение материалов и текстур':'Материалдар мен текстураларды сақтау'
+});
+
+
+// Additional vocabulary for the restored 3D viewport and material workflows.
+Object.assign(I18N.uk,{
+  'Выбрано объектов:':'Вибрано об’єктів:','Выбран:':'Вибрано:','Материал будет сохранён в памяти проекта и попадёт в ZIP-архив.':'Матеріал буде збережено в пам’яті проєкту та додано до ZIP-архіву.','Цвет, шероховатость, металличность, прозрачность, текстура и Tiling будут сохранены из выбранного объекта.':'Колір, шорсткість, металічність, прозорість, текстуру та Tiling буде збережено з вибраного об’єкта.','Создай базовый материал, который можно назначать разным объектам.':'Створи базовий матеріал, який можна призначати різним об’єктам.','Без текстуры':'Без текстури','Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.':'Матеріалів ще немає. Створи матеріал або збережи його з властивостей вибраного об’єкта.','Материал сохранён в библиотеку проекта':'Матеріал збережено до бібліотеки проєкту','Материал создан':'Матеріал створено','Материал удалён из библиотеки':'Матеріал видалено з бібліотеки','Материал удалён':'Матеріал видалено','назначен':'призначено','Сначала выбери объект на сцене':'Спочатку вибери об’єкт на сцені','Выбери материал из библиотеки':'Обери матеріал із бібліотеки','Текстура назначена объекту':'Текстуру призначено об’єкту','Материал назначен':'Матеріал призначено','Куб':'Куб','Сфера':'Сфера','Плоскость':'Площина','Цилиндр':'Циліндр','Конус':'Конус','Капсула':'Капсула','Player Start':'Точка появи гравця','Camera':'Камера','Point Light':'Точкове світло','Environment Light':'Навколишнє світло','Point Light':'Точкове світло','MATERIAL LIBRARY':'БІБЛІОТЕКА МАТЕРІАЛІВ','ROUGH':'ШОРСТКІСТЬ','METAL':'МЕТАЛ'
+});
+Object.assign(I18N.en,{
+  'Выбрано объектов:':'Selected objects:','Выбран:':'Selected:','Материал будет сохранён в памяти проекта и попадёт в ZIP-архив.':'The material will be stored in the project and included in its ZIP archive.','Цвет, шероховатость, металличность, прозрачность, текстура и Tiling будут сохранены из выбранного объекта.':'Color, roughness, metalness, opacity, texture and tiling will be saved from the selected object.','Создай базовый материал, который можно назначать разным объектам.':'Create a reusable base material that can be assigned to different objects.','Без текстуры':'No texture','Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.':'There are no materials yet. Create one or save it from the selected object properties.','Материал сохранён в библиотеку проекта':'Material saved to the project library','Материал создан':'Material created','Материал удалён из библиотеки':'Material removed from the library','Материал удалён':'Material deleted','Сначала выбери объект на сцене':'Select an object in the scene first','Выбери материал из библиотеки':'Choose a material from the library','Текстура назначена объекту':'Texture assigned to the object','Куб':'Cube','Сфера':'Sphere','Плоскость':'Plane','Цилиндр':'Cylinder','Конус':'Cone','Капсула':'Capsule','Player Start':'Player Start','Camera':'Camera','Point Light':'Point Light','Environment Light':'Environment Light','MATERIAL LIBRARY':'MATERIAL LIBRARY','ROUGH':'ROUGH','METAL':'METAL'
+});
+Object.assign(I18N.kk,{
+  'Выбрано объектов:':'Таңдалған нысандар:','Выбран:':'Таңдалды:','Материал будет сохранён в памяти проекта и попадёт в ZIP-архив.':'Материал жоба жадында сақталып, ZIP мұрағатына қосылады.','Цвет, шероховатость, металличность, прозрачность, текстура и Tiling будут сохранены из выбранного объекта.':'Таңдалған нысанның түсі, кедір-бұдырлығы, металлылығы, мөлдірлігі, текстурасы және Tiling мәндері сақталады.','Создай базовый материал, который можно назначать разным объектам.':'Әртүрлі нысандарға тағайындауға болатын негізгі материал жаса.','Без текстуры':'Текстурасыз','Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.':'Әзірге материалдар жоқ. Материал жаса немесе оны таңдалған нысан қасиеттерінен сақта.','Материал сохранён в библиотеку проекта':'Материал жоба кітапханасына сақталды','Материал создан':'Материал жасалды','Материал удалён из библиотеки':'Материал кітапханадан жойылды','Материал удалён':'Материал жойылды','Сначала выбери объект на сцене':'Алдымен сахнадан нысанды таңда','Выбери материал из библиотеки':'Кітапханадан материалды таңда','Текстура назначена объекту':'Текстура нысанға тағайындалды','Куб':'Текше','Сфера':'Шар','Плоскость':'Жазықтық','Цилиндр':'Цилиндр','Конус':'Конус','Капсула':'Капсула','Player Start':'Ойыншының басталу нүктесі','Camera':'Камера','Point Light':'Нүктелік жарық','Environment Light':'Қоршаған жарық','MATERIAL LIBRARY':'МАТЕРИАЛДАР КІТАПХАНАСЫ','ROUGH':'КЕДІР-БҰДЫР','METAL':'МЕТАЛ'
+});
+
+const MODEL_STUDIO_I18N={
+  uk:{'3D-модели':'3D-моделі','В проект':'До проєкту','Сохранить модель':'Зберегти модель','Добавить модель':'Додати модель','Импортировать 3D-файл':'Імпортувати 3D-файл','Режим редактирования':'Режим редагування','Объект':'Об’єкт','Точки':'Точки','Рёбра':'Ребра','Грани':'Грані','Инструменты':'Інструменти','Переместить':'Перемістити','Вращать':'Обертати','Масштаб':'Масштаб','Выдавить':'Видавити','Вдавить':'Втиснути','Разрезать':'Розрізати','Скруглить':'Заокруглити','Заострить':'Загострити','Объединить':'Об’єднати','Дублировать':'Дублювати','Удалить':'Видалити','Копировать объект':'Копіювати об’єкт','Вставить объект':'Вставити об’єкт','Сделать классом Player':'Зробити класом Player','Референс':'Референс','Добавить картинку':'Додати зображення','Удалить референс':'Видалити референс','Параметры':'Параметри','Положение':'Положення','Вращение':'Обертання','Текстуры и материал':'Текстури та матеріал','Рисовать текстуру':'Малювати текстуру','Наложить картинку':'Накласти зображення','Обрезать картинку':'Обрізати зображення','Применить текстуру':'Застосувати текстуру','Объекты модели':'Об’єкти моделі'},
+  en:{'3D-модели':'3D Models','В проект':'Back to project','Сохранить модель':'Save model','Добавить модель':'Add model','Импортировать 3D-файл':'Import 3D file','Режим редактирования':'Edit mode','Объект':'Object','Точки':'Vertices','Рёбра':'Edges','Грани':'Faces','Инструменты':'Tools','Переместить':'Move','Вращать':'Rotate','Масштаб':'Scale','Выдавить':'Extrude','Вдавить':'Inset','Разрезать':'Cut','Скруглить':'Bevel','Заострить':'Sharpen','Объединить':'Join','Дублировать':'Duplicate','Удалить':'Delete','Копировать объект':'Copy object','Вставить объект':'Paste object','Сделать классом Player':'Convert to Player','Референс':'Reference','Добавить картинку':'Add image','Удалить референс':'Remove reference','Параметры':'Properties','Положение':'Position','Вращение':'Rotation','Текстуры и материал':'Textures & Material','Рисовать текстуру':'Paint texture','Наложить картинку':'Apply image','Обрезать картинку':'Crop image','Применить текстуру':'Apply texture','Объекты модели':'Model objects'},
+  kk:{'3D-модели':'3D модельдер','В проект':'Жобаға оралу','Сохранить модель':'Модельді сақтау','Добавить модель':'Модель қосу','Импортировать 3D-файл':'3D файлды импорттау','Режим редактирования':'Өңдеу режимі','Объект':'Нысан','Точки':'Нүктелер','Рёбра':'Қырлар','Грани':'Жақтар','Инструменты':'Құралдар','Переместить':'Жылжыту','Вращать':'Бұру','Масштаб':'Масштаб','Выдавить':'Созу','Вдавить':'Батыру','Разрезать':'Кесу','Скруглить':'Дөңгелектеу','Заострить':'Ұштау','Объединить':'Біріктіру','Дублировать':'Көшірмелеу','Удалить':'Жою','Копировать объект':'Нысанды көшіру','Вставить объект':'Нысанды қою','Сделать классом Player':'Player класына айналдыру','Референс':'Референс','Добавить картинку':'Сурет қосу','Удалить референс':'Референсті жою','Параметры':'Параметрлер','Положение':'Орналасуы','Вращение':'Бұрылуы','Текстуры и материал':'Текстуралар мен материал','Рисовать текстуру':'Текстура салу','Наложить картинку':'Суретті қабаттау','Обрезать картинку':'Суретті қию','Применить текстуру':'Текстураны қолдану','Объекты модели':'Модель нысандары'}
+};Object.assign(I18N.uk,MODEL_STUDIO_I18N.uk,{'↔ Переместить': '↔ Перемістити', '⟳ Вращать': '⟳ Обертати', '⬆ Выдавить': '⬆ Видавити', '▣ Вдавить': '▣ Втиснути', '✂ Разрезать': '✂ Розрізати', '◩ Скруглить': '◩ Заокруглити', '◆ Заострить': '◆ Загострити', '⊕ Объединить': '⊕ Об’єднати', '▢ Дублировать': '▢ Дублювати', '× Удалить': '× Видалити'});Object.assign(I18N.en,MODEL_STUDIO_I18N.en,{'↔ Переместить': '↔ Move', '⟳ Вращать': '⟳ Rotate', '⬆ Выдавить': '⬆ Extrude', '▣ Вдавить': '▣ Inset', '✂ Разрезать': '✂ Cut', '◩ Скруглить': '◩ Bevel', '◆ Заострить': '◆ Sharpen', '⊕ Объединить': '⊕ Join', '▢ Дублировать': '▢ Duplicate', '× Удалить': '× Delete'});Object.assign(I18N.kk,MODEL_STUDIO_I18N.kk,{'↔ Переместить': '↔ Жылжыту', '⟳ Вращать': '⟳ Бұру', '⬆ Выдавить': '⬆ Созу', '▣ Вдавить': '▣ Батыру', '✂ Разрезать': '✂ Кесу', '◩ Скруглить': '◩ Дөңгелектеу', '◆ Заострить': '◆ Ұштау', '⊕ Объединить': '⊕ Біріктіру', '▢ Дублировать': '▢ Көшірмелеу', '× Удалить': '× Жою'});
 
 function setLanguage(lang) {
   currentLanguage = ['ru','uk','en','kk'].includes(lang) ? lang : 'ru';
   try { localStorage.setItem('zeroengine-language', currentLanguage); } catch {}
   document.documentElement.lang = currentLanguage;
-  const pageTitles = {ru:'ZeroEngine — Браузерный игровой движок',uk:'ZeroEngine — Браузерний ігровий рушій',en:'ZeroEngine — Browser Game Engine',kk:'ZeroEngine — Браузерлік ойын қозғалтқышы'};
-  document.title = pageTitles[currentLanguage] || pageTitles.ru;
-  const metaDescription = document.querySelector('meta[name="description"]');
-  if (metaDescription) metaDescription.content = ({ru:'ZeroEngine — браузерный редактор игровых сцен и ресурсов.',uk:'ZeroEngine — браузерний редактор ігрових сцен і ресурсів.',en:'ZeroEngine — a browser-based editor for game scenes and assets.',kk:'ZeroEngine — ойын сахналары мен ресурстарын өңдеуге арналған браузерлік редактор.'})[currentLanguage];
   ['#language-select-home','#language-select-editor'].forEach(sel => { const el=$(sel); if(el) el.value=currentLanguage; });
   translateDocument();
 }
@@ -206,7 +216,7 @@ function translateDocument(root=document) {
     if (!source || raw !== lastTranslatedTextNodes.get(node)) { source = raw; originalTextNodes.set(node, source); }
     const leading = source.match(/^\s*/)?.[0] || '', trailing = source.match(/\s*$/)?.[0] || '';
     const core = source.trim();
-    const result = translateSourceText(core, dictionary);
+    const result = dictionary[core] ?? core;
     const translated = leading + result + trailing;
     if (node.nodeValue !== translated) node.nodeValue = translated;
     lastTranslatedTextNodes.set(node, translated);
@@ -264,7 +274,7 @@ function makeProject(name, description) {
     id: uid(), name: name.trim(), description: description.trim(),
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     activeSceneId: sceneData.id, scenes: [{ id: sceneData.id, name: sceneData.name, data: sceneData }],
-    assets: [], scripts: [], assetFolders: [], zeroBoxes: [], uiElements: [], variables: [{id:uid(),name:'Value',type:'Number',value:0,system:true}]
+    assets: [], materials: [], scripts: [], assetFolders: [], zeroBoxes: [], uiElements: [], variables: [{id:uid(),name:'Value',type:'Number',value:0,system:true}]
   };
 }
 function activeScene() { return currentProject?.scenes.find(item => item.id === currentProject.activeSceneId) || currentProject?.scenes[0]; }
@@ -283,6 +293,7 @@ function normalizeProject(project) {
     item.data.objects = item.data.objects.filter(entity => !(entity.type === 'light' && (entity.editorDefault === true || legacyLightNames.has(String(entity.name||'').trim().toLowerCase()))));
   });
   project.assets ||= [];
+  project.materials ||= [];
   project.scripts ||= [];
   project.assetFolders ||= [];
   project.zeroBoxes ||= [];
@@ -412,7 +423,7 @@ function createProjectModal() {
 }
 async function openProject(project) {
   currentProject = normalizeProject(project);
-  selectedId = null;
+  selectedId = null; selectedIds = new Set();
   selectedBlockId = null; selectedBlockIds = new Set(); pendingZeroPort = null;
   selectedAssetId = null;
   currentTab = 'assets'; assetFolderFilter = 'All';
@@ -464,6 +475,7 @@ async function exportProjectZip() {
     activeSceneId: exportingProject.activeSceneId,
     scenes: exportingProject.scenes.map(({id,name,data}) => ({id,name,data})),
     scripts: exportingProject.scripts,
+    materials: exportingProject.materials || [],
     zeroBoxes: exportingProject.zeroBoxes || [], uiElements: exportingProject.uiElements || [], variables: exportingProject.variables || [], assetFolders: exportingProject.assetFolders || [],
     assets: exportingProject.assets.map(({id,name,type,size,folder,path}) => ({id,name,type,size,folder,path}))
   };
@@ -487,7 +499,7 @@ async function importProjectZip(file) {
     if (!manifestFile) throw new Error('В архиве нет project.json — это не ZIP-проект ZeroEngine.');
     const manifest = JSON.parse(await manifestFile.async('string'));
     if (manifest.format !== 'ZeroEngineProject') throw new Error('Неизвестный формат проекта.');
-    const project = normalizeProject({ ...manifest, id: uid(), updatedAt: new Date().toISOString(), assets: [], scripts: manifest.scripts || [], zeroBoxes: manifest.zeroBoxes || [], uiElements: manifest.uiElements || [], assetFolders: manifest.assetFolders || [], variables: manifest.variables || [] });
+    const project = normalizeProject({ ...manifest, id: uid(), updatedAt: new Date().toISOString(), assets: [], materials: manifest.materials || [], scripts: manifest.scripts || [], zeroBoxes: manifest.zeroBoxes || [], uiElements: manifest.uiElements || [], assetFolders: manifest.assetFolders || [], variables: manifest.variables || [] });
     for (const meta of manifest.assets || []) {
       const entry = zip.file(meta.path);
       if (!entry) continue;
@@ -526,28 +538,15 @@ function init3DEditor() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color('#171717');
   scene.environment = null; // No default environment illumination or startup lights.
-  editorCamera = new THREE.PerspectiveCamera(55, 1, 0.01, 10000);
+  editorCamera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
   editorCamera.position.set(7, 6, 9);
   orbit = new OrbitControls(editorCamera, canvas);
-  orbit.enabled = true;
-  orbit.enableRotate = true;
-  orbit.enablePan = true;
-  orbit.enableZoom = true;
   orbit.enableDamping = true;
   orbit.dampingFactor = .08;
-  orbit.rotateSpeed = .9;
-  orbit.panSpeed = 1;
-  orbit.zoomSpeed = 1;
-  orbit.screenSpacePanning = true;
-  orbit.zoomToCursor = true;
-  // Left drag rotates, middle drag is an alternate orbit gesture, right drag pans.
-  // The wheel remains dedicated to zoom/dolly.
-  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+  orbit.enableZoom = true; orbit.zoomSpeed = 1.15; orbit.minDistance = .35; orbit.maxDistance = 3000;
+  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   orbit.target.set(0, 0.8, 0);
-  orbit.minDistance = .05;
-  orbit.maxDistance = 10000;
-  orbit.minPolarAngle = .001;
-  orbit.maxPolarAngle = Math.PI - .001;
+  orbit.maxPolarAngle = Math.PI * .495;
   gridHelper = new THREE.GridHelper(100, 100, 0x53645b, 0x334139);
   gridHelper.material.transparent = true; gridHelper.material.opacity = .55;
   scene.add(gridHelper);
@@ -561,6 +560,7 @@ function init3DEditor() {
   scene.add(transform.getHelper());
   raycaster = new THREE.Raycaster(); pointer = new THREE.Vector2();
   canvas.addEventListener('pointerdown', onViewportPointerDown);
+  canvas.addEventListener('wheel', event => { event.preventDefault(); }, { passive: false });
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('dragenter', event => { event.preventDefault(); $('#viewport-drop-overlay').classList.add('visible'); });
   canvas.addEventListener('dragover', event => event.preventDefault());
@@ -581,8 +581,7 @@ function init3DEditor() {
   window.addEventListener('blur',()=>{if(isPlaying){heldKeys.clear();for(const id of [...heldButtonIds]){const el=currentProject?.uiElements?.find(x=>x.id===id);if(el&&!el.sticky){el.pressed=false;heldButtonIds.delete(id);dispatchZeroBoxEvent('ButtonResting',id);}}}});
   // No input capture or player movement in the current preview mode.
   editorReady = true;
-  const viewportHud = $('.hud-top-left');
-  if (viewportHud) viewportHud.innerHTML = `<span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span>`;
+  setEditorCameraMode('perspective');
   resizeRenderer();
   renderer.setAnimationLoop(renderFrame);
 }
@@ -666,6 +665,7 @@ function renderFrame(now) {
   for (const mixer of animationMixers.values()) mixer.update(scaledDelta);
   updateCustomAnimations(scaledDelta);
   if (isPlaying) { processHeldZeroBoxes(scaledDelta); stepBasicPhysics(scaledDelta); }
+  if (!isPlaying) for (const helper of selectionHelpers.values()) helper.update();
   renderer.render(scene, isPlaying && previewCamera ? previewCamera : editorCamera);
   fpsFrames++;
   if (now - fpsStarted > 1000) { $('#fps-label').textContent = `${Math.round(fpsFrames * 1000 / (now - fpsStarted))} FPS`; fpsFrames = 0; fpsStarted = now; }
@@ -684,7 +684,7 @@ function onViewportPointerDown(event) {
     const hits=raycaster.intersectObjects(candidates,false);
     if(!hits.length){selectObject(null);return;}
     let target=hits[0].object;while(target&&!target.userData.entityId)target=target.parent;
-    if(target?.userData.entityId)selectObject(target.userData.entityId);
+    if(target?.userData.entityId)selectObject(target.userData.entityId, { additive: upEvent.shiftKey || upEvent.ctrlKey || upEvent.metaKey, toggle: upEvent.shiftKey || upEvent.ctrlKey || upEvent.metaKey });
   };
   canvas.addEventListener('pointerup',finish,{once:true});
 }
@@ -734,19 +734,41 @@ function setTransformMode(mode) {
   transform.setMode(mode);
   $$('[data-transform]').forEach(button => button.classList.toggle('active', button.dataset.transform === mode));
 }
-function selectObject(id) {
-  selectedId = id;
-  const object = id ? sceneObjects.get(id) : null;
+function updateSelectionHelpers() {
+  for (const [id, helper] of selectionHelpers) { scene?.remove(helper); helper.geometry?.dispose?.(); helper.material?.dispose?.(); }
+  selectionHelpers.clear();
+  if (isPlaying || !scene) return;
+  for (const id of selectedIds) {
+    const object = sceneObjects.get(id); if (!object) continue;
+    const helper = new THREE.BoxHelper(object, id === selectedId ? 0xf2f2f2 : 0x9a9a9a);
+    helper.material.depthTest = false; helper.material.transparent = true; helper.material.opacity = .95;
+    helper.renderOrder = 1000; scene.add(helper); selectionHelpers.set(id, helper);
+  }
+}
+function selectObject(id, options = {}) {
+  const { additive = false, toggle = false } = options;
+  if (toggle && id) {
+    if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+    selectedId = selectedIds.has(id) ? id : ([...selectedIds].at(-1) || null);
+  } else if (additive && id) {
+    selectedIds.add(id); selectedId = id;
+  } else {
+    selectedId = id || null;
+    selectedIds = new Set(id ? [id] : []);
+  }
+  const object = selectedId ? sceneObjects.get(selectedId) : null;
   if (transform) {
     if (object && !isPlaying) transform.attach(object);
     else transform.detach();
   }
+  updateSelectionHelpers();
   renderHierarchy(); renderInspector(); updateSelectedStatus();
 }
 function findEntity(id) { return activeSceneData()?.objects.find(item => item.id === id); }
 function updateSelectedStatus() {
   const entity = selectedId ? findEntity(selectedId) : null;
-  $('#selected-status').textContent = entity ? `Выбран: ${entity.name}` : 'Ничего не выбрано';
+  const dictionary=I18N[currentLanguage]||{};
+  $('#selected-status').textContent = selectedIds.size > 1 ? `${dictionary['Выбрано объектов:']||'Выбрано объектов:'} ${selectedIds.size}` : entity ? `${dictionary['Выбран:']||'Выбран:'} ${entity.name}` : (dictionary['Ничего не выбрано']||'Ничего не выбрано');
   const obj = selectedId ? sceneObjects.get(selectedId) : null;
   if (obj) $('#viewport-coordinate').innerHTML = `X ${obj.position.x.toFixed(2)}&nbsp;&nbsp; Y ${obj.position.y.toFixed(2)}&nbsp;&nbsp; Z ${obj.position.z.toFixed(2)}`;
   else $('#viewport-coordinate').textContent = 'X 0.00   Y 0.00   Z 0.00';
@@ -757,8 +779,8 @@ function renderHierarchy() {
   const list = $('#hierarchy-list');
   const entities = activeSceneData()?.objects || [];
   if (!entities.length) list.innerHTML = '<div class="asset-empty">Сцена пока пустая.</div>';
-  else list.innerHTML = entities.map(item => `<div class="tree-item ${selectedId === item.id ? 'selected' : ''}" data-tree-id="${item.id}" draggable="true"><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span></div>`).join('');
-  $$('[data-tree-id]', list).forEach(row => {row.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-object',row.dataset.treeId);event.dataTransfer.effectAllowed='copy';});row.addEventListener('click', () => selectObject(row.dataset.treeId));});
+  else list.innerHTML = entities.map(item => `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''}" data-tree-id="${item.id}" draggable="true"><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span></div>`).join('');
+  $$('[data-tree-id]', list).forEach(row => {row.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-object',row.dataset.treeId);event.dataTransfer.effectAllowed='copy';});row.addEventListener('click', event => selectObject(row.dataset.treeId, { additive: event.shiftKey || event.ctrlKey || event.metaKey, toggle: event.shiftKey || event.ctrlKey || event.metaKey }));});
   $('#object-count').textContent = localizedCount(entities.length,'objects');
   updateViewportHint();
 }
@@ -770,8 +792,8 @@ function syncSelectedTransform() {
 }
 function addObjectToScene(type = 'primitive', options = {}) {
   if (!currentProject) return;
-  snapshotHistory();
-  const labelMap = {cube:'Cube',sphere:'Sphere',plane:'Plane',cylinder:'Cylinder',cone:'Cone',capsule:'Capsule',torus:'Torus',torusKnot:'Torus Knot',dodecahedron:'Dodecahedron',icosahedron:'Icosahedron',octahedron:'Octahedron',tetrahedron:'Tetrahedron',camera:'Camera',player:'Player',spawn:'Player Start',light:'Point Light',skybox:'Skybox'};
+  if (!isPlaying) snapshotHistory();
+  const labelMap = {cube:'Cube',sphere:'Sphere',plane:'Plane',cylinder:'Cylinder',cone:'Cone',capsule:'Capsule',torus:'Torus',torusKnot:'Torus Knot',dodecahedron:'Dodecahedron',icosahedron:'Icosahedron',octahedron:'Octahedron',tetrahedron:'Tetrahedron',camera:'Camera',player:'Player',spawn:'Player Start',light:'Point Light',environmentLight:'Environment Light',skybox:'Skybox'};
   const entity = {
     id: uid(), name: options.name || (type === 'primitive' ? labelMap[options.primitive] || 'Object' : labelMap[type] || 'Object'),
     type, primitive: options.primitive || undefined, assetId: options.assetId || undefined,
@@ -781,7 +803,8 @@ function addObjectToScene(type = 'primitive', options = {}) {
     collision: type === 'player' ? { enabled: true, shape: 'capsule', size: [.6,1.8,.6], offset: [0,.9,0], isTrigger: false } : type === 'primitive' ? { enabled: true, shape: 'box', size: ({plane:[4,.05,4],sphere:[1.4,1.4,1.4],cylinder:[1.1,1.2,1.1],cone:[1.4,1.35,1.4],capsule:[.84,1.54,.84]})[options.primitive] || [1.2,1.2,1.2], offset: [0,0,0], isTrigger: false } : type === 'model' ? { enabled: true, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false, autoFit: true } : { enabled: false, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false },
     physics: type === 'player' ? { enabled: true, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 } : { enabled: false, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 },
     material: { color: '#a5ef4c', roughness: .72, tileX: 1, tileY: 1 },
-    light: type === 'light' ? { kind: 'point', color: '#fff2d6', intensity: 2, distance: 12 } : undefined
+    light: type === 'light' ? { kind: 'point', color: '#fff2d6', intensity: 2, distance: 12 } : undefined,
+    environment: type === 'environmentLight' ? { shape:'sphere', size:24, color:'#ffffff', groundColor:'#777777', intensity:1 } : undefined
   };
   activeSceneData().objects.push(entity);
   createRuntimeObject(entity).then(() => { selectObject(entity.id); renderHierarchy(); scheduleSave(); }).catch(error => { console.error(error); activeSceneData().objects = activeSceneData().objects.filter(item => item.id !== entity.id); sceneObjects.delete(entity.id); renderHierarchy(); renderInspector(); toast(`Не удалось добавить объект: ${error.message || 'ошибка загрузки'}`, 'error'); scheduleSave(); });
@@ -849,6 +872,21 @@ function makeLightObject(entity) {
   group.userData.light = light;
   return group;
 }
+function makeEnvironmentLightObject(entity) {
+  const group = new THREE.Group();
+  const cfg = entity.environment || { shape:'sphere', size:24, color:'#ffffff', groundColor:'#777777', intensity:1 };
+  const light = new THREE.HemisphereLight(cfg.color || '#ffffff', cfg.groundColor || '#777777', Math.max(0, Number(cfg.intensity ?? 1)));
+  light.position.set(0, 1, 0); light.castShadow = false; group.add(light);
+  const extent = Math.max(1, Number(cfg.size) || 24);
+  const geometry = cfg.shape === 'box' ? new THREE.BoxGeometry(extent, extent, extent) : new THREE.SphereGeometry(extent / 2, 24, 16);
+  const boundary = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color:0xe8e8e8, wireframe:true, transparent:true, opacity:.18, depthWrite:false }));
+  boundary.userData.editorOnly = true; boundary.userData.environmentBoundary = true; group.add(boundary);
+  const marker = new THREE.Mesh(new THREE.SphereGeometry(.18, 12, 8), new THREE.MeshBasicMaterial({ color:0xffffff }));
+  marker.position.y = .2; marker.userData.editorOnly = true; group.add(marker);
+  group.userData.environmentLight = light;
+  return group;
+}
+
 function attachStoredRig(entity, object) {
   const bones = entity.rig?.bones;
   if (!Array.isArray(bones) || !bones.length) return;
@@ -892,8 +930,10 @@ async function createRuntimeObject(entity) {
   if (existing) { scene.remove(existing); sceneObjects.delete(entity.id); }
   let object;
   if (entity.type === 'model') object = await loadModelAsset(entity.assetId);
+  else if (entity.type === 'player' && entity.modelAssetId) object = await loadModelAsset(entity.modelAssetId);
   else if (entity.type === 'camera' || entity.type === 'player' || entity.type === 'spawn' || entity.type === 'skybox') object = makeMarker(entity);
   else if (entity.type === 'light') object = makeLightObject(entity);
+  else if (entity.type === 'environmentLight') object = makeEnvironmentLightObject(entity);
   else object = createPrimitiveMesh(entity);
   if (!object) return null;
   object.userData.entityId = entity.id;
@@ -936,6 +976,8 @@ async function loadSceneIntoViewport() {
   if (!scene || !currentProject) return;
   isRestoring = true;
   transform.detach();
+  for (const helper of selectionHelpers.values()) { scene.remove(helper); helper.geometry?.dispose?.(); helper.material?.dispose?.(); }
+  selectionHelpers.clear();
   for (const object of sceneObjects.values()) scene.remove(object);
   sceneObjects.clear(); collisionHelpers.clear(); animationMixers.clear();
   const data = activeSceneData();
@@ -951,16 +993,26 @@ async function loadSceneIntoViewport() {
   renderHierarchy();
   updateViewportHint();
 }
+function removeSceneObject(id, takeSnapshot = true) {
+  const entity = findEntity(id); if (!entity) return null;
+  if (takeSnapshot && !isPlaying) snapshotHistory();
+  const object = sceneObjects.get(id);
+  if (object) { scene.remove(object); object.traverse(child=>{child.geometry?.dispose?.(); if(child.material) for(const m of (Array.isArray(child.material)?child.material:[child.material])) m?.dispose?.();}); }
+  sceneObjects.delete(id); collisionHelpers.delete(id); activeSceneData().objects = activeSceneData().objects.filter(item=>item.id!==id);
+  selectedIds.delete(id); if(selectedId===id)selectedId=[...selectedIds].at(-1)||null;
+  if(transform){const active=selectedId?sceneObjects.get(selectedId):null;if(active)transform.attach(active);else transform.detach();}
+  setAllEditorMaterials();
+  updateSelectionHelpers(); return entity;
+}
 function deleteSelectedObject() {
-  if (!selectedId) return;
-  snapshotHistory();
-  const entity = findEntity(selectedId);
-  const object = sceneObjects.get(selectedId);
-  if (object) scene.remove(object);
-  sceneObjects.delete(selectedId);
-  activeSceneData().objects = activeSceneData().objects.filter(item => item.id !== selectedId);
-  selectedId = null; transform.detach(); renderHierarchy(); renderInspector(); updateSelectedStatus(); scheduleSave();
-  toast(`${entity?.name || 'Объект'} удалён`, 'success');
+  if (!selectedIds.size && !selectedId) return;
+  const ids = selectedIds.size ? [...selectedIds] : [selectedId];
+  const first = findEntity(ids[0]);
+  if (!isPlaying) snapshotHistory();
+  ids.forEach(id=>removeSceneObject(id,false));
+  if(!selectedIds.size)selectedId=null;
+  renderHierarchy(); renderInspector(); updateSelectedStatus(); scheduleSave();
+  toast(ids.length>1?`Удалено объектов: ${ids.length}`:`${first?.name || 'Объект'} удалён`, 'success');
 }
 function duplicateSelectedObject() {
   const entity = findEntity(selectedId);
@@ -971,15 +1023,18 @@ function duplicateSelectedObject() {
   createRuntimeObject(duplicate).then(() => { selectObject(duplicate.id); renderHierarchy(); scheduleSave(); });
 }
 function applyEntityAppearance(entity, object) {
+  const savedMaterial=(currentProject.materials||[]).find(m=>m.id===entity.material?.materialId);
+  const appearance=savedMaterial?{...savedMaterial,...entity.material}:entity.material||{};
   object.traverse(child => {
     if (!child.isMesh || !child.material) return;
     const apply = material => {
       if (!material) return material;
       const mat = material.clone();
-      if (entity.material?.color && (entity.type !== 'model' || entity.material.overrideColor)) mat.color?.set(entity.material.color);
-      if (entity.material?.roughness != null && 'roughness' in mat) mat.roughness = Number(entity.material.roughness);
-      if (entity.material?.opacity != null) { mat.opacity = Number(entity.material.opacity); mat.transparent = mat.opacity < 1; }
-      if (entity.material?.textureAssetId) applyTextureToMaterial(mat, entity.material.textureAssetId, entity.material.tileX || 1, entity.material.tileY || 1);
+      if (appearance?.color && (entity.type !== 'model' || appearance.overrideColor)) mat.color?.set(appearance.color);
+      if (appearance?.roughness != null && 'roughness' in mat) mat.roughness = Number(appearance.roughness);
+      if (appearance?.metalness != null && 'metalness' in mat) mat.metalness = Number(appearance.metalness);
+      if (appearance?.opacity != null) { mat.opacity = Number(appearance.opacity); mat.transparent = mat.opacity < 1; }
+      if (appearance?.textureAssetId) applyTextureToMaterial(mat, appearance.textureAssetId, appearance.tileX || 1, appearance.tileY || 1);
       return mat;
     };
     child.material = Array.isArray(child.material) ? child.material.map(apply) : apply(child.material);
@@ -1060,7 +1115,7 @@ function eachEntityMaterial(mesh, callback) {
     if (material && !seen.has(material)) { seen.add(material); callback(material); }
   }
 }
-function setAllEditorMaterials() { const hasUserLights=!isPlaying&&(activeSceneData()?.objects||[]).some(entity=>entity.type==='light'&&entity.visible!==false); for (const object of sceneObjects.values()) setObjectEditorUnlit(object, !isPlaying&&!hasUserLights); }
+function setAllEditorMaterials() { const hasUserLights=(activeSceneData()?.objects||[]).some(entity=>['light','environmentLight'].includes(entity.type)&&entity.visible!==false); for (const object of sceneObjects.values()) setObjectEditorUnlit(object, !isPlaying&&!hasUserLights); }
 
 function normalizeImportedMaterials(mesh) {
   if (!mesh?.material) return;
@@ -1105,7 +1160,7 @@ function applyTextureToMaterial(material, assetId, tileX = 1, tileY = 1) {
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(Math.max(.01, Number(tileX) || 1), Math.max(.01, Number(tileY) || 1));
     material.map = texture; material.needsUpdate = true;
-    scheduleSave();
+    // Texture bytes and material references are saved with the project; loading a GPU texture is runtime-only.
   });
 }
 function applyTextureToSelection(assetId) {
@@ -1120,6 +1175,57 @@ function applyTextureToSelection(assetId) {
     child.material = Array.isArray(child.material) ? child.material.map(apply) : apply(child.material);
   });
   renderInspector(); scheduleSave(); toast('Текстура назначена объекту', 'success');
+}
+
+function materialDataFromEntity(entity, name='Material') {
+  const m=entity?.material||{};
+  return { id:uid(), name, color:m.color||'#a5ef4c', roughness:Number(m.roughness??.72), metalness:Number(m.metalness??0), opacity:Number(m.opacity??1), textureAssetId:m.textureAssetId||null, tileX:Number(m.tileX||1), tileY:Number(m.tileY||1) };
+}
+function saveMaterialToLibrary(entity=findEntity(selectedId)) {
+  if(!entity){toast('Сначала выбери объект','error');return;}
+  const draft=materialDataFromEntity(entity,`${entity.name} Material`);
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">MATERIAL LIBRARY</span><h2 id="modal-title">Сохранить материал</h2><p>Материал будет сохранён в памяти проекта и попадёт в ZIP-архив.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="save-material-form"><div class="modal-body"><label class="field-label">Название<input class="field-input" id="material-name" maxlength="64" value="${escapeAttr(draft.name)}" required /></label><div class="modal-note">Цвет, шероховатость, металличность, прозрачность, текстура и Tiling будут сохранены из выбранного объекта.</div></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary">Сохранить материал</button></div></form>`);
+  $('#save-material-form').addEventListener('submit',event=>{event.preventDefault();draft.name=$('#material-name').value.trim()||'Material';currentProject.materials ||= [];currentProject.materials.push(draft);closeModal();setAssetTab('materials');scheduleSave();toast('Материал сохранён в библиотеку проекта','success');});
+}
+function createMaterial() {
+  const draft={id:uid(),name:`Material_${(currentProject.materials||[]).length+1}`,color:'#b8b8b8',roughness:.72,metalness:0,opacity:1,textureAssetId:null,tileX:1,tileY:1};
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">MATERIAL LIBRARY</span><h2 id="modal-title">Новый материал</h2><p>Создай базовый материал, который можно назначать разным объектам.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="new-material-form"><div class="modal-body"><label class="field-label">Название<input class="field-input" id="new-material-name" value="${draft.name}" required maxlength="64" /></label><label class="field-label">Цвет<input class="field-input" id="new-material-color" type="color" value="${draft.color}" /></label><label class="field-label">Шероховатость<input class="field-input" id="new-material-rough" type="number" min="0" max="1" step=".01" value=".72" /></label><label class="field-label">Металличность<input class="field-input" id="new-material-metal" type="number" min="0" max="1" step=".01" value="0" /></label><label class="field-label">Текстура<select class="field-select" id="new-material-texture"><option value="">Без текстуры</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select></label><div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="new-material-tile-x" type="number" min=".01" step=".1" value="1" /></label><label class="field-label">Tiling Y<input class="field-input" id="new-material-tile-y" type="number" min=".01" step=".1" value="1" /></label></div></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary">Создать</button></div></form>`);
+  $('#new-material-form').addEventListener('submit',event=>{event.preventDefault();draft.name=$('#new-material-name').value.trim()||draft.name;draft.color=$('#new-material-color').value;draft.roughness=Math.max(0,Math.min(1,Number($('#new-material-rough').value)||0));draft.metalness=Math.max(0,Math.min(1,Number($('#new-material-metal').value)||0));draft.textureAssetId=$('#new-material-texture').value||null;draft.tileX=Math.max(.01,Number($('#new-material-tile-x').value)||1);draft.tileY=Math.max(.01,Number($('#new-material-tile-y').value)||1);currentProject.materials ||= [];currentProject.materials.push(draft);closeModal();renderAssetPanel();scheduleSave();toast('Материал создан','success');});
+}
+function applyMaterialToEntity(entity, material) {
+  if(!entity||!material)return;
+  entity.material={...clone(material),materialId:material.id,overrideColor:true};
+  const object=sceneObjects.get(entity.id);if(!object)return;
+  object.traverse(child=>{if(!child.isMesh||!child.material)return;const apply=mat=>{const copy=mat.clone();if(copy.color)copy.color.set(material.color||'#ffffff');if('roughness' in copy)copy.roughness=Number(material.roughness??.72);if('metalness' in copy)copy.metalness=Number(material.metalness??0);copy.opacity=Number(material.opacity??1);copy.transparent=copy.opacity<1;if(material.textureAssetId)applyTextureToMaterial(copy,material.textureAssetId,material.tileX||1,material.tileY||1);return copy;};child.material=Array.isArray(child.material)?child.material.map(apply):apply(child.material);});
+  renderInspector();scheduleSave();toast(`Материал «${material.name}» назначен`,'success');
+}
+function deleteMaterial(id) {
+  const material=currentProject.materials?.find(m=>m.id===id);if(!material)return;
+  currentProject.materials=currentProject.materials.filter(m=>m.id!==id);
+  for(const sc of currentProject.scenes||[])for(const entity of sc.data.objects||[])if(entity.material?.materialId===id)delete entity.material.materialId;
+  renderAssetPanel();scheduleSave();toast('Материал удалён из библиотеки','success');
+}
+function blobToDataUrl(blob) {
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result||''));
+    reader.onerror=()=>reject(reader.error||new Error('Не удалось прочитать текстуру'));
+    reader.readAsDataURL(blob);
+  });
+}
+function dataUrlToBlob(dataUrl) {
+  const match=String(dataUrl||'').match(/^data:([^;,]+)?;base64,([\s\S]+)$/);
+  if(!match)throw new Error('Некорректная встроенная текстура');
+  const binary=atob(match[2]);const bytes=new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+  return new Blob([bytes],{type:match[1]||'application/octet-stream'});
+}
+async function exportMaterial(id) {
+  const material=currentProject.materials?.find(m=>m.id===id);if(!material)return;
+  const portable={...clone(material),textureAssetId:null};
+  const texture=currentProject.assets.find(asset=>asset.id===material.textureAssetId&&asset.type==='texture');
+  if(texture?.blob)portable.embeddedTexture={name:texture.name,type:texture.blob.type||'application/octet-stream',dataUrl:await blobToDataUrl(texture.blob)};
+  downloadBlob(new Blob([JSON.stringify({format:'ZeroEngineMaterial',version:1,material:portable},null,2)],{type:'application/json'}),`${safeName(material.name)}.zemat`);
 }
 
 // ---------- Inspector ----------
@@ -1160,18 +1266,19 @@ function renderInspector() {
       <div class="modal-note">Базовая физика: гравитация, масса, скорость и столкновения с активными коллайдерами. Для блоков физика должна быть включена.</div>
     </div></section>` : ''}
     ${entity.type === 'light' ? `<section class="inspector-section"><div class="inspector-section-title">Источник света <span>LIGHT</span></div><div class="inspector-section-body"><label class="field-label">Тип<select class="field-select" id="light-kind"><option value="point" ${(entity.light?.kind||'point')==='point'?'selected':''}>Точечный</option><option value="directional" ${entity.light?.kind==='directional'?'selected':''}>Направленный</option><option value="spot" ${entity.light?.kind==='spot'?'selected':''}>Прожектор</option></select></label><label class="field-label">Цвет<input class="field-input" id="light-color" type="color" value="${entity.light?.color||'#fff2d6'}" /></label><label class="field-label">Интенсивность<input class="field-input" id="light-intensity" type="number" min="0" max="100" step=".1" value="${entity.light?.intensity??2}" /></label><label class="field-label">Дальность<input class="field-input" id="light-distance" type="number" min="0" max="1000" step=".5" value="${entity.light?.distance??12}" /></label></div></section>` : ''}
+    ${entity.type === 'environmentLight' ? `<section class="inspector-section"><div class="inspector-section-title">Окружной источник света <span>ENVIRONMENT</span></div><div class="inspector-section-body"><label class="field-label">Форма области<select class="field-select" id="env-shape"><option value="sphere" ${(entity.environment?.shape||'sphere')==='sphere'?'selected':''}>Большая сфера</option><option value="box" ${entity.environment?.shape==='box'?'selected':''}>Куб</option></select></label><label class="field-label">Размер области (м)<input class="field-input" id="env-size" type="number" min="1" max="1000" step="1" value="${entity.environment?.size??24}" /></label><label class="field-label">Цвет верхнего света<input class="field-input" id="env-color" type="color" value="${entity.environment?.color||'#ffffff'}" /></label><label class="field-label">Цвет нижнего света<input class="field-input" id="env-ground-color" type="color" value="${entity.environment?.groundColor||'#777777'}" /></label><label class="field-label">Интенсивность<input class="field-input" id="env-intensity" type="number" min="0" max="5" step=".1" value="${entity.environment?.intensity??1}" /></label><div class="modal-note">Освещает сцену со всех сторон через Hemisphere Light. Тени не создаёт. Область отображается только как ориентир в редакторе.</div></div></section>` : ''}
     ${entity.type === 'skybox' ? `<section class="inspector-section"><div class="inspector-section-title">Skybox <span>ENVIRONMENT</span></div><div class="inspector-section-body"><label class="field-label">Панорамная текстура<select class="field-select" id="skybox-texture"><option value="">Не выбрана</option>${currentProject.assets.filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${entity.assetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><div class="modal-note">Skybox использует панорамную текстуру (equirectangular), предпочтительно HDR/360° или широкую панораму.</div></div></section>` : ''}
     ${entity.type === 'model' ? `<section class="inspector-section"><div class="inspector-section-title">Масштаб модели <span>MODEL UNITS</span></div><div class="inspector-section-body"><label class="field-label">Единицы исходной модели<select class="field-select" id="model-unit-mode"><option value="auto" ${(entity.unitMode||'auto')==='auto'?'selected':''}>Автоопределение</option><option value="meters" ${entity.unitMode==='meters'?'selected':''}>Метры (×1)</option><option value="centimeters" ${entity.unitMode==='centimeters'?'selected':''}>Сантиметры (×0.01)</option><option value="millimeters" ${entity.unitMode==='millimeters'?'selected':''}>Миллиметры (×0.001)</option></select></label><button class="button" id="apply-model-units">Применить единицы</button><div class="modal-note">Автоопределение исправляет типичные FBX/Blender расхождения. Для точного размера можно выбрать единицы вручную; окончательный масштаб также регулируется выше в Transform.</div></div></section><section class="inspector-section"><div class="inspector-section-title">Анимации и скелет <span>ANIMATION</span></div><div class="inspector-section-body"><label class="field-label">Клип GLTF/FBX<select class="field-select" id="model-animation-select"><option value="">Выбери анимацию</option>${(entity.availableAnimations||[]).map(name=>`<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join('')}</select></label><div class="inspector-actions"><button class="button" id="play-model-animation">▶ Проиграть</button><button class="button" id="stop-model-animation">■ Стоп</button></div><div class="modal-note" id="skeleton-info">${countSkinnedBones(sceneObjects.get(entity.id))} костей в импортированном скелете · клипы GLTF/FBX доступны выше.</div><button class="button" id="create-basic-rig">＋ Создать базовый скелет</button><div class="modal-note">${entity.rig?.bones?.map(b=>escapeHtml(b.name)).join(' · ')||'Собственный скелет ещё не создан.'}</div></div></section>` : ''}
     ${!['camera','spawn','light','skybox'].includes(entity.type) ? `<section class="inspector-section"><div class="inspector-section-title">Анимация объекта <span>KEYFRAMES</span></div><div class="inspector-section-body"><div class="inspector-actions"><button class="button" id="add-transform-key">＋ Записать ключ</button><button class="button" id="play-custom-animation">▶ Проиграть</button><button class="button" id="stop-custom-animation">■ Стоп</button></div><div id="custom-animation-list" class="modal-note">${(entity.animations||[]).map(a=>`${escapeHtml(a.name)} — ${a.keys?.length||0} ключей`).join('<br>') || 'Пользовательских анимаций пока нет.'}</div></div></section>` : ''}
     <section class="inspector-section"><div class="inspector-section-title">Материал <span>MATERIAL</span></div><div class="inspector-section-body">
       <label class="field-label">Основной цвет<input class="field-input" id="ins-color" type="color" value="${escapeAttr(material.color || '#a5ef4c')}" /></label>
       <label class="field-label">Шероховатость <span id="roughness-value">${Number(material.roughness ?? .72).toFixed(2)}</span><input class="field-input" id="ins-roughness" type="range" min="0" max="1" step=".01" value="${Number(material.roughness ?? .72)}" /></label>
-      <label class="field-label">Текстура ${textureAsset ? `<span>${escapeHtml(textureAsset.name)}</span>` : ''}<button class="button button-quiet" id="choose-texture-button">${textureAsset ? 'Заменить текстуру' : 'Назначить из файлов'}</button></label>
+      <label class="field-label">Текстура ${textureAsset ? `<span>${escapeHtml(textureAsset.name)}</span>` : ''}<button class="button button-quiet" id="choose-texture-button">${textureAsset ? 'Заменить текстуру' : 'Назначить из файлов'}</button></label><label class="field-label">Библиотека материалов<select class="field-select" id="ins-material-select"><option value="">Выбери сохранённый материал</option>${(currentProject.materials||[]).map(m=>`<option value="${m.id}" ${material.materialId===m.id?'selected':''}>${escapeHtml(m.name)}</option>`).join('')}</select></label><button class="button" id="apply-library-material">Применить материал</button><button class="button button-quiet" id="save-material-to-library">＋ Сохранить материал в библиотеку</button>
       <div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="tile-x" type="number" min="0.01" max="100" step="0.1" value="${Number(material.tileX || 1)}" /></label><label class="field-label">Tiling Y<input class="field-input" id="tile-y" type="number" min="0.01" max="100" step="0.1" value="${Number(material.tileY || 1)}" /></label></div>
       <div class="modal-note">Tiling управляет повторением текстуры по поверхности. Значение 1 × 1 — одно повторение.</div>
     </div></section>`;
   $('#ins-name').addEventListener('change', event => { entity.name = event.target.value.trim() || 'Object'; const obj = sceneObjects.get(entity.id); if (obj) obj.name = entity.name; renderHierarchy(); updateSelectedStatus(); scheduleSave(); });
-  $('#ins-visible').addEventListener('change', event => { entity.visible = event.target.checked; const obj = sceneObjects.get(entity.id); if (obj) obj.visible = entity.visible; scheduleSave(); });
+  $('#ins-visible').addEventListener('change', event => { entity.visible = event.target.checked; const obj = sceneObjects.get(entity.id); if (obj) obj.visible = entity.visible; setAllEditorMaterials(); scheduleSave(); });
   if (entity.type === 'player') {
     entity.cameraMount ||= {mode:'back',offset:[0,1.6,0],fov:70};
     delete entity.cameraMount.viewMode;
@@ -1192,6 +1299,9 @@ function renderInspector() {
   }
   if (entity.type === 'light') {
     ['kind','color','intensity','distance'].forEach(key=>$(`#light-${key}`).addEventListener('change',event=>{entity.light ||= {};entity.light[key]=key==='intensity'||key==='distance'?Number(event.target.value):event.target.value;const pos=entity.position.slice(),rot=entity.rotation.slice(),scl=entity.scale.slice();createRuntimeObject(entity).then(()=>{const o=sceneObjects.get(entity.id);o.position.fromArray(pos);o.rotation.set(...rot.map(v=>THREE.MathUtils.degToRad(v)));o.scale.fromArray(scl);selectObject(entity.id);});scheduleSave();}));
+  }
+  if (entity.type === 'environmentLight') {
+    ['shape','size','color','ground-color','intensity'].forEach(key=>$(`#env-${key}`)?.addEventListener('change',event=>{entity.environment ||= {shape:'sphere',size:24,color:'#ffffff',groundColor:'#777777',intensity:1};const prop=key==='ground-color'?'groundColor':key;entity.environment[prop]=key==='size'||key==='intensity'?Number(event.target.value):event.target.value;const pos=entity.position.slice(),rot=entity.rotation.slice(),scl=entity.scale.slice();createRuntimeObject(entity).then(()=>{const o=sceneObjects.get(entity.id);o.position.fromArray(pos);o.rotation.set(...rot.map(v=>THREE.MathUtils.degToRad(v)));o.scale.fromArray(scl);selectObject(entity.id);});scheduleSave();}));
   }
   if (entity.type === 'model') {
     $('#play-model-animation')?.addEventListener('click',()=>playImportedAnimation(entity));
@@ -1225,6 +1335,8 @@ function renderInspector() {
     scheduleSave();
   }));
   $('#choose-texture-button').addEventListener('click', () => { setAssetTab('assets'); toast('Выбери текстуру в нижней панели', 'success'); });
+  $('#save-material-to-library')?.addEventListener('click',()=>saveMaterialToLibrary(entity));
+  $('#apply-library-material')?.addEventListener('click',()=>{const saved=currentProject.materials?.find(m=>m.id===$('#ins-material-select')?.value);if(saved)applyMaterialToEntity(entity,saved);else toast('Выбери материал из библиотеки','error');});
   bindVectorInputs();
 }
 function vectorFields(label, prefix, values) {
@@ -1267,6 +1379,22 @@ async function addAssetsFromFiles(files) {
     const relative = file.webkitRelativePath || file.name;
     const type = typeOf(file.name);
     if (file.name.toLowerCase().endsWith('.blend')) { errors.push(`${file.name}: экспортируй из Blender в GLB`); continue; }
+    if (extOf(file.name)==='zemat') {
+      try {
+        const parsed=JSON.parse(await file.text());const source=parsed.material||parsed;
+        if(parsed.format&&parsed.format!=='ZeroEngineMaterial')throw new Error('unknown');
+        let textureAssetId=currentProject.assets.some(asset=>asset.id===source.textureAssetId)?source.textureAssetId:null;
+        const embedded=source.embeddedTexture||parsed.embeddedTexture;
+        if(embedded?.dataUrl){
+          const blob=dataUrlToBlob(embedded.dataUrl);const textureId=uid();
+          const textureName=String(embedded.name||`${source.name||'Material'}_Texture.png`).replace(/[\\/:*?"<>|]+/g,'_');
+          currentProject.assets.push({id:textureId,name:textureName,type:'texture',size:blob.size,folder:'Textures',path:`Assets/${textureId}_${safeName(textureName)}`,blob});
+          textureAssetId=textureId;
+        }
+        const material={id:uid(),name:String(source.name||file.name.replace(/\.zemat$/i,'')),color:source.color||'#b8b8b8',roughness:Number(source.roughness??.72),metalness:Number(source.metalness??0),opacity:Number(source.opacity??1),textureAssetId,tileX:Number(source.tileX||1),tileY:Number(source.tileY||1)};
+        currentProject.materials ||= [];currentProject.materials.push(material);added++;continue;
+      } catch(error) { console.warn('Material import failed',error);errors.push(`${file.name}: некорректный файл материала`);continue; }
+    }
     if (type === 'file') { errors.push(`${file.name}: формат не поддерживается`); continue; }
     if (type === 'zerobox') {
       try { const data = JSON.parse(await file.text()); currentProject.zeroBoxes.push({ id: uid(), name: file.name.replace(/\.zbox$/i,''), blocks: data.blocks || [], connections: data.connections || [], variables: data.variables || [] }); added++; }
@@ -1303,7 +1431,18 @@ function renderAssetPanel() {
   const content = $('#asset-content');
   $$('.asset-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.assetTab === currentTab));
   $('#export-current-scene-button').hidden = currentTab !== 'scenes';
-  if (currentTab === 'assets') {
+  if (currentTab === 'materials') {
+    $('#asset-path').textContent = 'Materials / Library';
+    const materials=currentProject.materials||[];
+    const dictionary=I18N[currentLanguage]||{};
+    const roughLabel=dictionary['Шероховатость']||'Шероховатость';
+    const metalLabel=dictionary['Металличность']||'Металличность';
+    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#b8b8b8')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
+    $('#new-material-card').addEventListener('click',createMaterial);
+    $$('[data-remove-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();deleteMaterial(button.dataset.removeMaterial);}));
+    $$('[data-export-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();exportMaterial(button.dataset.exportMaterial).catch(error=>{console.error(error);toast('Не удалось экспортировать материал','error');});}));
+    $$('[data-apply-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const material=materials.find(m=>m.id===button.dataset.applyMaterial);if(!selectedId){toast('Сначала выбери объект на сцене','error');return;}applyMaterialToEntity(findEntity(selectedId),material);}));
+  } else if (currentTab === 'assets') {
     $('#asset-path').textContent = 'Assets / All';
     const assets = currentProject.assets;
     const folders = [...new Set([...(currentProject.assetFolders||[]),...assets.map(asset => asset.folder || 'Корень проекта')])].sort();
@@ -1415,7 +1554,7 @@ function runZeroScript(code) {
       if (setMatch) {
         const entity = activeSceneData().objects.find(item => item.name === setMatch[2]);
         if (!entity) { output.push(`Строка ${index+1}: объект «${setMatch[2]}» не найден`); continue; }
-        if (setMatch[4] === 'visible') { entity.visible = setMatch[5] === 'true'; const object = sceneObjects.get(entity.id); if (object) object.visible = entity.visible; }
+        if (setMatch[4] === 'visible') { entity.visible = setMatch[5] === 'true'; const object = sceneObjects.get(entity.id); if (object) object.visible = entity.visible; setAllEditorMaterials(); }
         else { entity.name = setMatch[7]; const object = sceneObjects.get(entity.id); if (object) object.name = entity.name; }
         output.push(`set: ${entity.name}`); continue;
       }
@@ -1427,6 +1566,19 @@ function runZeroScript(code) {
   toast('ZeroScript выполнен', 'success');
 }
 
+function setEditorCameraMode() {
+  editorCameraMode = 'perspective';
+  if (!scene || !renderer || !editorCamera) return;
+  const width = Math.max(1, $('#viewport-wrap')?.clientWidth || window.innerWidth);
+  const height = Math.max(1, $('#viewport-wrap')?.clientHeight || window.innerHeight);
+  editorCamera.fov = 55;
+  editorCamera.aspect = width / height;
+  editorCamera.updateProjectionMatrix();
+  orbit && (orbit.enabled = !isPlaying, orbit.enableZoom = true, orbit.zoomSpeed = 1.15);
+  const label = $('.hud-top-left');
+  if (label) label.innerHTML = `<span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">${$('#fps-label')?.textContent || '60 FPS'}</span>`;
+  resizeRenderer();
+}
 function getPlayerCameraAnchor(mount) {
   if (mount.mode === 'head') return new THREE.Vector3(0, 1.6, 0);
   if (mount.mode === 'top') return new THREE.Vector3(0, .65, 0);
@@ -1539,7 +1691,7 @@ async function restoreHistory(from, to) {
   to.push(JSON.stringify(activeSceneData()));
   const state = JSON.parse(from.pop());
   const sceneItem = activeScene(); sceneItem.data = state;
-  selectedId = null; await loadSceneIntoViewport(); renderInspector(); scheduleSave(); updateHistoryButtons();
+  selectedId = null; selectedIds = new Set(); await loadSceneIntoViewport(); renderInspector(); scheduleSave(); updateHistoryButtons();
 }
 function undo() { restoreHistory(undoStack, redoStack); }
 function redo() { restoreHistory(redoStack, undoStack); }
@@ -1650,6 +1802,30 @@ function bindUI() {
   $('#play-button').addEventListener('click', startPlayMode);
   $('#open-zerobox-button').addEventListener('click', () => openWorkbench('zerobox'));
   $('#open-interface-button').addEventListener('click', () => openWorkbench('interface'));
+  $('#open-model-studio').addEventListener('click', openModelStudio);
+  $('#model-studio-back').addEventListener('click', closeModelStudio);
+  $('#model-import-open').addEventListener('click',()=>$('#model-import-input').click());
+  $('#model-import-input').addEventListener('change',e=>importModelStudioFile(e.target.files?.[0]));
+  $('#model-save').addEventListener('click', saveModelStudioAsset);
+  $('#model-undo').addEventListener('click', undoModelStudio);
+  $('#model-copy').addEventListener('click', copyModelObject); $('#model-paste').addEventListener('click', pasteModelObject);
+  $('#model-player').addEventListener('click', convertModelToPlayer);
+  $('#model-reference-add').addEventListener('click',()=>$('#model-reference-input').click());
+  $('#model-reference-input').addEventListener('change',e=>loadModelReference(e.target.files?.[0]));
+  $('#model-reference-remove').addEventListener('click',removeModelReference);
+  $('#model-texture-add').addEventListener('click',()=>$('#model-texture-input').click());
+  $('#model-texture-input').addEventListener('change',e=>loadModelTexture(e.target.files?.[0]));
+  $('#model-texture-crop').addEventListener('click',cropModelTexture);
+  $('#model-paint-open').addEventListener('click',()=>$('#model-paint-panel').classList.toggle('hidden'));
+  $('#model-paint-apply').addEventListener('click',applyModelPaint);
+  $('#model-paint-canvas').addEventListener('pointerdown',startModelPaint);
+  $('#model-paint-canvas').addEventListener('pointermove',moveModelPaint);
+  $('#model-paint-canvas').addEventListener('pointerup',endModelPaint);
+  $('#model-paint-canvas').addEventListener('pointerleave',endModelPaint);
+  $$('#model-studio [data-model-mode]').forEach(b=>b.addEventListener('click',()=>setModelMode(b.dataset.modelMode)));
+  $$('#model-studio [data-model-tool]').forEach(b=>b.addEventListener('click',()=>runModelTool(b.dataset.modelTool)));
+  $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>`<button data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇','♟'][i]} ${n}</button>`).join('');
+  $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
   $('#close-workbench').addEventListener('click', closeWorkbench);
   $('#workbench-save').addEventListener('click', () => { scheduleSave(); toast('Изменения редактора сохранены', 'success'); });
   $('#workbench-run').addEventListener('click', () => { const box = currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if (box) runZeroBox(box, 'manual'); else toast('Выбери ZeroBox', 'error'); });
@@ -1662,15 +1838,14 @@ function bindUI() {
   $('#undo-button').addEventListener('click', undo); $('#redo-button').addEventListener('click', redo);
   $$('[data-transform]').forEach(button => button.addEventListener('click', () => setTransformMode(button.dataset.transform)));
   $('#focus-object').addEventListener('click', focusSelectedObject);
-  $('#focus-scene').addEventListener('click', focusAllScene);
   $('#grid-toggle').addEventListener('click', () => { activeSceneData().grid = !activeSceneData().grid; gridHelper.visible = axesHelper.visible = activeSceneData().grid; scheduleSave(); });
-  $('#viewport-help').addEventListener('click', () => toast('ЛКМ или СКМ — вращать камеру · ПКМ или Shift+ЛКМ — панорама · Колесо — приблизить/отдалить · Кнопка ⛶ — показать всю сцену · Gizmo — двигать объект')); 
+  $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · ПКМ — перемещать обзор · Колесо — приблизить/отдалить · Gizmo — двигать выбранный объект')); 
   $('#import-files-button').addEventListener('click', () => $('#asset-files-input').click());
   $('#import-folder-button').addEventListener('click', () => $('#asset-folder-input').click());
   $('#new-folder-button').addEventListener('click', createAssetFolder);
   $('#asset-files-input').addEventListener('change', event => { addAssetsFromFiles([...event.target.files]); event.target.value = ''; });
   $('#asset-folder-input').addEventListener('change', event => { addAssetsFromFiles([...event.target.files]); event.target.value = ''; });
-  $('#create-asset-button').addEventListener('click', () => currentTab === 'scenes' ? createScene() : currentTab === 'scripts' ? createScript() : currentTab === 'zeroboxes' ? createZeroBox() : openCreateAssetMenu());
+  $('#create-asset-button').addEventListener('click', () => currentTab === 'scenes' ? createScene() : currentTab === 'scripts' ? createScript() : currentTab === 'zeroboxes' ? createZeroBox() : currentTab === 'materials' ? createMaterial() : openCreateAssetMenu());
   $('#export-current-scene-button').addEventListener('click', () => { const data = activeSceneData(); downloadBlob(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}), `${safeName(data.name)}.zescene`); toast('Файл сцены экспортирован', 'success'); });
   $$('.asset-tab').forEach(tab => tab.addEventListener('click', () => setAssetTab(tab.dataset.assetTab)));
   $('#modal-backdrop').addEventListener('click', event => { if (event.target.id === 'modal-backdrop') closeModal(); });
@@ -1691,11 +1866,11 @@ function openAddObjectMenu() {
   const categories=[
     {id:'basic',label:'Основные',icon:'◈',items:[['cube','Куб','⬡'],['plane','Плоскость','▱'],['sphere','Сфера','●'],['cylinder','Цилиндр','⬭'],['cone','Конус','△'],['capsule','Капсула','◉']]},
     {id:'advanced',label:'Дополнительные формы',icon:'◇',items:[['torus','Тор','◎'],['torusKnot','Узел тор','♧'],['dodecahedron','Додекаэдр','⬟'],['icosahedron','Икосаэдр','⬢'],['octahedron','Октаэдр','◇'],['tetrahedron','Тетраэдр','△']]},
-    {id:'game',label:'Игровые объекты',icon:'♟',items:[['player','Player','♟'],['spawn','Player Start','⌖'],['camera','Камера','▣'],['skybox','Skybox','☁'],['light','Источник света','✦']]}
+    {id:'game',label:'Игровые объекты',icon:'♟',items:[['player','Player','♟'],['spawn','Player Start','⌖'],['camera','Камера','▣'],['skybox','Skybox','☁'],['light','Источник света','✦'],['environmentLight','Окружной свет','☼']]}
   ];
   const active='basic';
   showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE OBJECTS</span><h2 id="modal-title">Добавить объект</h2><p>Выбери категорию, затем нужный объект.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body add-object-body"><div class="object-category-tabs">${categories.map(c=>`<button class="object-category-tab ${c.id===active?'active':''}" data-object-category="${c.id}"><span>${c.icon}</span>${c.label}</button>`).join('')}</div><div class="add-object-grid" id="add-object-grid"></div><div class="modal-note">Модели Blender импортируются через GLB/GLTF, FBX, OBJ или STL из панели файлов.</div></div>`);
-  const draw=categoryId=>{const category=categories.find(c=>c.id===categoryId)||categories[0];$('#add-object-grid').innerHTML=category.items.map(([type,name,icon])=>`<button class="add-object-choice" data-add-type="${type}"><span>${icon}</span><b>${name}</b></button>`).join('');$$('[data-add-type]').forEach(button=>button.addEventListener('click',()=>{const type=button.dataset.addType;closeModal();addObjectToScene(['camera','player','spawn','light','skybox'].includes(type)?type:'primitive',{primitive:type});}));};
+  const draw=categoryId=>{const category=categories.find(c=>c.id===categoryId)||categories[0];$('#add-object-grid').innerHTML=category.items.map(([type,name,icon])=>`<button class="add-object-choice" data-add-type="${type}"><span>${icon}</span><b>${name}</b></button>`).join('');$$('[data-add-type]').forEach(button=>button.addEventListener('click',()=>{const type=button.dataset.addType;closeModal();addObjectToScene(['camera','player','spawn','light','environmentLight','skybox'].includes(type)?type:'primitive',{primitive:type});}));};
   $$('[data-object-category]').forEach(button=>button.addEventListener('click',()=>{$$('[data-object-category]').forEach(b=>b.classList.toggle('active',b===button));draw(button.dataset.objectCategory);}));
   draw(active);
 }
@@ -1722,7 +1897,8 @@ function deleteAsset(assetId) {
   $('#confirm-delete-asset').addEventListener('click',()=>{
     currentProject.assets=currentProject.assets.filter(a=>a.id!==assetId);
     if(objectUrls.has(assetId)){URL.revokeObjectURL(objectUrls.get(assetId));objectUrls.delete(assetId);}
-    for(const sc of currentProject.scenes){sc.data.objects=sc.data.objects.filter(e=>!(e.type==='model'&&e.assetId===assetId));sc.data.objects.forEach(e=>{if(e.material?.textureAssetId===assetId){delete e.material.textureAssetId;}if(e.soundAssetId===assetId)e.soundAssetId=null;});}
+    for(const sc of currentProject.scenes){sc.data.objects=sc.data.objects.filter(e=>!(e.type==='model'&&e.assetId===assetId));sc.data.objects.forEach(e=>{if(e.material?.textureAssetId===assetId){e.material.textureAssetId=null;}if(e.soundAssetId===assetId)e.soundAssetId=null;});}
+    for(const material of currentProject.materials||[])if(material.textureAssetId===assetId)material.textureAssetId=null;
     if(selectedAssetId===assetId)selectedAssetId=null;
     closeModal();loadSceneIntoViewport().then(()=>{renderAssetPanel();renderHierarchy();renderInspector();scheduleSave();});toast('Ресурс удалён','success');
   });
@@ -1740,6 +1916,7 @@ const ZEROBOX_CATEGORIES = [
   {name:'Математика', icon:'∑', color:'#aa91e8', items:['Number','NumericArray','Minus','Plus','Divide','Multiply','Size']},
   {name:'Логика', icon:'⑂', color:'#d68abd', items:['Change','Loop','Branching','ForkYesorno','Close']},
   {name:'Движение и физика', icon:'↗', color:'#83c77b', items:['Moving','Twist','Collision','Physics','Gamespeed','Laser']},
+  {name:'Объекты', icon:'⬡', color:'#d1aa70', items:['Spawn','Delete']},
   {name:'Визуал', icon:'◈', color:'#e78d75', items:['Writes','ChangeTransparency','ChangeColor','ChangeTexture','ChangeModel','Changinganimation']},
   {name:'Звук', icon:'♫', color:'#62b9a8', items:['Changesound','Playsound',"Don'tSound",'Pausesound']},
   {name:'Типы переменных', icon:'▦', color:'#9aa9b5', items:['Yesorno','Transparency','Color']}
@@ -1749,7 +1926,7 @@ const ZEROBOX_DEFAULTS = {
   x:0, y:0, z:0, color:'#a5ef4c', enabled:true, key:'', buttonId:'', distance:25,
   repeat:3, condition:'true', assetId:'', animation:'', text:'Hello from ZeroBox',
   sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableZ:'JoystickY',
-  gameSpeed:1
+  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject'
 };
 function createZeroBox() {
   const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[]};
@@ -1787,12 +1964,13 @@ function zeroBlockFields(block) {
   if (block.type==='Side') html += select('side','Сторона','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>');
   if (['Speed','Jumpup','Squat','Twist','Minus','Plus','Divide','Multiply'].includes(block.type)) html += input('amount','Значение');
   if (block.type==='Gamespeed') html += input('gameSpeed','Множитель времени (0.1–4)');
+  if (block.type==='Spawn') html += select('spawnType','Тип создаваемого объекта','<option value="cube">Куб</option><option value="sphere">Сфера</option><option value="plane">Плоскость</option><option value="cylinder">Цилиндр</option><option value="cone">Конус</option><option value="capsule">Капсула</option><option value="player">Player</option><option value="spawn">Player Start</option><option value="camera">Camera</option><option value="light">Point Light</option><option value="environmentLight">Environment Light</option>')+input('spawnName','Название объекта','text')+input('x','Позиция X')+input('y','Позиция Y')+input('z','Позиция Z');
   if (block.type==='Moving') html += select('movementMode','Режим движения','<option value="direction">Постоянное движение (пока удерживается)</option><option value="offset">Смещение на координаты</option><option value="variables">По переменным джойстика</option>')+select('side','Направление','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+input('speed','Скорость (м/с)')+select('variableX','Переменная X джойстика',varOptions)+select('variableZ','Переменная Z джойстика',varOptions);
   if (block.type==='Loop') html += input('repeat','Количество повторений');
   if (['Moving','Size','Laser'].includes(block.type)) html += input('x',block.type==='Laser'?'Смещение X':'X')+input('y',block.type==='Laser'?'Смещение Y':'Y')+input('z',block.type==='Laser'?'Смещение Z':'Z');
   if (block.type==='Laser') html += input('distance','Длина луча')+input('radius','Радиус проверки')+select('variable','Записать результат в',varOptions)+select('side','Направление','<option value="Forward">Вперёд</option><option value="Backward">Назад</option><option value="Left">Влево</option><option value="Right">Вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+select('stopCondition','Условие остановки','<option value="Hit">При попадании</option><option value="NoHit">Если ничего не найдено</option>');
   if (['Number','NumericArray','Yesorno','Transparency','Color'].includes(block.type)) html += input('variable','Имя переменной','text')+input('value','Стартовое значение',block.type==='Color'?'color':'text');
-  if (['Moving','Twist','Size','Collision','Physics','Life','Laser','ChangeColor','ChangeTransparency','ChangeTexture','ChangeModel','Changinganimation','Changesound','Playsound',"Don'tSound",'Pausesound','Jumpup','Squat'].includes(block.type)) html += select('targetObjectId','Целевой объект',block.type==='Physics'?groupOptions:objectOptions);
+  if (['Moving','Twist','Size','Collision','Physics','Life','Laser','Delete','ChangeColor','ChangeTransparency','ChangeTexture','ChangeModel','Changinganimation','Changesound','Playsound',"Don'tSound",'Pausesound','Jumpup','Squat'].includes(block.type)) html += select('targetObjectId','Целевой объект',block.type==='Physics'?groupOptions:objectOptions);
   if (['Writes','ChangeColor','ChangeTransparency'].includes(block.type)) html += select('targetUIId','UI-элемент',uiOptions);
   if (['Change','Minus','Plus','Divide','Multiply','ForkYesorno','Branching'].includes(block.type)) html += select('variable','Переменная',varOptions);
   if (['Change','ForkYesorno','Branching'].includes(block.type)) html += input('value','Значение / условие','text');
@@ -1820,7 +1998,7 @@ function zeroPortLayout(block) {
   };
 }
 function zeroBlockIcon(type) {
-  const icons={Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉'};
+  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉'};
   return icons[type]||'◇';
 }
 function renderZeroBoxPicker() {
@@ -2164,6 +2342,8 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     executed++;
     if(b.type==='Close')break;
     if(eventTypes.includes(b.type)){if(eventName==='manual'){current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}break;}
+    if(b.type==='Spawn'){executeSpawnBlock(b);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
+    if(b.type==='Delete'){executeDeleteBlock(b);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
     if(b.type==='Writes'){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui&&ui.type==='Text'){ui.text=String(c.text||'');renderGameUI();}else toast(String(c.text||'ZeroBox'),'success');}
     else if(b.type==='Side'){movingSide=c.side||'Forward';movingSideSet=true;}
     else if(['ChangeColor','ChangeTransparency'].includes(b.type)&&c.targetUIId){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui){if(b.type==='ChangeColor')ui.color=c.color||'#ffffff';else ui.opacity=Math.max(0,Math.min(1,Number(c.value)||0));renderGameUI();}}
@@ -2188,6 +2368,19 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
   if(isPlaying)renderGameUI();
   scheduleSave();
   return executed;
+}
+
+function executeSpawnBlock(block) {
+  const c=block.config||{};const requested=c.spawnType||'cube';const primitives=['cube','sphere','plane','cylinder','cone','capsule','torus','torusKnot','dodecahedron','icosahedron','octahedron','tetrahedron'];
+  const options={name:String(c.spawnName||'SpawnedObject'),position:[Number(c.x)||0,Number(c.y)||.5,Number(c.z)||0]};
+  if(primitives.includes(requested))addObjectToScene('primitive',{...options,primitive:requested});
+  else if(['player','spawn','camera','light','environmentLight','skybox'].includes(requested))addObjectToScene(requested,options);
+  else toast(`Spawn: неизвестный тип ${requested}`,'error');
+}
+function executeDeleteBlock(block) {
+  const c=block.config||{};const target=c.targetObjectId?findEntity(c.targetObjectId):(selectedId?findEntity(selectedId):targetEntityForBlock(block));
+  if(!target){toast('Delete: объект не найден','error');return;}
+  const removed=removeSceneObject(target.id,!isPlaying);if(removed){renderHierarchy();renderInspector();updateSelectedStatus();scheduleSave();}
 }
 
 function executeZeroBoxAction(block,entity=null,obj=null) {
@@ -2254,42 +2447,50 @@ function playCustomAnimation(entity,animation){if(!animation?.keys?.length)retur
 function updateCustomAnimations(delta){if(!activeCustomAnimations.size)return;for(const[id,state]of activeCustomAnimations){const entity=findEntity(id),obj=sceneObjects.get(id),anim=entity?.animations?.find(a=>a.id===state.animationId);if(!entity||!obj||!anim?.keys?.length){activeCustomAnimations.delete(id);continue;}const duration=Math.max(.1,anim.keys.at(-1).time);state.time=(state.time+delta)%duration;let a=anim.keys[0],b=anim.keys.at(-1);for(let i=0;i<anim.keys.length-1;i++){if(state.time>=anim.keys[i].time&&state.time<=anim.keys[i+1].time){a=anim.keys[i];b=anim.keys[i+1];break;}}const span=Math.max(.0001,b.time-a.time),t=THREE.MathUtils.clamp((state.time-a.time)/span,0,1);obj.position.fromArray(a.position.map((v,i)=>THREE.MathUtils.lerp(v,b.position[i],t)));obj.scale.fromArray(a.scale.map((v,i)=>THREE.MathUtils.lerp(v,b.scale[i],t)));obj.rotation.set(...a.rotation.map((v,i)=>THREE.MathUtils.lerp(v,b.rotation[i],t)));entity.position=obj.position.toArray();entity.rotation=[obj.rotation.x,obj.rotation.y,obj.rotation.z].map(v=>THREE.MathUtils.radToDeg(v));entity.scale=obj.scale.toArray();}}
 function createBasicSkeleton(entity){const object=sceneObjects.get(entity.id);if(!object)return;if(entity.rig?.bones?.length){toast('Скелет уже создан','success');return;}entity.rig={bones:[{name:'Root',parent:null,position:[0,0,0]},{name:'Spine',parent:'Root',position:[0,.7,0]},{name:'Head',parent:'Spine',position:[0,.6,0]},{name:'LeftArm',parent:'Spine',position:[-.45,.35,0]},{name:'RightArm',parent:'Spine',position:[.45,.35,0]}]};attachStoredRig(entity,object);scheduleSave();renderInspector();toast('Создана базовая иерархия костей. Skin weights пока не редактируются.','success');}
 
-function fitCameraToBounds(bounds, padding = 1.35) {
-  if (!orbit || !editorCamera || bounds.isEmpty()) return;
-  const center = bounds.getCenter(new THREE.Vector3());
-  const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-  const radius = Math.max(.5, sphere.radius);
-  const fov = THREE.MathUtils.degToRad(editorCamera.fov || 55);
-  const distance = Math.min(9000, Math.max(2, radius / Math.sin(fov / 2) * padding));
-  let direction = editorCamera.position.clone().sub(orbit.target);
-  if (direction.lengthSq() < 1e-8) direction.set(1, .7, 1);
-  direction.normalize();
-  orbit.target.copy(center);
-  editorCamera.position.copy(center).addScaledVector(direction, distance);
-  editorCamera.near = Math.max(.01, Math.min(.1, distance / 1000));
-  editorCamera.far = Math.max(10000, distance * 20);
-  editorCamera.updateProjectionMatrix();
-  orbit.minDistance = Math.max(.02, radius / 1000);
-  orbit.maxDistance = Math.max(10000, distance * 20);
-  orbit.update();
-}
 function focusSelectedObject() {
-  const object = sceneObjects.get(selectedId);
-  if (!object) { focusAllScene(); return; }
-  fitCameraToBounds(new THREE.Box3().setFromObject(object), 1.5);
+  const object = sceneObjects.get(selectedId); if (!object) { toast('Сначала выбери объект', 'error'); return; }
+  const box = new THREE.Box3().setFromObject(object); const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3()).length();
+  orbit.target.copy(center); const direction = editorCamera.position.clone().sub(center).normalize(); editorCamera.position.copy(center).add(direction.multiplyScalar(Math.max(3, size * 1.7))); orbit.update();
 }
-function focusAllScene() {
-  const bounds = new THREE.Box3();
-  for (const object of sceneObjects.values()) bounds.expandByObject(object);
-  if (bounds.isEmpty()) {
-    orbit.target.set(0, .8, 0);
-    editorCamera.position.set(7, 6, 9);
-    editorCamera.near = .01; editorCamera.far = 10000;
-    editorCamera.updateProjectionMatrix(); orbit.update();
-    return;
+
+// ---------- Zero Model Studio ----------
+function openModelStudio(){
+  if(!currentProject)return;$('#model-studio').classList.remove('hidden');$('#editor-screen').classList.add('hidden');
+  const canvas=$('#model-canvas');
+  if(!modelStudio.renderer){
+    const r=modelStudio; r.renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});r.renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));r.scene=new THREE.Scene();r.scene.background=new THREE.Color('#202326');
+    r.camera=new THREE.PerspectiveCamera(50,1,.05,1000);r.camera.position.set(5,4,6);r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;
+    r.scene.add(new THREE.HemisphereLight(0xffffff,0x555b65,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,5);r.scene.add(key);r.root=new THREE.Group();r.scene.add(r.root);r.scene.add(new THREE.GridHelper(20,40,0x555b5b,0x343a3d));
+    r.transform=new TransformControls(r.camera,canvas);r.transform.addEventListener('dragging-changed',e=>r.orbit.enabled=!e.value);r.transform.addEventListener('objectChange',renderModelFields);r.scene.add(r.transform);
+    r.raycaster=new THREE.Raycaster();r.pointer=new THREE.Vector2();canvas.addEventListener('pointerdown',selectModelObject);canvas.addEventListener('wheel',()=>{}, {passive:true});
+    const resize=()=>{const box=canvas.getBoundingClientRect();if(!box.width||!box.height)return;r.renderer.setSize(box.width,box.height,false);r.camera.aspect=box.width/box.height;r.camera.updateProjectionMatrix();};r.resize=resize;window.addEventListener('resize',resize);
+    const tick=()=>{if($('#model-studio').classList.contains('hidden'))return;r.raf=requestAnimationFrame(tick);r.orbit.update();r.renderer.render(r.scene,r.camera);};r.tick=tick;
   }
-  fitCameraToBounds(bounds, 1.45);
+  if(!modelStudio.history.length)modelStudio.history.push([]);modelStudio.resize();modelStudio.tick();renderModelObjectList();renderModelFields();
 }
+function closeModelStudio(){if(modelStudio.transform)modelStudio.transform.detach();cancelAnimationFrame(modelStudio.raf);$('#model-studio').classList.add('hidden');$('#editor-screen').classList.remove('hidden');}
+function modelGeometry(index){switch(index){case 1:return new THREE.SphereGeometry(.75,32,24);case 2:return new THREE.PlaneGeometry(2,2,1,1);case 3:return new THREE.CylinderGeometry(.65,.65,1.4,32);case 4:return new THREE.ConeGeometry(.75,1.5,32);case 5:return new THREE.CapsuleGeometry(.45,.8,6,16);case 6:return new THREE.TorusGeometry(.7,.22,16,48);case 7:return new THREE.TorusKnotGeometry(.55,.17,100,16);case 8:return new THREE.IcosahedronGeometry(.8,1);case 9:return new THREE.BoxGeometry(1,1,1,2,2,2);default:return new THREE.BoxGeometry(1.4,1.4,1.4,2,2,2);}}
+function addModelPrimitive(index){const names=MODEL_PRIMITIVES;let mesh;if(index===9){mesh=new THREE.Group();const mat=new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72});const head=new THREE.Mesh(new THREE.SphereGeometry(.62,24,18),mat);head.scale.set(1,1.05,.8);mesh.add(head);for(const side of [-1,1]){const ear=new THREE.Mesh(new THREE.SphereGeometry(.27,16,12),mat);ear.position.set(side*.55,.35,0);mesh.add(ear);}const muzzle=new THREE.Mesh(new THREE.SphereGeometry(.3,16,12),mat);muzzle.position.set(0,-.15,.48);muzzle.scale.set(.8,.65,.6);mesh.add(muzzle);}else mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72,metalness:0}));mesh.name=names[index];mesh.userData.modelName=mesh.name;mesh.position.x=modelStudio.root.children.length*1.65;mesh.traverse?.(n=>{n.castShadow=false;n.receiveShadow=false;});modelStudio.root.add(mesh);selectModelMesh(mesh);pushModelHistory();renderModelObjectList();}
+function selectModelObject(e){if(e.button!==0||modelStudio.transform?.dragging)return;const r=modelStudio,rect=e.currentTarget.getBoundingClientRect();r.pointer.set((e.clientX-rect.left)/rect.width*2-1,-((e.clientY-rect.top)/rect.height)*2+1);r.raycaster.setFromCamera(r.pointer,r.camera);const hits=r.raycaster.intersectObjects(r.root.children,true).filter(h=>h.object.isMesh&&!h.object.userData.reference);if(!hits.length){r.selected=null;r.transform.detach();renderModelFields();return;}const hit=hits[0];if(r.mode!=='object'){r.selected=hit.object;if(r.componentHelper)r.scene.remove(r.componentHelper);r.componentHelper=new THREE.Group();const geom=hit.object.geometry.index?hit.object.geometry.toNonIndexed():hit.object.geometry;const face=(hit.faceIndex??0),start=face*3,pos=geom.attributes.position;if(r.mode==='face'&&start+2<pos.count){const pts=[0,1,2].map(i=>new THREE.Vector3().fromBufferAttribute(pos,start+i));const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false}));line.position.copy(hit.object.position);line.rotation.copy(hit.object.rotation);line.scale.copy(hit.object.scale);r.componentHelper.add(line);hit.object.userData.selectedFace=face;}else if(r.mode==='vertex'&&start<pos.count){const v=new THREE.Vector3().fromBufferAttribute(pos,start);const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,10,8),new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false}));dot.position.copy(v).applyMatrix4(hit.object.matrixWorld);r.componentHelper.add(dot);hit.object.userData.selectedVertex=start;}else if(r.mode==='edge'&&start+2<pos.count){const pts=[0,1].map(i=>new THREE.Vector3().fromBufferAttribute(pos,start+i).applyMatrix4(hit.object.matrixWorld));r.componentHelper.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false})));}r.scene.add(r.componentHelper);$('#model-selection-info').textContent=`${r.mode}: ${r.mode==='face'?'грань '+face:r.mode==='vertex'?'вершина '+start:'ребро '+face}`;renderModelFields();return;}let obj=hit.object;while(obj.parent&&obj.parent!==r.root)obj=obj.parent;selectModelMesh(obj);}
+function selectModelMesh(mesh){modelStudio.selected=mesh;modelStudio.transform.attach(mesh);modelStudio.transform.setMode('translate');$('#model-selection-info').textContent=mesh.name;renderModelFields();renderModelObjectList();}
+function renderModelObjectList(){const el=$('#model-object-list');if(!el)return;el.innerHTML=modelStudio.root?modelStudio.root.children.filter(o=>!o.userData.reference).map((o,i)=>`<button class=\"model-object-row ${o===modelStudio.selected?'active':''}\" data-model-object=\"${i}\">◈ ${escapeHtml(o.name)}</button>`).join('')||'<small>Добавь модель слева</small>':'';el.querySelectorAll('[data-model-object]').forEach(b=>b.addEventListener('click',()=>{const o=modelStudio.root.children.filter(x=>!x.userData.reference)[Number(b.dataset.modelObject)];if(o)selectModelMesh(o);}));}
+function renderModelFields(){const el=$('#model-transform-fields'),o=modelStudio.selected;if(!el)return;if(!o){el.innerHTML='<small>Выбери объект в 3D-пространстве.</small>';return;}const vec=(label,v,key)=>`<div class="model-vector-row"><b>${label}</b>${['X','Y','Z'].map((a,i)=>`<label>${a}<input type="number" step="0.01" data-model-vector="${key}" data-axis="${i}" value="${Number(v.getComponent(i)).toFixed(2)}"></label>`).join('')}</div>`;const mat=o.material&&!Array.isArray(o.material)?o.material:null;el.innerHTML=`<label class="field-label">Название<input class="field-input" id="model-object-name" value="${escapeAttr(o.name)}"></label>${vec('Положение',o.position,'position')}${vec('Вращение',new THREE.Vector3(THREE.MathUtils.radToDeg(o.rotation.x),THREE.MathUtils.radToDeg(o.rotation.y),THREE.MathUtils.radToDeg(o.rotation.z)),'rotation')}${vec('Масштаб',o.scale,'scale')}${mat?`<label class="field-label">Цвет<input type="color" id="model-object-color" value="#${mat.color.getHexString()}"></label><label class="field-label">Шероховатость<input type="range" id="model-roughness" min="0" max="1" step=".01" value="${mat.roughness}"></label><label class="field-label">Металличность<input type="range" id="model-metalness" min="0" max="1" step=".01" value="${mat.metalness}"></label>${mat.map?`<div class="model-vector-row"><b>UV Repeat</b><label>U<input id="model-uv-u" type="number" step=".1" value="${mat.map.repeat.x}"></label><label>V<input id="model-uv-v" type="number" step=".1" value="${mat.map.repeat.y}"></label></div><div class="model-vector-row"><b>UV Offset</b><label>U<input id="model-uv-ou" type="number" step=".01" value="${mat.map.offset.x}"></label><label>V<input id="model-uv-ov" type="number" step=".01" value="${mat.map.offset.y}"></label></div>`:''}`:''}`;$('#model-object-name').addEventListener('change',e=>{o.name=e.target.value||'Object';renderModelObjectList();});$$('[data-model-vector]').forEach(input=>input.addEventListener('change',()=>{const key=input.dataset.modelVector,axis=Number(input.dataset.axis),v=Number(input.value);if(key==='rotation')o.rotation.setComponent(axis,THREE.MathUtils.degToRad(v));else o[key].setComponent(axis,v);}));if(mat){$('#model-object-color')?.addEventListener('input',e=>mat.color.set(e.target.value));$('#model-roughness')?.addEventListener('input',e=>mat.roughness=Number(e.target.value));$('#model-metalness')?.addEventListener('input',e=>mat.metalness=Number(e.target.value));if(mat.map)[['model-uv-u','x','repeat'],['model-uv-v','y','repeat'],['model-uv-ou','x','offset'],['model-uv-ov','y','offset']].forEach(([id,axis,key])=>$('#'+id)?.addEventListener('change',e=>{mat.map[key][axis]=Number(e.target.value);mat.map.needsUpdate=true;}));}}
+function setModelMode(mode){modelStudio.mode=mode;$$('[data-model-mode]').forEach(b=>b.classList.toggle('active',b.dataset.modelMode===mode));if(modelStudio.transform)modelStudio.transform.enabled=mode==='object';$('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — выбери элемент на модели`;}
+function setModelTool(tool){const r=modelStudio;if(!r.selected)return;if(!['move','rotate','scale','duplicate','delete','merge'].includes(tool)&&!r.selected.geometry){toast('Выбери отдельную геометрию для этого инструмента','error');return;}if(['move','rotate','scale'].includes(tool)){r.transform.enabled=true;r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[tool]);return;}r.transform.enabled=false;const mesh=r.selected;if(tool==='duplicate'){const copy=mesh.clone();copy.material=mesh.material.clone();copy.position.x+=1;copy.name=`${mesh.name} Copy`;r.root.add(copy);selectModelMesh(copy);}else if(tool==='delete'){r.root.remove(mesh);r.transform.detach();r.selected=null;}else if(tool==='merge'){const meshes=r.root.children.filter(o=>o.isMesh&&!o.userData.reference);if(meshes.length>1){const group=new THREE.Group();group.name='Merged Model';meshes.forEach(m=>{m.updateMatrix();const g=m.geometry.clone();g.applyMatrix4(m.matrix);const part=new THREE.Mesh(g,m.material.clone());group.add(part);});r.root.remove(...meshes);r.root.add(group);selectModelMesh(group);}}else if(['extrude','inset','cut','bevel','sharpen','joint'].includes(tool)){const g=mesh.geometry.clone();if(!g.index)g=g.toNonIndexed();const p=g.attributes.position;const face=mesh.userData.selectedFace??0;const start=face*3;if(start+2<p.count){const a=new THREE.Vector3().fromBufferAttribute(p,start),b=new THREE.Vector3().fromBufferAttribute(p,start+1),c=new THREE.Vector3().fromBufferAttribute(p,start+2),normal=b.clone().sub(a).cross(c.clone().sub(a)).normalize();const center=a.clone().add(b).add(c).multiplyScalar(1/3);if(tool==='joint'){const hinge=new THREE.Group();hinge.name=`Joint_${mesh.name}`;hinge.position.copy(center).applyMatrix4(mesh.matrix);const marker=new THREE.Mesh(new THREE.SphereGeometry(.07,10,8),new THREE.MeshBasicMaterial({color:0xffc45c}));hinge.add(marker);r.root.add(hinge);}else{for(let i=0;i<3;i++){const original=new THREE.Vector3().fromBufferAttribute(p,start+i);let v=original.clone();if(tool==='bevel'||tool==='inset')v.lerp(center,tool==='bevel'?.12:.08).addScaledVector(normal,tool==='bevel'?.025:.06);else if(tool==='sharpen')v= center.clone().addScaledVector(original.sub(center),1.12);else if(tool==='extrude')v.addScaledVector(normal,.25);else if(tool==='cut'){v.lerp(center,.04);}p.setXYZ(start+i,v.x,v.y,v.z);}p.needsUpdate=true;g.computeVertexNormals();mesh.geometry.dispose();mesh.geometry=g;}}else toast('Выбери грань в режиме «Грани»','error');}pushModelHistory();renderModelObjectList();renderModelFields();}
+function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}if(tool==='delete'){setModelTool('delete');return;}if(tool==='duplicate'){setModelTool('duplicate');return;}setModelTool(tool);}
+function copyModelObject(){if(modelStudio.selected)modelStudio.clipboard=modelStudio.selected.clone(true);}
+function pasteModelObject(){if(!modelStudio.clipboard)return;const c=modelStudio.clipboard.clone(true);c.position.x+=1;c.name=`${c.name} Copy`;modelStudio.root.add(c);selectModelMesh(c);pushModelHistory();}
+function pushModelHistory(){try{const snap=modelStudio.root.children.filter(o=>o.isMesh&&!o.userData.reference&&o.material&&!Array.isArray(o.material)).map(o=>({name:o.name,geometry:o.geometry.clone(),position:o.position.toArray(),rotation:o.rotation.toArray(),scale:o.scale.toArray(),color:o.material.color.getHex(),roughness:o.material.roughness,metalness:o.material.metalness}));modelStudio.history.push(snap);if(modelStudio.history.length>30)modelStudio.history.shift();}catch{}}
+function undoModelStudio(){const snap=modelStudio.history.pop();if(!snap)return;modelStudio.root.clear();for(const d of snap){const m=new THREE.Mesh(d.geometry,new THREE.MeshStandardMaterial({color:d.color,roughness:d.roughness,metalness:d.metalness}));m.name=d.name;m.position.fromArray(d.position);m.rotation.fromArray(d.rotation);m.scale.fromArray(d.scale);modelStudio.root.add(m);}modelStudio.selected=null;modelStudio.transform.detach();renderModelObjectList();renderModelFields();}
+async function saveModelStudioAsset(){if(!currentProject||!modelStudio.root.children.length){toast('Добавь хотя бы один объект модели','error');return;}const exporter=new GLTFExporter();const root=new THREE.Group();modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(o.clone(true)));try{const result=await exporter.parseAsync(root,{binary:true,onlyVisible:true});const blob=new Blob([result],{type:'model/gltf-binary'});const name=($('#model-name').value.trim()||'New Model').replace(/\.(glb|gltf)$/i,'');const asset={id:uid(),name:`${name}.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${safeName(name)}.glb`,blob};currentProject.assets.push(asset);await saveProject(false);renderAssetPanel();toast('3D-модель сохранена в Assets / Models','success');$('#model-studio-status').textContent=`Сохранено: ${name}.glb`;}catch(err){console.error(err);toast('Не удалось экспортировать модель GLB','error');}}
+function convertModelToPlayer(){const o=modelStudio.selected;if(!o||!currentProject)return;const exporter=new GLTFExporter();const group=o.clone(true);exporter.parseAsync(group,{binary:true}).then(async result=>{const blob=new Blob([result],{type:'model/gltf-binary'}),asset={id:uid(),name:`${safeName(o.name)}_Player.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${uid()}.glb`,blob};currentProject.assets.push(asset);const entity={id:uid(),name:`${o.name} Player`,type:'player',modelAssetId:asset.id,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],visible:true,collision:{enabled:true,shape:'capsule',size:[.8,1.8,.8]},cameraMount:{mode:'back',offset:[0,1.6,0],fov:70},material:{}};activeSceneData().objects.push(entity);await loadSceneIntoViewport();renderHierarchy();renderInspector();scheduleSave();toast('Импортированная модель создана как Player','success');}).catch(err=>toast('Не удалось создать Player','error'));}
+function loadModelReference(file){if(!file)return;const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'References',path:`Assets/References/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{const plane=new THREE.Mesh(new THREE.PlaneGeometry(3,2),new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:.7,side:THREE.DoubleSide,depthWrite:false}));plane.name='Reference Image';plane.userData.reference=true;plane.position.set(0,1,0);modelStudio.root.add(plane);});}
+function removeModelReference(){modelStudio.root.children.filter(o=>o.userData.reference).forEach(o=>modelStudio.root.remove(o));}
+function loadModelTexture(file){if(!file||!modelStudio.selected)return;const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'Textures',path:`Assets/Textures/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;modelStudio.selected.material.map=tex;modelStudio.selected.material.needsUpdate=true;});}
+function cropModelTexture(){const o=modelStudio.selected;if(!o?.material.map)return;const tex=o.material.map;tex.repeat.set(.8,.8);tex.offset.set(.1,.1);tex.needsUpdate=true;toast('Применена обрезка текстуры 10% по краям');}
+let modelPainting=false;function startModelPaint(e){modelPainting=true;modelPaintAt(e);}function moveModelPaint(e){if(modelPainting)modelPaintAt(e);}function endModelPaint(){modelPainting=false;}function modelPaintAt(e){const c=$('#model-paint-canvas'),r=c.getBoundingClientRect(),ctx=c.getContext('2d');ctx.fillStyle=$('#model-brush-color').value;ctx.beginPath();ctx.arc((e.clientX-r.left)/r.width*c.width,(e.clientY-r.top)/r.height*c.height,Number($('#model-brush-size').value),0,Math.PI*2);ctx.fill();}function applyModelPaint(){if(!modelStudio.selected)return;const c=$('#model-paint-canvas'),tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;modelStudio.selected.material.map=tex;modelStudio.selected.material.needsUpdate=true;c.toBlob(blob=>{if(blob){currentProject.assets.push({id:uid(),name:'Painted_Texture.png',type:'texture',size:blob.size,folder:'Textures',path:`Assets/Textures/${uid()}_Painted_Texture.png`,blob});scheduleSave();}},'image/png');toast('Текстура нанесена на материал и сохранена в ресурсах проекта');}
+
+async function importModelStudioFile(file){if(!file)return;const ext=extOf(file.name);try{let object;if(ext==='glb'||ext==='gltf'){const url=URL.createObjectURL(file);const gltf=await new GLTFLoader().loadAsync(url);object=gltf.scene;URL.revokeObjectURL(url);}else if(ext==='obj'){object=new OBJLoader().parse(await file.text());}else if(ext==='fbx'){object=new FBXLoader().parse(await file.arrayBuffer(),'');}else if(ext==='stl'){const geometry=new STLLoader().parse(await file.arrayBuffer());object=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.75}));}if(!object)throw new Error('Unsupported');object.name=file.name.replace(/\.[^.]+$/,'');object.traverse(n=>{if(n.isMesh){n.castShadow=false;n.receiveShadow=false;if(!n.material)n.material=new THREE.MeshStandardMaterial({color:'#b8b8b8'});}});modelStudio.root.add(object);selectModelMesh(object);pushModelHistory();renderModelObjectList();$('#model-name').value=object.name;toast(`Импортировано: ${file.name}`,'success');}catch(err){console.error(err);toast('Не удалось импортировать модель. Для GLTF с внешними файлами используй GLB.','error');}}
 
 // ---------- Startup ----------
 async function boot() {

@@ -26,7 +26,7 @@
           <div class="brand-mark">Z<span>E</span></div>
           <div><div class="brand-name">ZERO<span>ENGINE</span></div><div class="brand-subtitle">BROWSER GAME ENGINE</div></div>
         </div>
-        <div class="home-head-actions"><select id="language-select-home" class="language-select" aria-label="Language"><option value="ru">РУС</option><option value="uk">УКР</option><option value="en">ENG</option><option value="kk">ҚАЗ</option></select><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.7.3</span></div></div>
+        <div class="home-head-actions"><select id="language-select-home" class="language-select" aria-label="Language"><option value="ru">РУС</option><option value="uk">УКР</option><option value="en">ENG</option><option value="kk">ҚАЗ</option></select><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.9.0</span></div></div>
       </header>
 
       <main class="home-main">
@@ -68,7 +68,7 @@
           <span class="topbar-divider"></span>
           <select id="language-select-editor" class="language-select" aria-label="Language"><option value="ru">РУС</option><option value="uk">УКР</option><option value="en">ENG</option><option value="kk">ҚАЗ</option></select><button class="button button-quiet theme-toggle" id="theme-toggle-editor" type="button" title="Сменить тему">◐ Тема</button>
           <button class="button button-quiet" id="open-zerobox-button">◇ <span>ZeroBox</span></button>
-          <button class="button button-quiet" id="open-interface-button">▣ <span>Интерфейс</span></button>
+          <button class="button button-quiet" id="open-interface-button">▣ <span>Интерфейс</span></button><button class="button button-quiet" id="open-model-studio">⬡ <span>3D-модели</span></button>
           <button class="button button-quiet" id="save-project-button">↓ <span>Сохранить ZIP</span></button>
           <button class="button button-primary" id="play-button">▶ <span>Просмотр</span></button>
           <button class="tool-button mobile-panel-button" id="toggle-inspector" title="Свойства">☷</button>
@@ -93,7 +93,6 @@
                 <button class="tool-button" data-transform="scale" title="Масштаб (R)">⌗</button>
               </div>
               <button class="tool-button" id="focus-object" title="Сфокусироваться на объекте">◎</button>
-              <button class="tool-button" id="focus-scene" title="Показать всю сцену">⛶</button>
               <button class="tool-button" id="grid-toggle" title="Сетка">▦</button>
               <button class="tool-button" id="viewport-help" title="Управление камерой">?</button>
             </div>
@@ -101,7 +100,7 @@
           <div id="viewport-wrap" class="viewport-wrap">
             <canvas id="viewport-canvas"></canvas>
             <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
-            <div class="viewport-hud hud-bottom-left">ЛКМ / СКМ — вращение <span>·</span> ПКМ / Shift+ЛКМ — панорама <span>·</span> Колесо — масштаб</div>
+            <div class="viewport-hud hud-bottom-left">ЛКМ — обзор <span>·</span> ПКМ — панорама <span>·</span> Колесо — масштаб</div>
             <div class="viewport-center-hint" id="viewport-empty-hint"><div class="hint-cross">＋</div><strong>Сцена готова к работе</strong><span>Добавь объект через кнопку «＋» или панель инструментов.</span></div>
             <div class="viewport-drop-overlay" id="viewport-drop-overlay"><div>Отпусти файлы, чтобы импортировать ассеты</div></div>
             <div class="play-overlay hidden" id="play-overlay">
@@ -122,6 +121,7 @@
           <div class="asset-dock-header">
             <div class="asset-tabs">
               <button class="asset-tab active" data-asset-tab="assets">▤ <span>Файлы</span></button>
+              <button class="asset-tab" data-asset-tab="materials">🎨 <span>Материалы</span></button>
               <button class="asset-tab" data-asset-tab="scenes">▧ <span>Сцены</span></button>
               <button class="asset-tab" data-asset-tab="scripts">〈〉 <span>ZeroScript</span></button>
               <button class="asset-tab" data-asset-tab="zeroboxes">◇ <span>ZeroBox</span></button>
@@ -136,7 +136,7 @@
             </div>
           </div>
           <div class="asset-content" id="asset-content"><div class="asset-empty">Здесь появятся модели, текстуры и другие ресурсы проекта.</div></div>
-          <input type="file" id="asset-files-input" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.bin,.stl,.ply,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tga,.mp3,.wav,.ogg,.m4a,.aac,.zs,.zbox,.zescene,.json" hidden />
+          <input type="file" id="asset-files-input" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.bin,.stl,.ply,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tga,.mp3,.wav,.ogg,.m4a,.aac,.zs,.zbox,.zescene,.zemat,.json" hidden />
           <input type="file" id="asset-folder-input" webkitdirectory directory multiple hidden />
         </section>
       </main>
@@ -151,6 +151,12 @@
     </section>
   </div>
 
+  <section id="model-studio" class="model-studio hidden" aria-label="Редактор 3D-моделей">
+    <header class="model-studio-header"><button class="button button-quiet" id="model-studio-back">← В проект</button><div><b>ZERO MODEL STUDIO</b><small id="model-studio-status">Новая модель</small></div><input id="model-name" class="field-input" value="New Model" aria-label="Название модели"><button class="button button-quiet" id="model-undo" title="Отменить">↶</button><button class="button button-primary" id="model-save">Сохранить модель</button></header>
+    <div class="model-studio-layout"><aside class="model-tools"><h3>Добавить модель</h3><input id="model-import-input" type="file" accept=".glb,.gltf,.fbx,.obj,.stl" hidden><button class="button button-quiet" id="model-import-open">Импортировать 3D-файл</button><div class="model-primitives" id="model-primitives"></div><hr><h3>Режим редактирования</h3><div class="model-mode-row"><button data-model-mode="object" class="active">Объект</button><button data-model-mode="vertex">Точки</button><button data-model-mode="edge">Рёбра</button><button data-model-mode="face">Грани</button></div><h3>Инструменты</h3><div class="model-tool-grid"><button data-model-tool="move">↔ Переместить</button><button data-model-tool="rotate">⟳ Вращать</button><button data-model-tool="scale">⤢ Масштаб</button><button data-model-tool="extrude">⬆ Выдавить</button><button data-model-tool="inset">▣ Вдавить</button><button data-model-tool="cut">✂ Разрезать</button><button data-model-tool="bevel">◩ Скруглить</button><button data-model-tool="sharpen">◆ Заострить</button><button data-model-tool="merge">⊕ Объединить</button><button data-model-tool="duplicate">▢ Дублировать</button><button data-model-tool="delete">× Удалить</button><button data-model-tool="joint">⌁ Сгиб</button></div><hr><h3>Действия</h3><button class="button button-quiet" id="model-copy">Копировать объект</button><button class="button button-quiet" id="model-paste">Вставить объект</button><button class="button button-quiet" id="model-player">Сделать классом Player</button><h3>Референс</h3><input id="model-reference-input" type="file" accept="image/*" hidden><button class="button button-quiet" id="model-reference-add">＋ Добавить картинку</button><button class="button button-quiet" id="model-reference-remove">Удалить референс</button></aside>
+    <main class="model-viewport"><canvas id="model-canvas"></canvas><div class="model-viewport-hud">3D MODEL EDITOR · ЛКМ — выбрать · ПКМ — обзор · Колесо — масштаб</div><div class="model-selection-info" id="model-selection-info">Объект не выбран</div></main>
+    <aside class="model-inspector"><h3>Параметры</h3><div id="model-transform-fields"></div><hr><h3>Текстуры и материал</h3><button class="button button-quiet" id="model-paint-open">Рисовать текстуру</button><input id="model-texture-input" type="file" accept="image/*" hidden><button class="button button-quiet" id="model-texture-add">Наложить картинку</button><button class="button button-quiet" id="model-texture-crop">Обрезать картинку</button><div id="model-material-fields"></div><div class="model-paint-panel hidden" id="model-paint-panel"><canvas id="model-paint-canvas" width="1024" height="1024"></canvas><label>Цвет кисти <input id="model-brush-color" type="color" value="#ffffff"></label><label>Размер <input id="model-brush-size" type="range" min="1" max="100" value="18"></label><button class="button button-primary" id="model-paint-apply">Применить текстуру</button></div><hr><h3>Объекты модели</h3><div id="model-object-list"></div></aside></div>
+  </section>
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal" id="modal-content" role="dialog" aria-modal="true" aria-labelledby="modal-title"></div>
   </div>

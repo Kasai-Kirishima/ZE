@@ -1,2 +1,1 @@
-ZeroEngine 0.7.4
-Browser-based game engine prototype
+0.9.0
