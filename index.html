@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#101418" />
+  <meta name="description" content="ZeroEngine — браузерный игровой редактор сцен и ассетов." />
+  <title>ZeroEngine — Browser Game Engine</title>
+  <link rel="icon" href="assets/icons/zeroengine.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="src/css/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/",
+        "jszip": "https://esm.sh/jszip@3.10.2"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <section id="home-screen" class="screen home-screen">
+      <header class="home-topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark">Z<span>E</span></div>
+          <div><div class="brand-name">ZERO<span>ENGINE</span></div><div class="brand-subtitle">BROWSER GAME ENGINE</div></div>
+        </div>
+        <div class="home-head-actions"><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.6.0</span></div></div>
+      </header>
+
+      <main class="home-main">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="status-dot"></span> YOUR WORLD STARTS HERE</div>
+          <h1>Создавай миры.<br><span>Прямо в браузере.</span></h1>
+          <p>ZeroEngine — рабочее пространство для создания игровых сцен, размещения объектов и работы с ассетами.</p>
+          <div class="hero-actions">
+            <button class="button button-primary button-large" id="new-project-open"><span class="button-icon">＋</span> Новый проект</button>
+            <button class="button button-secondary button-large" id="import-project-open"><span class="button-icon">↥</span> Импорт проекта</button>
+          </div>
+          <input type="file" id="project-import-input" accept=".zip,.zeroengine" hidden />
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="art-glow"></div>
+          <div class="art-grid"></div>
+          <div class="art-ring ring-one"></div><div class="art-ring ring-two"></div>
+          <div class="art-cube"><div class="cube-face cube-front"></div><div class="cube-face cube-side"></div><div class="cube-face cube-top"></div></div>
+          <div class="art-label label-top">WORLD EDITOR <b>01</b></div>
+          <div class="art-label label-bottom">ZEROENGINE / 3D SPACE</div>
+        </div>
+      </main>
+
+      <section class="projects-section">
+        <div class="section-heading"><div><span class="eyebrow">LOCAL WORKSPACE</span><h2>Мои проекты</h2></div><span class="project-count" id="project-count">0 проектов</span></div>
+        <div id="project-list" class="project-list"><div class="empty-projects"><div class="empty-icon">▱</div><strong>Пока нет проектов</strong><span>Создай новый проект или импортируй существующий ZIP.</span></div></div>
+      </section>
+      <footer class="home-footer"><span>ZEROENGINE © 2026</span><span>Все проекты хранятся локально в твоём браузере</span></footer>
+    </section>
+
+    <section id="editor-screen" class="screen editor-screen hidden">
+      <header class="editor-topbar">
+        <button class="brand-mini" id="back-home" title="На главную"><span class="brand-mark small">Z<span>E</span></span></button>
+        <div class="project-heading"><strong id="editor-project-name">Untitled Project</strong><span id="save-indicator">Все изменения сохранены</span></div>
+        <div class="topbar-actions">
+          <button class="tool-button mobile-panel-button" id="toggle-hierarchy" title="Объекты">☷</button>
+          <button class="tool-button" id="undo-button" title="Отменить (Ctrl+Z)" disabled>↶</button>
+          <button class="tool-button" id="redo-button" title="Повторить (Ctrl+Y)" disabled>↷</button>
+          <span class="topbar-divider"></span>
+          <button class="button button-quiet theme-toggle" id="theme-toggle-editor" type="button" title="Сменить тему">◐ Тема</button>
+          <button class="button button-quiet" id="open-zerobox-button">◇ <span>ZeroBox</span></button>
+          <button class="button button-quiet" id="open-interface-button">▣ <span>Интерфейс</span></button>
+          <button class="button button-quiet" id="save-project-button">↓ <span>Сохранить ZIP</span></button>
+          <button class="button button-primary" id="play-button">▶ <span>Просмотр</span></button>
+          <button class="tool-button mobile-panel-button" id="toggle-inspector" title="Свойства">☷</button>
+        </div>
+      </header>
+
+      <main class="editor-layout">
+        <aside class="hierarchy-panel panel" id="hierarchy-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">SCENE</span><h3>Иерархия</h3></div><button class="icon-button" id="add-object-menu" title="Добавить объект">＋</button></div>
+          <div class="scene-name-row"><span class="scene-indicator"></span><strong id="active-scene-name">Main Scene</strong><button class="tiny-icon-button" id="scene-options" title="Сцена">•••</button></div>
+          <div id="hierarchy-list" class="hierarchy-list"></div>
+          <div class="hierarchy-footer"><span id="object-count">0 объектов</span><span>WORLD OUTLINER</span></div>
+        </aside>
+
+        <section class="viewport-column">
+          <div class="viewport-toolbar">
+            <div class="viewport-breadcrumb"><span>СЦЕНА</span><b>/</b><strong id="viewport-scene-name">Main Scene</strong></div>
+            <div class="viewport-tools">
+              <div class="tool-segment" aria-label="Инструменты трансформации">
+                <button class="tool-button active" data-transform="translate" title="Перемещение (W)">✣</button>
+                <button class="tool-button" data-transform="rotate" title="Вращение (E)">⟳</button>
+                <button class="tool-button" data-transform="scale" title="Масштаб (R)">⌗</button>
+              </div>
+              <button class="tool-button" id="focus-object" title="Сфокусироваться на объекте">◎</button>
+              <button class="tool-button" id="grid-toggle" title="Сетка">▦</button>
+              <button class="tool-button" id="viewport-help" title="Управление камерой">?</button>
+            </div>
+          </div>
+          <div id="viewport-wrap" class="viewport-wrap">
+            <canvas id="viewport-canvas"></canvas>
+            <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
+            <div class="viewport-hud hud-bottom-left">ЛКМ — обзор <span>·</span> ПКМ — панорама <span>·</span> Колесо — масштаб</div>
+            <div class="viewport-center-hint" id="viewport-empty-hint"><div class="hint-cross">＋</div><strong>Сцена готова к работе</strong><span>Добавь объект через кнопку «＋» или панель инструментов.</span></div>
+            <div class="viewport-drop-overlay" id="viewport-drop-overlay"><div>Отпусти файлы, чтобы импортировать ассеты</div></div>
+            <div class="play-overlay hidden" id="play-overlay">
+              <div class="play-top"><span class="play-badge"><i></i> PREVIEW MODE</span><button class="button button-danger" id="stop-play-button">■ Выйти</button></div>
+              <div class="play-hint" id="play-hint">Просмотр сцены без управления</div>
+              <div class="game-ui-layer" id="game-ui-layer"></div>
+            </div>
+          </div>
+          <div class="viewport-statusbar"><span><i class="status-dot"></i> READY</span><span id="selected-status">Ничего не выбрано</span><span id="viewport-coordinate">X 0.00&nbsp;&nbsp; Y 0.00&nbsp;&nbsp; Z 0.00</span></div>
+        </section>
+
+        <aside class="inspector-panel panel" id="inspector-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">INSPECTOR</span><h3>Свойства</h3></div><button class="icon-button" id="close-inspector" title="Скрыть панель">×</button></div>
+          <div id="inspector-content" class="inspector-content"><div class="inspector-empty"><div class="empty-icon">◈</div><strong>Объект не выбран</strong><span>Выбери объект на сцене или в иерархии, чтобы редактировать его свойства.</span></div></div>
+        </aside>
+
+        <section class="asset-dock panel" id="asset-dock">
+          <div class="asset-dock-header">
+            <div class="asset-tabs">
+              <button class="asset-tab active" data-asset-tab="assets">▤ <span>Файлы</span></button>
+              <button class="asset-tab" data-asset-tab="scenes">▧ <span>Сцены</span></button>
+              <button class="asset-tab" data-asset-tab="scripts">〈〉 <span>ZeroScript</span></button>
+              <button class="asset-tab" data-asset-tab="zeroboxes">◇ <span>ZeroBox</span></button>
+            </div>
+            <div class="asset-actions">
+              <span class="asset-path" id="asset-path">Assets / All</span>
+              <button class="button button-quiet button-small" id="import-files-button">↥ <span>Импорт файлов</span></button>
+              <button class="button button-quiet button-small" id="import-folder-button">▱ <span>Импорт папки</span></button>
+              <button class="button button-quiet button-small" id="new-folder-button">＋ <span>Папка</span></button>
+              <button class="button button-quiet button-small" id="export-current-scene-button" hidden>↓ <span>Экспорт сцены</span></button>
+              <button class="button button-quiet button-small" id="create-asset-button">＋ <span>Создать</span></button>
+            </div>
+          </div>
+          <div class="asset-content" id="asset-content"><div class="asset-empty">Здесь появятся модели, текстуры и другие ресурсы проекта.</div></div>
+          <input type="file" id="asset-files-input" multiple accept=".glb,.gltf,.fbx,.obj,.mtl,.bin,.stl,.ply,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tga,.mp3,.wav,.ogg,.m4a,.aac,.zs,.zbox,.zescene,.json" hidden />
+          <input type="file" id="asset-folder-input" webkitdirectory directory multiple hidden />
+        </section>
+      </main>
+      <section id="workbench-overlay" class="workbench-overlay hidden" aria-label="Редактор ZeroBox и интерфейсов">
+        <header class="workbench-header">
+          <button class="button button-quiet" id="close-workbench">← В сцену</button>
+          <div class="workbench-title"><strong id="workbench-title">ZeroBox</strong><span id="workbench-subtitle">Визуальная логика проекта</span></div>
+          <div class="workbench-header-actions"><button class="button button-quiet" id="zerobox-copy-selection" title="Копировать выбранные блоки">▢ Копировать</button><button class="button button-quiet" id="zerobox-paste-selection" title="Вставить блоки">▣ Вставить</button><button class="button button-quiet" id="zerobox-help">? Help</button><button class="button button-quiet" id="workbench-run">▶ Проверить</button><button class="button button-primary" id="workbench-save">Сохранить</button></div>
+        </header>
+        <div id="workbench-body" class="workbench-body"></div>
+      </section>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal" id="modal-content" role="dialog" aria-modal="true" aria-labelledby="modal-title"></div>
+  </div>
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <script type="module" src="src/js/app.js"></script>
+</body>
+</html>
