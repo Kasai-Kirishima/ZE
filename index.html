@@ -26,7 +26,7 @@
           <div class="brand-mark">Z<span>E</span></div>
           <div><div class="brand-name">ZERO<span>ENGINE</span></div><div class="brand-subtitle">BROWSER GAME ENGINE</div></div>
         </div>
-        <div class="home-head-actions"><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.8.0</span></div></div>
+        <div class="home-head-actions"><select id="language-select-home" class="language-select" aria-label="Language"><option value="ru">РУС</option><option value="uk">УКР</option><option value="en">ENG</option><option value="kk">ҚАЗ</option></select><button class="button button-quiet theme-toggle" id="theme-toggle-home" type="button">☼ Светлая тема</button><div class="home-version">EARLY ACCESS <span>0.7.0</span></div></div>
       </header>
 
       <main class="home-main">
@@ -66,7 +66,7 @@
           <button class="tool-button" id="undo-button" title="Отменить (Ctrl+Z)" disabled>↶</button>
           <button class="tool-button" id="redo-button" title="Повторить (Ctrl+Y)" disabled>↷</button>
           <span class="topbar-divider"></span>
-          <button class="button button-quiet theme-toggle" id="theme-toggle-editor" type="button" title="Сменить тему">◐ Тема</button>
+          <select id="language-select-editor" class="language-select" aria-label="Language"><option value="ru">РУС</option><option value="uk">УКР</option><option value="en">ENG</option><option value="kk">ҚАЗ</option></select><button class="button button-quiet theme-toggle" id="theme-toggle-editor" type="button" title="Сменить тему">◐ Тема</button>
           <button class="button button-quiet" id="open-zerobox-button">◇ <span>ZeroBox</span></button>
           <button class="button button-quiet" id="open-interface-button">▣ <span>Интерфейс</span></button>
           <button class="button button-quiet" id="save-project-button">↓ <span>Сохранить ZIP</span></button>
@@ -76,8 +76,8 @@
       </header>
 
       <main class="editor-layout">
-        <aside class="hierarchy-panel panel" id="hierarchy-panel">
-          <div class="panel-heading"><div><span class="panel-kicker">SCENE</span><h3>Иерархия</h3></div><button class="icon-button" id="add-object-menu" title="Добавить объект">＋</button></div>
+        <aside class="hierarchy-panel panel" id="hierarchy-panel"><div class="panel-resize-handle resize-left-handle" data-resize="left" title="Изменить ширину"></div>
+          <div class="panel-heading"><div draggable="true" data-panel-drag="hierarchy"><span class="panel-kicker">SCENE</span><h3>Иерархия</h3></div><span class="panel-heading-actions"><button class="icon-button" id="swap-panels-button" title="Поменять панели местами">⇄</button><button class="icon-button" id="add-object-menu" title="Добавить объект">＋</button></span></div>
           <div class="scene-name-row"><span class="scene-indicator"></span><strong id="active-scene-name">Main Scene</strong><button class="tiny-icon-button" id="scene-options" title="Сцена">•••</button></div>
           <div id="hierarchy-list" class="hierarchy-list"></div>
           <div class="hierarchy-footer"><span id="object-count">0 объектов</span><span>WORLD OUTLINER</span></div>
@@ -94,12 +94,12 @@
               </div>
               <button class="tool-button" id="focus-object" title="Сфокусироваться на объекте">◎</button>
               <button class="tool-button" id="grid-toggle" title="Сетка">▦</button>
-              <button class="tool-button" id="viewport-help" title="Управление камерой">?</button>
+              <select id="viewport-camera-mode" class="camera-mode-select" title="Режим камеры"><option value="isometric">Изометрия</option><option value="perspective">Перспектива</option><option value="free">Свободная</option></select><button class="tool-button" id="viewport-help" title="Управление камерой">?</button>
             </div>
           </div>
           <div id="viewport-wrap" class="viewport-wrap">
             <canvas id="viewport-canvas"></canvas>
-            <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> ISOMETRIC / FREE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
+            <div class="viewport-hud hud-top-left"><span class="hud-dot"></span> PERSPECTIVE <span class="hud-separator">•</span> <span id="fps-label">60 FPS</span></div>
             <div class="viewport-hud hud-bottom-left">ЛКМ — обзор <span>·</span> ПКМ — панорама <span>·</span> Колесо — масштаб</div>
             <div class="viewport-center-hint" id="viewport-empty-hint"><div class="hint-cross">＋</div><strong>Сцена готова к работе</strong><span>Добавь объект через кнопку «＋» или панель инструментов.</span></div>
             <div class="viewport-drop-overlay" id="viewport-drop-overlay"><div>Отпусти файлы, чтобы импортировать ассеты</div></div>
@@ -112,19 +112,18 @@
           <div class="viewport-statusbar"><span><i class="status-dot"></i> READY</span><span id="selected-status">Ничего не выбрано</span><span id="viewport-coordinate">X 0.00&nbsp;&nbsp; Y 0.00&nbsp;&nbsp; Z 0.00</span></div>
         </section>
 
-        <aside class="inspector-panel panel" id="inspector-panel">
-          <div class="panel-heading"><div><span class="panel-kicker">INSPECTOR</span><h3>Свойства</h3></div><button class="icon-button" id="close-inspector" title="Скрыть панель">×</button></div>
+        <aside class="inspector-panel panel" id="inspector-panel"><div class="panel-resize-handle resize-right-handle" data-resize="right" title="Изменить ширину"></div>
+          <div class="panel-heading"><div draggable="true" data-panel-drag="inspector"><span class="panel-kicker">INSPECTOR</span><h3>Свойства</h3></div><button class="icon-button" id="close-inspector" title="Скрыть панель">×</button></div>
           <div id="inspector-content" class="inspector-content"><div class="inspector-empty"><div class="empty-icon">◈</div><strong>Объект не выбран</strong><span>Выбери объект на сцене или в иерархии, чтобы редактировать его свойства.</span></div></div>
         </aside>
 
-        <section class="asset-dock panel" id="asset-dock">
+        <section class="asset-dock panel" id="asset-dock"><div class="panel-resize-handle resize-dock-handle" data-resize="dock" title="Изменить высоту"></div>
           <div class="asset-dock-header">
             <div class="asset-tabs">
               <button class="asset-tab active" data-asset-tab="assets">▤ <span>Файлы</span></button>
               <button class="asset-tab" data-asset-tab="scenes">▧ <span>Сцены</span></button>
               <button class="asset-tab" data-asset-tab="scripts">〈〉 <span>ZeroScript</span></button>
               <button class="asset-tab" data-asset-tab="zeroboxes">◇ <span>ZeroBox</span></button>
-              <button class="asset-tab asset-add-tab" id="asset-add-tab" type="button" title="Добавить объект">＋</button>
             </div>
             <div class="asset-actions">
               <span class="asset-path" id="asset-path">Assets / All</span>
@@ -144,7 +143,7 @@
         <header class="workbench-header">
           <button class="button button-quiet" id="close-workbench">← В сцену</button>
           <div class="workbench-title"><strong id="workbench-title">ZeroBox</strong><span id="workbench-subtitle">Визуальная логика проекта</span></div>
-          <div class="workbench-header-actions"><button class="button button-quiet" id="zerobox-select-network" title="Выделить всю связанную сеть">Сеть</button><button class="button button-quiet" id="zerobox-delete-selection" title="Удалить выделенные блоки">Удалить сеть</button><button class="button button-quiet" id="zerobox-copy-selection" title="Копировать выбранные блоки">▢ Копировать</button><button class="button button-quiet" id="zerobox-paste-selection" title="Вставить блоки">▣ Вставить</button><button class="button button-quiet" id="zerobox-help">? Help</button><button class="button button-quiet" id="workbench-run">▶ Проверить</button><button class="button button-primary" id="workbench-save">Сохранить</button></div>
+          <div class="workbench-header-actions"><button class="button button-quiet" id="zerobox-copy-selection" title="Копировать выбранные блоки">▢ Копировать</button><button class="button button-quiet" id="zerobox-paste-selection" title="Вставить блоки">▣ Вставить</button><button class="button button-quiet" id="zerobox-help">? Help</button><button class="button button-quiet" id="workbench-run">▶ Проверить</button><button class="button button-primary" id="workbench-save">Сохранить</button></div>
         </header>
         <div id="workbench-body" class="workbench-body"></div>
       </section>
