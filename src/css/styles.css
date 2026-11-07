@@ -199,9 +199,11 @@
 .camera-control-area{border:1px dashed #ffffff55;background:#ffffff05;touch-action:none;cursor:crosshair}
 .ui-design-stage .camera-control-area{background:#77777718;border:1px dashed #666;}
 .game-ui-layer .camera-control-area{background:transparent;border:0;touch-action:none;cursor:grab;z-index:5}
-.joystick-widget{overflow:visible!important;touch-action:none;pointer-events:auto}
-.joystick-base{width:100%;height:100%;border:2px solid #ffffff80;border-radius:50%;background:#2228;display:grid;place-items:center;touch-action:none;box-shadow:0 3px 14px #0005}
-.joystick-knob{width:42%;height:42%;border:1px solid #fff;border-radius:50%;background:#eeeeeecc;box-shadow:0 2px 8px #0008;pointer-events:none}
+.joystick-widget{overflow:visible!important;touch-action:none;pointer-events:auto;user-select:none;-webkit-user-select:none}
+.joystick-base{position:relative;width:100%;height:100%;border:2px solid #ffffff80;border-radius:50%;background:radial-gradient(circle,#424b54b8 0%,#2228 72%);display:grid;place-items:center;touch-action:none;overscroll-behavior:contain;user-select:none;-webkit-user-select:none;box-shadow:0 3px 14px #0005}
+.joystick-base.active{border-color:#a5ef4c;background:radial-gradient(circle,#59645cbf 0%,#222b 72%)}
+.joystick-knob{width:38%;height:38%;border:1px solid #fff;border-radius:50%;background:linear-gradient(145deg,#ffffffed,#bfc8d2d9);box-shadow:0 2px 8px #0008;pointer-events:none;will-change:transform;transition:transform 90ms ease-out}
+.joystick-base.active .joystick-knob{transition:none}
 @media(max-width:900px){.zero-workbench-grid{grid-template-columns:var(--zero-side-w) minmax(0,1fr)}.zero-workbench-grid .workbench-properties{grid-column:1/-1;max-height:30%;grid-row:2}.resize-zero-right-handle{display:none}}
 @media(max-width:700px){.resize-left-handle,.resize-right-handle,.resize-dock-handle{display:none}.zero-workbench-grid{grid-template-columns:116px minmax(0,1fr)}.zero-workbench-grid .workbench-sidebar{grid-column:1;grid-row:1/3}.zero-workbench-grid .workbench-properties{grid-column:1/-1;max-height:27%;grid-row:2}.resize-zero-left-handle{display:none}.spatial-editor-body{grid-template-columns:1fr}.spatial-preview-wrap{min-height:220px}#spatial-preview-canvas{height:220px}.spatial-fields{max-height:36vh}}
 
@@ -377,7 +379,7 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
 }
 
 
-/* ZeroEngine 0.9.6 — model object list and component inspector */
+/* ZeroEngine 0.9.7 — mobile model object list and component inspector */
 .model-object-item{display:flex;align-items:center;gap:5px;margin:4px 0;min-width:0}
 .model-object-item .model-object-row{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;margin:0}
 .model-object-delete{flex:0 0 30px;height:30px;border:1px solid #704747;border-radius:6px;background:#382323;color:#ffd0d0;font-size:18px;line-height:1;cursor:pointer}
@@ -398,7 +400,7 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
 @media(max-width:700px){.model-viewport-tools{left:5px;top:5px;max-width:calc(100% - 10px);gap:3px}.model-viewport-tools button{min-height:36px;padding:5px 7px;font-size:9px}.model-viewport-modes,.model-viewport-transforms{padding:3px}}
 
 
-/* ZeroEngine 0.9.6 — model project deletion, reliable mobile panels and free transforms */
+/* ZeroEngine 0.9.7 — mobile model project deletion, reliable mobile panels and free transforms */
 .model-project-choice-row{display:flex;align-items:stretch;gap:7px;min-width:0}
 .model-project-choice-row .model-project-choice{flex:1;min-width:0}
 .model-project-delete{flex:0 0 40px;min-height:40px;border:1px solid #754848;border-radius:7px;background:#382323;color:#ffd0d0;font-size:22px;cursor:pointer}
@@ -420,23 +422,119 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
 }
 
 
-/* ZeroEngine 0.9.7 — UV and 3D attachment workspaces, compact ZeroBox data ports */
-.model-uv-editor{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:14px;align-items:start}
-.model-uv-preview-wrap{min-width:0}.model-uv-preview-wrap canvas{display:block;width:100%;height:auto;max-height:56vh;object-fit:contain;border:1px solid var(--line2);border-radius:7px;background:#172026}
-.attach-editor-body{display:grid;gap:10px}.attach-editor-body canvas{width:100%;height:clamp(220px,45vh,440px);display:block;border:1px solid var(--line2);border-radius:7px;background:#20272b;touch-action:none}
-.zero-port.data-port{width:18px;min-width:18px;justify-content:center;background:transparent;border:0;padding:0;overflow:visible}
-.zero-port.data-port span{display:none!important}
-.zero-port.data-port i{width:11px;height:11px;flex:0 0 11px;border:2px solid #75c9e4;background:#172a31;box-shadow:0 0 0 2px var(--panel)}
-.node-card-body{grid-template-columns:minmax(0,1fr);gap:7px}
-.node-card-body .field-label{min-width:0}
-.zero-node-canvas{touch-action:pan-x pan-y}
-.node-card-head{touch-action:none}
-@media(max-width:700px){.model-uv-editor{grid-template-columns:minmax(0,1fr)}.model-uv-preview-wrap canvas{max-height:40vh}.attach-editor-body canvas{height:38vh}.node-card-body{grid-template-columns:minmax(0,1fr)}}
-/* Data ports are anchored to the matching field label, keeping node wiring legible. */
-.node-card-body .field-label.has-data-input-port{position:relative;padding-right:24px;min-height:32px;}
-.node-card-body .zero-port.field-data-port{position:absolute;right:0;left:auto;top:50%!important;transform:translateY(-50%);width:18px;min-width:18px;height:18px;justify-content:center;z-index:8;background:transparent;border:0;padding:0;}
-.node-card-body .zero-port.field-data-port i{width:11px;height:11px;flex:0 0 11px;}
-.node-card-body .zero-port.field-data-port:hover i,.node-card-body .zero-port.field-data-port.pending i{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 30%,transparent);}
-/* Block cards are manipulated independently from the ZeroBox canvas camera. */
-.zero-node-canvas{touch-action:none;}
-.node-card-head{touch-action:none;user-select:none;-webkit-user-select:none;}
+/* ZeroEngine 0.9.7 — mobile Model Studio viewport: remove overlapping side layer */
+@media(max-width:850px){
+  #model-studio{
+    width:100vw;
+    max-width:100vw;
+    height:100dvh;
+    max-height:100dvh;
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+  #model-studio .model-studio-header{
+    flex:0 0 auto;
+    width:100%;
+    min-width:0;
+  }
+  #model-studio .model-mobile-tabs{
+    flex:0 0 44px;
+    width:100%;
+    min-width:0;
+  }
+  #model-studio .model-studio-layout{
+    position:relative;
+    display:block;
+    flex:1 1 0!important;
+    width:100%;
+    height:auto!important;
+    min-width:0;
+    min-height:0;
+    max-height:none;
+    margin:0;
+    overflow:hidden;
+    isolation:isolate;
+    contain:layout paint;
+  }
+  #model-studio .model-studio-layout>.model-tools,
+  #model-studio .model-studio-layout>.model-viewport,
+  #model-studio .model-studio-layout>.model-inspector{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    max-width:100%;
+    max-height:none;
+    min-width:0;
+    min-height:0;
+    margin:0;
+    box-sizing:border-box;
+  }
+  #model-studio .model-studio-layout[data-active-panel="viewport"]>.model-tools,
+  #model-studio .model-studio-layout[data-active-panel="viewport"]>.model-inspector,
+  #model-studio .model-studio-layout[data-active-panel="tools"]>.model-viewport,
+  #model-studio .model-studio-layout[data-active-panel="tools"]>.model-inspector,
+  #model-studio .model-studio-layout[data-active-panel="inspector"]>.model-viewport,
+  #model-studio .model-studio-layout[data-active-panel="inspector"]>.model-tools{
+    display:none!important;
+    visibility:hidden!important;
+    pointer-events:none!important;
+  }
+  #model-studio .model-studio-layout[data-active-panel="viewport"]>.model-viewport,
+  #model-studio .model-studio-layout[data-active-panel="tools"]>.model-tools,
+  #model-studio .model-studio-layout[data-active-panel="inspector"]>.model-inspector{
+    display:block!important;
+    visibility:visible!important;
+    pointer-events:auto!important;
+  }
+  #model-studio .model-studio-layout>.model-viewport{
+    padding:0!important;
+    border:0!important;
+    overflow:hidden!important;
+    background:#202326!important;
+  }
+  #model-studio #model-canvas{
+    position:absolute;
+    inset:0;
+    display:block;
+    width:100%!important;
+    height:100%!important;
+    max-width:100%;
+    margin:0;
+    touch-action:none;
+  }
+  #model-studio .model-viewport-tools{right:5px;max-width:calc(100% - 10px)}
+}
+
+/* Scene right-drag selection marquee */
+.scene-selection-rect{position:absolute;z-index:8;pointer-events:none;border:1px solid #a5ef4c;background:rgba(165,239,76,.12);box-shadow:0 0 0 1px #10171b66; border-radius:2px}
+
+#model-studio .model-viewport-hud,#model-studio .model-selection-info{pointer-events:none}
+#model-studio .model-viewport-tools{pointer-events:auto;isolation:isolate}
+#model-studio .model-viewport-tools button{position:relative;z-index:1;touch-action:manipulation}
+
+/* Click-to-place mesh tools: clear cursor and visible touch targets. */
+#model-studio .model-viewport.model-tool-cursor,#model-studio .model-viewport.model-tool-cursor canvas{cursor:crosshair}
+#model-studio .model-viewport-tools button,#model-studio .model-tools button,#model-studio .model-inspector button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#model-studio .model-tool-grid button:focus-visible,#model-studio .model-mode-row button:focus-visible,#model-studio .model-viewport-tools button:focus-visible{outline:2px solid var(--accent,#a5ef4c);outline-offset:2px}
+
+#model-studio canvas.model-tool-cursor{cursor:crosshair}
+
+
+/* v0.10.0: direct axis views, touch targets and preview-menu actions. */
+.play-top-actions{display:flex;align-items:center;gap:8px}
+.model-viewport-views{position:absolute;right:10px;top:10px;z-index:5;display:flex;align-items:center;gap:4px;padding:5px 7px;border:1px solid #ffffff30;border-radius:8px;background:#10171dcc;backdrop-filter:blur(8px)}
+.model-viewport-views span{padding:0 4px;color:#b9c4c7;font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.model-viewport-views button{min-width:30px;min-height:30px;padding:4px 6px;border:1px solid #ffffff24;border-radius:5px;background:#293238;color:#e9eeee;font-size:11px;cursor:pointer;touch-action:manipulation}
+.model-viewport-views button:hover,.model-viewport-views button.active{background:var(--accent,#a5ef4c);color:#101510;border-color:var(--accent,#a5ef4c)}
+.model-object-item{display:flex;align-items:center;gap:5px}
+.model-object-item .model-object-check{flex:0 0 18px;width:18px;height:18px;accent-color:var(--accent,#a5ef4c);cursor:pointer}
+.model-object-item .model-object-row{flex:1;min-width:0;text-align:left}
+.model-object-item .model-object-delete{flex:0 0 30px}
+@media(max-width:700px){
+  .play-top-actions{gap:5px}
+  .play-top-actions .button{min-height:36px;padding:6px 8px;font-size:11px}
+  .model-viewport-views{left:5px;right:auto;top:auto;bottom:42px;max-width:calc(100% - 10px);gap:2px;padding:3px 4px}
+  .model-viewport-views span{font-size:9px}
+  .model-viewport-views button{min-width:32px;min-height:34px;padding:4px;font-size:10px}
+}

@@ -1,41 +1,124 @@
-# ZeroEngine 0.9.7
+# ZeroEngine 0.10.0
 
-ZeroEngine is a browser-based game and scene editor prototype. Three.js and JSZip are loaded from CDNs, so an internet connection is required.
+ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
 
 ## Run
 
-Open `index.html` through a local static server or publish the project root with GitHub Pages. Extract the ZIP before running the project.
+Open `index.html` through a local static server or publish the repository root with GitHub Pages. Extract the ZIP before running the project.
 
-## Separate workspaces
+## Separate 3D modeling workspace
 
-The home screen separates **game projects** and **3D model projects**. Model projects open in the dedicated Model Studio; game projects open in the scene editor.
+The **3D-моделирование** entry is on the home screen. Choose an existing project or create one; the modeling workspace opens separately from the scene editor.
 
-## 3D Model Studio
+- Twenty starter shapes: cube, UV sphere, plane, cylinder, cone, capsule, torus, torus knot, icosphere, monkey, circle, ring, pyramid, hexagonal prism, octahedron, dodecahedron, tetrahedron, tube, spring and wedge.
+- GLB/GLTF, FBX, OBJ and STL import. Imported models are centered and framed in the modeling viewport; GLB is recommended.
+- Axis transform gizmo for move, rotate and scale, plus numeric transform fields.
+- Mirror the selected object along X, Y or Z.
+- Object duplication, copy/paste, rename, delete and grouping/join prototype.
+- Component pick modes for vertices, edges and faces. Face selection uses a marker instead of drawing a triangle, since Three.js renders buffer geometry as triangles internally.
+- Early face push/inset/bevel/sharpen/cut/joint tools, image reference planes, image texture assignment, basic canvas paint, material controls and UV repeat/offset.
+- GLB export to project `Assets/Models`; saved assets are included in project ZIP export. A selected model can be converted into a `Player` entity.
 
-- Starter shapes: cube, UV sphere, plane, cylinder, cone, capsule, torus, torus knot and icosphere. The monkey-head primitive has been removed.
-- Import GLB/GLTF, FBX, OBJ and STL files. GLB is recommended.
-- Move, rotate, scale, move in XY/YZ/XZ planes and uniform scale from controls over the viewport. The chosen transform and component mode are remembered.
-- Edit vertices, edges and coplanar faces directly in the viewport. Shift-click adds or removes selected vertices.
-- Create points by splitting a selected triangle, create connecting edge objects from two selected vertices, and create a triangle face from three selected vertices.
-- Face extrusion, inset and bevel rebuild the selected patch with a cap and connecting side walls. Additional tools include subdivision cut, sharpen, duplicate, delete, thickness, normal inversion and vertex welding.
-- Mirror selected objects on X/Y/Z; double-click an object to frame it in the viewport.
-- Texture UV workspace supports selecting a crop region by dragging on the image, plus numeric U/V offset and size controls. Material painting, image assignment, opacity, base-color reset, roughness and metalness are available.
-- Export models as GLB into `Assets/Models`; convert a model to a Player.
+## Changes in 0.9.9
 
-## Scene editor and game preview
+- Added 20 starter primitives and dedicated click-to-place tools for creating vertices, edges and faces. Pending picks are marked in the viewport; the tools can be cancelled with Escape or by tapping the active tool again.
+- Extrude, inset and bevel now replace the original selected face region with the new cap and side geometry, avoiding hidden duplicate faces. Cut subdivides selected faces. Geometry operations have a 50,000-triangle workspace limit to protect the project from runaway mesh growth.
+- Limited undo snapshots for heavy meshes to reduce memory usage; very dense models disable deep snapshot history to avoid browser crashes.
+- Fixed the Skybox inspector so image-only skybox objects do not trigger missing material/collision controls. Skybox settings remain on the Skybox object rather than in Scene settings.
+- Added a visible right-drag selection marquee and corrected the viewport hint: left mouse rotates, middle mouse pans, right-drag selects multiple scene objects, and the wheel zooms.
+- Fixed the saved direction selector for Moving and improved tap targets for 3D viewport controls.
+- The scene no longer has an implicit Y=0 floor; a player falls through empty space and is supported only by solid colliders.
 
-- Scene objects can be converted to Player from the inspector. Objects can be attached to a Player or game camera in a dedicated 3D attachment window.
-- Skybox supports spherical panorama or cube background, tiling and smoothing settings.
-- Material inspector supports transparency and removing the base-color override.
-- Box colliders use rotated axis-aligned bounds. Basic physics advances in small fixed substeps to improve contact stability.
-- Player movement has a simple procedural movement bob. Imported skeletal animations can be played separately when present in the model.
-- ZeroBox direction, numeric and joystick inputs are passed into actions at runtime. Joystick exposes separate X and Y outputs. Data inputs are shown as small ports beside their corresponding fields.
-- Keyboard bindings display modifier names and support combinations such as Ctrl+Shift+K.
+## Changes in 0.9.8
 
-## Known limitations
+- Reworked the on-screen joystick as a radial analog stick. Its knob can be dragged in any direction, is clamped to the circular travel area, and returns to the center on release/cancel. X reports left/right; Y reports forward/backward.
+- Added a standalone `Joystick Movement` ZeroBox script. Add a `Joystick` to the UI, add this script to ZeroBox, select the joystick and target object; it reads the active control every frame and moves the target using collision-aware movement. No execution wire is required.
+- Added movement speed, dead-zone and orientation options: target object Y rotation, camera yaw, or world axes. Diagonal movement is normalized.
+- Kept the `Joystick` data source with separate X and Y outputs for wiring into other blocks.
+- Added `src/js/joystick-movement.js` as the separate movement runtime module.
 
-This is an early browser-based editor, not a full Blender or commercial game-engine replacement. The mesh workspace operates on triangulated BufferGeometry: selected planar patches are grouped for face editing, edge selection refers to triangle edges, and bevel/cut/thickness are basic mesh operations rather than a complete topology/boolean system. A created edge is represented by a visible child geometry between two selected vertices; it is not a full edge-loop/topology kernel. UV editing changes a shared texture's repeat/offset crop and does not provide automatic per-corner unwrap. Physics uses simplified AABB collision and is not a full rigid-body solver. Movement animation is procedural unless the imported model contains skeletal animation clips. A full browser interaction test was not performed for this release.
+## Changes in 0.9.6
+
+- Added a delete control beside every model in the Model Studio object list.
+- Fixed component editing tools and transform gizmo behavior for vertex, edge and face selections; selected components can be translated, rotated and scaled directly in the viewport.
+- Component deletion now removes affected triangles from the mesh instead of collapsing them into a point.
+- The Joystick block exposes separate numeric X and Y outputs.
+- Expanded typed ZeroBox data ports for numbers, directions, booleans, colors, text and assets; added Text and Asset source blocks. Moving accepts connected X/Y/Z, speed and direction values.
+
+## Changes in 0.9.4
+
+- Responsive editor layout for desktop, phone portrait and phone landscape; the editor follows the real viewport orientation and uses compact landscape controls.
+- Added device and resolution preferences (PC, tablet, phone portrait/landscape, automatic and custom resolution). The selected target resolution controls the UI Designer preview aspect ratio.
+- Model Studio uses touch-friendly tabs on small screens: 3D view, tools and properties. The viewport is resized when changing tabs, touch gestures rotate/zoom/pan, and larger transform handles are used on touch devices.
+- UI Designer elements can be moved by touch and resized with eight on-element handles. Position and size fields remain available in properties.
+
+## Fixes in 0.9.2
+
+- New Player objects start at ground level; older Players are snapped to a nearby floor or solid collider when Play Mode starts.
+- Physics tracks grounded contact. The `Jumpup` ZeroBox action is ignored while airborne and only launches from the world floor or a solid, non-trigger collider.
+- Fixed the preview camera input: desktop mouse uses pointer lock, while touch uses pointer capture; third-person camera pitch now changes the orbit as well as yaw.
+- Added optional seamless-edge blending for assigned textures. Enable **Сглаживать стыки текстуры** in the Material inspector and adjust the blend width; the original texture asset is preserved.
+
+## Fixes in 0.9.1
+
+- Removed editor selection BoxHelpers when preview/test mode starts, so the selection outline is not visible in the game preview.
+- Fixed the Model Studio camera target and automatic framing for added/imported objects.
+- Updated TransformControls attachment to the current Three.js helper API, restoring the axis arrows/gizmo.
+- Added dedicated left-side transform and mirror buttons.
+- Moved Model Studio access out of the scene editor toolbar and into the home menu.
+- Improved model undo snapshots to preserve nested meshes and groups.
+
+## Modeling limitations
+
+This remains an early browser modeling workspace, not a Blender replacement. Component modes support vertex, edge and coplanar face selection with direct transforms. Face operations work on the selected triangulated face region; cut, joint, join and bevel remain early prototypes. There is no full topology kernel, boolean solver, edge-loop system, skin-weight editor, automatic UV unwrap or production-grade texture painting yet.
 
 ## Project data
 
 Projects are stored locally in IndexedDB. Export ZIP regularly to back them up or move them to another device.
+
+## ZeroEngine 0.9.6
+
+- ZeroBox and UI Designer now open as exclusive full-screen workspaces; the scene is blocked until the workspace is closed.
+- Play Mode first persists the project and refuses to start if saving fails or no ZeroBox exists.
+- ZeroBox supports touch multi-selection, copying selected blocks, moving nodes by touch, and dragging palette blocks onto the workspace.
+- Added a `Joystick` logic block with selectable UI joystick and X/Y data ports. Connect its X/Y outputs to the matching data inputs on `Moving` to drive movement from that joystick.
+- UI Designer supports multiple named interfaces, duplication/deletion, and screen-navigation buttons.
+- Mobile workspaces use a desktop-like tool layout adapted into stacked panels, keeping the canvas and properties accessible.
+
+
+## 0.9.6
+- Project deletion is available directly in the 3D Model Studio project picker.
+- Mobile Model Studio panels now occupy one full-screen layer at a time; the viewport no longer leaves a stray side panel visible.
+- Face extrusion, inset and bevel now create a translated cap and connecting side walls while preserving the original face, preventing the selected face from being pulled away and leaving a hole.
+- Added plane translation and uniform scaling controls alongside axis transforms.
+
+
+## 0.9.7
+- Исправлена мобильная компоновка окна 3D-моделирования: рабочая область не выходит за пределы места под шапкой и вкладками, неактивные боковые панели скрываются полностью.
+- Уменьшен размер манипулятора на сенсорных экранах, чтобы его плоскости не перекрывали большую часть сцены.
+- Перерасчёт размера canvas привязан к реальной видимой области 3D-сцены и изменению размеров visual viewport.
+
+
+## 0.10.0
+
+- Expanded the scene primitive menu to 20 basic shapes, matching Model Studio.
+- Kept right-button drag marquee selection in the scene viewport; every object whose projected bounds intersect the selection frame is selected.
+- Removed the implicit world floor: a player can fall into empty space and is supported only by actual solid colliders.
+- Added clear +X/-X, +Y/-Y and +Z/-Z axis views to Model Studio; camera zoom and vertical orbit stay within configured bounds.
+- Added explicit per-object multi-selection checkboxes, Join Selected and Separate Group actions.
+- Added visible click markers and a click-by-click preview for creating vertices, edges and faces, including touch input.
+- Topology points and edge overlays now follow the complete world transform of nested meshes.
+- Numeric model transforms and material values update while editing and are committed to model history on change.
+- Fixed persistence and visual indication of the `Moving` block direction.
+- Added a direct return-to-main-menu action in Play Mode; Model Studio retains its return-to-home action.
+- Skybox settings are attached only to the dedicated Skybox object. The inspector provides image, sphere/box shape, tiling, rotation, brightness and smoothing; legacy scene-level Skybox image settings are migrated.
+- Enlarged the Skybox volume so the scene camera remains inside it throughout its supported zoom range.
+- ZIP exports now write canonical resource paths under `Assets/`, update the manifest to match those paths, sort resources/scenes/scripts, and include a short README. ZIP import also recognizes older duplicated `Assets/Assets/` resource paths.
+- Model saves update an existing model resource at the same path instead of creating duplicate copies.
+- Added translations for the new controls and messages in the supported UI languages (Russian, Ukrainian, English and Kazakh).
+
+### Known limits
+
+- Join Selected groups the chosen objects under one parent; it does not perform a destructive Boolean/mesh weld. Separate Group restores its children.
+- New vertex/edge/face tools create visible geometry on the selected mesh; they are not a full professional retopology system.
+- Face operations have a polygon safety cap to prevent large operations from freezing the browser.

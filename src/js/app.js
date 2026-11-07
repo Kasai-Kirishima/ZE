@@ -9,6 +9,7 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import JSZip from 'jszip';
+import { joystickMovementStep } from './joystick-movement.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -40,7 +41,7 @@ const typeOf = name => {
   return 'file';
 };
 const iconFor = type => ({model:'📦',texture:'🖼️',script:'〈〉',zerobox:'◇',audio:'🎵',scene:'🎬',json:'{}',material:'🎨',environmentLight:'☼',binary:'📄',file:'📄',folder:'📁',primitive:'◈',camera:'📷',player:'♟',spawn:'⌖',light:'💡'})[type] || '📄';
-const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: true, objects: [], skyboxAssetId: null });
+const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: true, objects: [] });
 
 let db = null;
 let currentProject = null;
@@ -87,14 +88,13 @@ let zeroBlockSearch = '';
 let zeroBoxSearch = '';
 let gameSpeedMultiplier = 1;
 let heldKeys = new Set();
-let activeKeyBindings = new Map();
 let heldButtonIds = new Set();
 let heldZeroTimers = new Map();
 let previewYaw = 0, previewPitch = -0.18;
 let editorCameraMode = 'perspective';
-let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', transformTool:'move', raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null };
+let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false };
 let deviceSettings = { profile:'auto', width:window.innerWidth||1280, height:window.innerHeight||720 };
-const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere'];
+const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey','Circle','Ring','Pyramid','Hexagonal Prism','Octahedron','Dodecahedron','Tetrahedron','Tube','Spring','Wedge'];
 let currentLanguage = 'ru';
 let localizationObserver = null;
 let translatingNow = false;
@@ -198,6 +198,32 @@ const MODEL_STUDIO_I18N={
   en:{'3D-модели':'3D Models','В проект':'Back to project','Сохранить модель':'Save model','Добавить модель':'Add model','Импортировать 3D-файл':'Import 3D file','Режим редактирования':'Edit mode','Объект':'Object','Точки':'Vertices','Рёбра':'Edges','Грани':'Faces','Инструменты':'Tools','Переместить':'Move','Вращать':'Rotate','Масштаб':'Scale','Выдавить':'Extrude','Вдавить':'Inset','Разрезать':'Cut','Скруглить':'Bevel','Заострить':'Sharpen','Объединить':'Join','Дублировать':'Duplicate','Удалить':'Delete','Копировать объект':'Copy object','Вставить объект':'Paste object','Сделать классом Player':'Convert to Player','Референс':'Reference','Добавить картинку':'Add image','Удалить референс':'Remove reference','Параметры':'Properties','Положение':'Position','Вращение':'Rotation','Текстуры и материал':'Textures & Material','Рисовать текстуру':'Paint texture','Наложить картинку':'Apply image','Обрезать картинку':'Crop image','Применить текстуру':'Apply texture','Объекты модели':'Model objects'},
   kk:{'3D-модели':'3D модельдер','В проект':'Жобаға оралу','Сохранить модель':'Модельді сақтау','Добавить модель':'Модель қосу','Импортировать 3D-файл':'3D файлды импорттау','Режим редактирования':'Өңдеу режимі','Объект':'Нысан','Точки':'Нүктелер','Рёбра':'Қырлар','Грани':'Жақтар','Инструменты':'Құралдар','Переместить':'Жылжыту','Вращать':'Бұру','Масштаб':'Масштаб','Выдавить':'Созу','Вдавить':'Батыру','Разрезать':'Кесу','Скруглить':'Дөңгелектеу','Заострить':'Ұштау','Объединить':'Біріктіру','Дублировать':'Көшірмелеу','Удалить':'Жою','Копировать объект':'Нысанды көшіру','Вставить объект':'Нысанды қою','Сделать классом Player':'Player класына айналдыру','Референс':'Референс','Добавить картинку':'Сурет қосу','Удалить референс':'Референсті жою','Параметры':'Параметрлер','Положение':'Орналасуы','Вращение':'Бұрылуы','Текстуры и материал':'Текстуралар мен материал','Рисовать текстуру':'Текстура салу','Наложить картинку':'Суретті қабаттау','Обрезать картинку':'Суретті қию','Применить текстуру':'Текстураны қолдану','Объекты модели':'Модель нысандары'}
 };Object.assign(I18N.uk,MODEL_STUDIO_I18N.uk,{'↔ Переместить': '↔ Перемістити', '⟳ Вращать': '⟳ Обертати', '⬆ Выдавить': '⬆ Видавити', '▣ Вдавить': '▣ Втиснути', '✂ Разрезать': '✂ Розрізати', '◩ Скруглить': '◩ Заокруглити', '◆ Заострить': '◆ Загострити', '⊕ Объединить': '⊕ Об’єднати', '▢ Дублировать': '▢ Дублювати', '× Удалить': '× Видалити'});Object.assign(I18N.en,MODEL_STUDIO_I18N.en,{'↔ Переместить': '↔ Move', '⟳ Вращать': '⟳ Rotate', '⬆ Выдавить': '⬆ Extrude', '▣ Вдавить': '▣ Inset', '✂ Разрезать': '✂ Cut', '◩ Скруглить': '◩ Bevel', '◆ Заострить': '◆ Sharpen', '⊕ Объединить': '⊕ Join', '▢ Дублировать': '▢ Duplicate', '× Удалить': '× Delete'});Object.assign(I18N.kk,MODEL_STUDIO_I18N.kk,{'↔ Переместить': '↔ Жылжыту', '⟳ Вращать': '⟳ Бұру', '⬆ Выдавить': '⬆ Созу', '▣ Вдавить': '▣ Батыру', '✂ Разрезать': '✂ Кесу', '◩ Скруглить': '◩ Дөңгелектеу', '◆ Заострить': '◆ Ұштау', '⊕ Объединить': '⊕ Біріктіру', '▢ Дублировать': '▢ Көшірмелеу', '× Удалить': '× Жою'});
+Object.assign(I18N.uk,{'Объединить выбранные':'Об’єднати вибрані','Разделить выбранную группу':'Розділити вибрану групу','Вид':'Вигляд','Для объединения выбрано:':'Для об’єднання вибрано:','Отметь флажками минимум две модели для объединения':'Познач прапорцями щонайменше дві моделі для об’єднання','Группа разделена на':'Групу розділено на','В главное меню':'До головного меню','Картинка Skybox':'Зображення Skybox','Не выбрана':'Не вибрано','Форма окружения':'Форма оточення','Круг / сфера':'Коло / сфера','Квадрат / куб':'Квадрат / куб','Поворот изображения по Y':'Поворот зображення за Y','Яркость':'Яскравість','Сглаживание изображения':'Згладжування зображення','Skybox управляется только этим объектом. Выбери изображение из ресурсов проекта; материал и отдельная текстура здесь не назначаются.':'Skybox налаштовується лише цим об’єктом. Вибери зображення з ресурсів проєкту; матеріал і окрема текстура тут не призначаються.','Выбери объект в 3D-окне или в списке.':'Вибери об’єкт у 3D-вікні або у списку.','Вперёд':'Уперед','Назад':'Назад','Влево':'Ліворуч','Вправо':'Праворуч'});
+Object.assign(I18N.en,{'Объединить выбранные':'Join selected','Разделить выбранную группу':'Separate selected group','Вид':'View','Для объединения выбрано:':'Selected for joining:','Отметь флажками минимум две модели для объединения':'Check at least two models to join','Группа разделена на':'Group separated into','В главное меню':'Main menu','Картинка Skybox':'Skybox image','Не выбрана':'Not selected','Форма окружения':'Environment shape','Круг / сфера':'Circle / sphere','Квадрат / куб':'Square / cube','Поворот изображения по Y':'Image rotation on Y','Яркость':'Brightness','Сглаживание изображения':'Image smoothing','Skybox управляется только этим объектом. Выбери изображение из ресурсов проекта; материал и отдельная текстура здесь не назначаются.':'Skybox is controlled only by this object. Choose an image from project assets; no material or separate texture is assigned here.','Выбери объект в 3D-окне или в списке.':'Select an object in the 3D viewport or in the list.','Вперёд':'Forward','Назад':'Backward','Влево':'Left','Вправо':'Right'});
+Object.assign(I18N.kk,{'Объединить выбранные':'Таңдалғандарды біріктіру','Разделить выбранную группу':'Таңдалған топты бөлу','Вид':'Көрініс','Для объединения выбрано:':'Біріктіру үшін таңдалды:','Отметь флажками минимум две модели для объединения':'Біріктіру үшін кемінде екі модельді белгіле','Группа разделена на':'Топ мына санға бөлінді','В главное меню':'Басты мәзірге','Картинка Skybox':'Skybox суреті','Не выбрана':'Таңдалмаған','Форма окружения':'Орта пішіні','Круг / сфера':'Шеңбер / шар','Квадрат / куб':'Шаршы / текше','Поворот изображения по Y':'Y бойынша суретті бұру','Яркость':'Жарықтық','Сглаживание изображения':'Суретті тегістеу','Skybox управляется только этим объектом. Выбери изображение из ресурсов проекта; материал и отдельная текстура здесь не назначаются.':'Skybox тек осы нысан арқылы басқарылады. Жоба ресурстарынан сурет таңда; мұнда материал немесе бөлек текстура тағайындалмайды.','Выбери объект в 3D-окне или в списке.':'3D көрінісінен немесе тізімнен нысанды таңда.','Вперёд':'Алға','Назад':'Артқа','Влево':'Солға','Вправо':'Оңға'});
+
+
+Object.assign(I18N.uk,{
+  'Икосфера':'Ікосфера','Обезьяна':'Мавпа','Круг':'Коло','Кольцо':'Кільце','Пирамида':'Піраміда','Шестиугольная призма':'Шестикутна призма','Октаэдр':'Октаедр','Труба':'Труба','Пружина':'Пружина','Клин':'Клин',
+  'Ортографические виды':'Ортографічні вигляди','Вид по +X':'Вигляд уздовж +X','Вид по -X':'Вигляд уздовж -X','Вид сверху +Y':'Вигляд згори +Y','Вид снизу -Y':'Вигляд знизу -Y','Вид по +Z':'Вигляд уздовж +Z','Вид по -Z':'Вигляд уздовж -Z',
+  'ЛКМ — выбрать / задать точку · ПКМ + перетаскивание — рамка · СКМ — панорама · Колесо — масштаб':'ЛКМ — вибір / точка · ПКМ + перетягування — рамка · СКМ — панорама · Коліщатко — масштаб',
+  '⊕ Объединить выбранные':'⊕ Об’єднати вибрані','⇱ Разделить выбранную группу':'⇱ Розділити вибрану групу','⌂ В главное меню':'⌂ До головного меню',
+  'Новая точка создана':'Нову точку створено','Новое ребро создано':'Нове ребро створено','Новая грань создана':'Нову грань створено','Инструмент отменён':'Інструмент скасовано'
+});
+Object.assign(I18N.en,{
+  'Икосфера':'Icosphere','Обезьяна':'Monkey','Круг':'Circle','Кольцо':'Ring','Пирамида':'Pyramid','Шестиугольная призма':'Hexagonal prism','Октаэдр':'Octahedron','Труба':'Tube','Пружина':'Spring','Клин':'Wedge',
+  'Ортографические виды':'Orthographic views','Вид по +X':'View along +X','Вид по -X':'View along -X','Вид сверху +Y':'Top view +Y','Вид снизу -Y':'Bottom view -Y','Вид по +Z':'View along +Z','Вид по -Z':'View along -Z',
+  'ЛКМ — выбрать / задать точку · ПКМ + перетаскивание — рамка · СКМ — панорама · Колесо — масштаб':'Left click: select / place point · Right drag: marquee · Middle click: pan · Wheel: zoom',
+  '⊕ Объединить выбранные':'⊕ Join selected','⇱ Разделить выбранную группу':'⇱ Separate selected group','⌂ В главное меню':'⌂ Main menu',
+  'Новая точка создана':'New vertex created','Новое ребро создано':'New edge created','Новая грань создана':'New face created','Инструмент отменён':'Tool cancelled'
+});
+Object.assign(I18N.kk,{
+  'Икосфера':'Икосфера','Обезьяна':'Маймыл','Круг':'Шеңбер','Кольцо':'Сақина','Пирамида':'Пирамида','Шестиугольная призма':'Алтыбұрышты призма','Октаэдр':'Октаэдр','Труба':'Түтік','Пружина':'Серіппе','Клин':'Сына',
+  'Ортографические виды':'Ортографиялық көріністер','Вид по +X':'+X бойымен көрініс','Вид по -X':'-X бойымен көрініс','Вид сверху +Y':'+Y жоғарыдан көрініс','Вид снизу -Y':'-Y төменнен көрініс','Вид по +Z':'+Z бойымен көрініс','Вид по -Z':'-Z бойымен көрініс',
+  'ЛКМ — выбрать / задать точку · ПКМ + перетаскивание — рамка · СКМ — панорама · Колесо — масштаб':'Сол жақ шерту: таңдау / нүкте · Оң жақпен сүйреу: жақтау · Ортаңғы шерту: панорама · Дөңгелек: масштаб',
+  '⊕ Объединить выбранные':'⊕ Таңдалғандарды біріктіру','⇱ Разделить выбранную группу':'⇱ Таңдалған топты бөлу','⌂ В главное меню':'⌂ Басты мәзірге',
+  'Новая точка создана':'Жаңа нүкте жасалды','Новое ребро создано':'Жаңа қыр жасалды','Новая грань создана':'Жаңа жақ жасалды','Инструмент отменён':'Құралдан бас тартылды'
+});
 
 function setLanguage(lang) {
   currentLanguage = ['ru','uk','en','kk'].includes(lang) ? lang : 'ru';
@@ -271,10 +297,10 @@ const getAllProjects = () => dbRequest('readonly', store => store.getAll());
 const putProject = project => dbRequest('readwrite', store => store.put(project));
 const deleteProjectRecord = id => dbRequest('readwrite', store => store.delete(id));
 
-function makeProject(name, description, projectKind = 'game') {
+function makeProject(name, description) {
   const sceneData = DEFAULT_SCENE();
   return {
-    id: uid(), name: name.trim(), description: description.trim(), projectKind,
+    id: uid(), name: name.trim(), description: description.trim(),
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     activeSceneId: sceneData.id, scenes: [{ id: sceneData.id, name: sceneData.name, data: sceneData }],
     assets: [], materials: [], scripts: [], assetFolders: [], zeroBoxes: [], uiElements: [], variables: [{id:uid(),name:'Value',type:'Number',value:0,system:true}]
@@ -283,7 +309,6 @@ function makeProject(name, description, projectKind = 'game') {
 function activeScene() { return currentProject?.scenes.find(item => item.id === currentProject.activeSceneId) || currentProject?.scenes[0]; }
 function activeSceneData() { return activeScene()?.data; }
 function normalizeProject(project) {
-  project.projectKind ||= 'game';
   if (!project.scenes?.length) {
     const data = project.scene || DEFAULT_SCENE();
     project.scenes = [{ id: data.id || uid(), name: data.name || 'Main Scene', data }];
@@ -294,7 +319,7 @@ function normalizeProject(project) {
     item.data.objects ||= [];
     // Clean up legacy editor starter lights, but preserve user-created lights.
     const legacyLightNames = new Set(['ambient light','default light','startup light','key light']);
-    item.data.objects = item.data.objects.filter(entity => !(entity.type === 'light' && (entity.editorDefault === true || legacyLightNames.has(String(entity.name||'').trim().toLowerCase()))));
+    item.data.objects = item.data.objects.filter(entity => !(entity.type === 'light' && (entity.editorDefault === true || legacyLightNames.has(String(entity.name||'').trim().toLowerCase()))) && entity.editorVoidFloor !== true);
   });
   project.assets ||= [];
   project.materials ||= [];
@@ -313,7 +338,18 @@ function normalizeProject(project) {
   const activeScreenForLoad=project.uiScreens.find(screen=>screen.id===project.activeUIScreenId)||project.uiScreens[0];
   if(activeScreenForLoad) project.uiElements=clone(activeScreenForLoad.elements||project.uiElements||[]);
   project.zeroBoxes.forEach(box => { box.blocks ||= []; box.blocks=box.blocks.filter(block=>block.type!=='Walking'); box.variables ||= []; box.connections ||= []; box.blocks.forEach((block,index)=>{ block.config ||= {...ZEROBOX_DEFAULTS}; if(block.config.variableY===undefined&&block.config.variableZ!==undefined)block.config.variableY=block.config.variableZ; if(!Number.isFinite(block.x)) block.x=360+(index%3)*330; if(!Number.isFinite(block.y)) block.y=130+Math.floor(index/3)*250; }); box.connections=box.connections.filter(c=>box.blocks.some(b=>b.id===c.from?.nodeId)&&box.blocks.some(b=>b.id===c.to?.nodeId)); });
-  project.scenes.forEach(sceneItem => (sceneItem.data.objects || []).forEach(entity => {
+  project.scenes.forEach(sceneItem => {
+    (sceneItem.data.objects || []).forEach(entity => {
+    if (entity.type === 'skybox') {
+      entity.skybox ||= { shape:'sphere', tileX:1, tileY:1, smoothing:true, rotationY:0, brightness:1 };
+      if (!entity.assetId && sceneItem.data.skyboxAssetId) entity.assetId = sceneItem.data.skyboxAssetId;
+      entity.skybox.shape = ['sphere','box'].includes(entity.skybox.shape) ? entity.skybox.shape : 'sphere';
+      entity.skybox.tileX = Math.max(.05, Number(entity.skybox.tileX)||1);
+      entity.skybox.tileY = Math.max(.05, Number(entity.skybox.tileY)||1);
+      entity.skybox.smoothing = entity.skybox.smoothing !== false;
+      entity.skybox.rotationY = Number(entity.skybox.rotationY)||0;
+      entity.skybox.brightness = Math.max(0, Math.min(3, Number(entity.skybox.brightness??1)));
+    }
     if (entity.type === 'player') {
       if (!entity.cameraMount) {
         if (entity.name === 'Player Start') { entity.type = 'spawn'; entity.gameVisible = false; }
@@ -340,7 +376,17 @@ function normalizeProject(project) {
     entity.collision.isTrigger ??= false;
     if (entity.type === 'player' && !entity.physics) entity.physics = { enabled: true, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 };
     if (entity.physics) { entity.physics.velocity ||= [0,0,0]; entity.physics.useGravity ??= true; entity.physics.mass = Math.max(.01, Number(entity.physics.mass)||1); }
-  }));
+    });
+    // Migrate legacy scene-level skybox image to the dedicated Skybox object only.
+    if(sceneItem.data.skyboxAssetId){
+      let skyboxObject=(sceneItem.data.objects||[]).find(entity=>entity.type==='skybox');
+      if(!skyboxObject){
+        skyboxObject={id:uid(),name:'Skybox',type:'skybox',assetId:sceneItem.data.skyboxAssetId,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],visible:true,skybox:{shape:'sphere',tileX:1,tileY:1,smoothing:true,rotationY:0,brightness:1},collision:{enabled:false,shape:'box',size:[1,1,1],offset:[0,0,0],isTrigger:false}};
+        sceneItem.data.objects.push(skyboxObject);
+      }else if(!skyboxObject.assetId)skyboxObject.assetId=sceneItem.data.skyboxAssetId;
+    }
+    delete sceneItem.data.skyboxAssetId;
+  });
   // One-time upgrade: old primitive/model colliders were disabled 1x1x1 placeholders by default.
   // Enable only untouched default placeholders; custom collider settings remain unchanged.
   if (!project.collisionDefaultsMigratedV060) {
@@ -371,37 +417,37 @@ function localizedCount(count, kind) {
 
 // ---------- Home / projects ----------
 async function renderProjectList() {
-  const gameList=$('#project-list'), modelList=$('#model-project-list');
+  const list = $('#project-list');
   try {
-    const projects=(await getAllProjects()).map(normalizeProject).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
-    const games=projects.filter(project=>project.projectKind!=='model');
-    const models=projects.filter(project=>project.projectKind==='model');
-    $('#project-count').textContent=localizedCount(games.length,'projects');
-    $('#model-project-count').textContent=localizedCount(models.length,'projects');
-    const empty=(label,detail)=>`<div class="empty-projects"><div class="empty-icon">▱</div><strong>${label}</strong><span>${detail}</span></div>`;
-    const renderCards=(items,kind)=>items.length?items.map(project=>`
-      <article class="project-card" data-open-project="${escapeAttr(project.id)}" data-project-kind="${kind}">
-        <div class="project-card-top"><span class="project-symbol">${kind==='model'?'⬡':'◈'}</span><button class="delete-project" data-delete-project="${escapeAttr(project.id)}" title="Удалить проект">×</button></div>
-        <h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.description||'Без описания')}</p>
-        <div class="project-card-foot"><span>${(project.assets||[]).length} ASSETS</span><span>${new Date(project.updatedAt).toLocaleDateString('ru-RU')}</span></div>
-      </article>`).join(''):empty(kind==='model'?'Пока нет проектов моделей':'Пока нет игровых проектов',kind==='model'?'Создай проект через раздел 3D-моделирования.':'Создай новый игровой проект или импортируй ZIP.');
-    gameList.innerHTML=renderCards(games,'game');
-    if(modelList)modelList.innerHTML=renderCards(models,'model');
-    for(const host of [gameList,modelList].filter(Boolean)){
-      $$('[data-open-project]',host).forEach(card=>card.addEventListener('click',async event=>{
-        if(event.target.closest('[data-delete-project]'))return;
-        const project=projects.find(item=>item.id===card.dataset.openProject);if(!project)return;
-        if(project.projectKind==='model')await enterModelStudio(project);else await openProject(project);
-      }));
-      $$('[data-delete-project]',host).forEach(button=>button.addEventListener('click',async event=>{
-        event.stopPropagation();const project=projects.find(item=>item.id===button.dataset.deleteProject);
-        if(!project||!confirm(`Удалить проект «${project.name}» из браузера?`))return;
-        await deleteProjectRecord(project.id);await renderProjectList();toast('Проект удалён из браузера','success');
-      }));
+    const projects = (await getAllProjects()).sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    $('#project-count').textContent = localizedCount(projects.length,'projects');
+    if (!projects.length) {
+      list.innerHTML = '<div class="empty-projects"><div class="empty-icon">▱</div><strong>Пока нет проектов</strong><span>Создай новый проект или импортируй существующий ZIP.</span></div>';
+      return;
     }
-  } catch(error) {
-    gameList.innerHTML='<div class="empty-projects"><strong>Не удалось прочитать проекты</strong><span>Проверь, что браузер разрешает локальное хранилище.</span></div>';
-    if(modelList)modelList.innerHTML='';console.error(error);
+    list.innerHTML = projects.map(project => `
+      <article class="project-card" data-open-project="${project.id}">
+        <div class="project-card-top"><span class="project-symbol">◈</span><button class="delete-project" data-delete-project="${project.id}" title="Удалить проект">×</button></div>
+        <h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.description || 'Без описания')}</p>
+        <div class="project-card-foot"><span>${(project.assets || []).length} ASSETS</span><span>${new Date(project.updatedAt).toLocaleDateString('ru-RU')}</span></div>
+      </article>`).join('');
+    $$('[data-open-project]', list).forEach(card => card.addEventListener('click', event => {
+      if (event.target.closest('[data-delete-project]')) return;
+      const project = projects.find(item => item.id === card.dataset.openProject);
+      if (project) openProject(project);
+    }));
+    $$('[data-delete-project]', list).forEach(button => button.addEventListener('click', async event => {
+      event.stopPropagation();
+      const id = button.dataset.deleteProject;
+      const project = projects.find(item => item.id === id);
+      if (!project || !confirm(`Удалить проект «${project.name}» из браузера?`)) return;
+      await deleteProjectRecord(id);
+      renderProjectList();
+      toast('Проект удалён из браузера', 'success');
+    }));
+  } catch (error) {
+    list.innerHTML = '<div class="empty-projects"><strong>Не удалось прочитать проекты</strong><span>Проверь, что браузер разрешает локальное хранилище.</span></div>';
+    console.error(error);
   }
 }
 function showHome() {
@@ -483,6 +529,30 @@ async function exportProjectZip() {
   if (!isPlaying) await saveProject(false);
   const exportingProject = isPlaying && playSnapshot ? playSnapshot : currentProject;
   const zip = new JSZip();
+  const sortedAssets=[...(exportingProject.assets||[])].sort((a,b)=>String(a.path||a.folder||a.type||'').localeCompare(String(b.path||b.folder||b.type||''))||String(a.name||'').localeCompare(String(b.name||''))||String(a.id||'').localeCompare(String(b.id||'')));
+  const usedAssetPaths=new Set();
+  const assetEntries=sortedAssets.map((asset,index)=>{
+    let raw=String(asset.path||`${asset.folder||asset.type||'Other'}/${asset.id||index}_${safeName(asset.name)}`).replace(/\\/g,'/').replace(/^\/+/, '');
+    // Project paths are canonicalized to one Assets/ prefix, including legacy repeated prefixes.
+    while(/^Assets\//i.test(raw))raw=raw.replace(/^Assets\//i,'');
+    let parts=raw.split('/').filter(part=>part&&part!=='.');
+    if(!parts.length||parts.includes('..'))parts=['Other',`${asset.id||index}_${safeName(asset.name)}`];
+    parts=parts.map(part=>safeName(part));
+    let relative=parts.join('/');
+    let archivePath=`Assets/${relative}`;
+    if(usedAssetPaths.has(archivePath)){
+      const dot=relative.lastIndexOf('.'),stem=dot>0?relative.slice(0,dot):relative,ext=dot>0?relative.slice(dot):'';
+      relative=`${stem}_${safeName(asset.id||String(index+1)).slice(-12)}${ext}`;
+      archivePath=`Assets/${relative}`;
+    }
+    let suffix=2;
+    while(usedAssetPaths.has(archivePath)){
+      const dot=relative.lastIndexOf('.'),stem=dot>0?relative.slice(0,dot):relative,ext=dot>0?relative.slice(dot):'';
+      archivePath=`Assets/${stem}_${suffix++}${ext}`;
+    }
+    usedAssetPaths.add(archivePath);
+    return {asset,archivePath};
+  });
   const projectJson = {
     format: 'ZeroEngineProject', version: 1,
     id: exportingProject.id, name: exportingProject.name, description: exportingProject.description,
@@ -492,17 +562,23 @@ async function exportProjectZip() {
     scripts: exportingProject.scripts,
     materials: exportingProject.materials || [],
     zeroBoxes: exportingProject.zeroBoxes || [], uiElements: exportingProject.uiElements || [], uiScreens: exportingProject.uiScreens || [], activeUIScreenId: exportingProject.activeUIScreenId || null, variables: exportingProject.variables || [], assetFolders: exportingProject.assetFolders || [],
-    assets: exportingProject.assets.map(({id,name,type,size,folder,path}) => ({id,name,type,size,folder,path}))
+    assets: assetEntries.map(({asset,archivePath})=>({id:asset.id,name:asset.name,type:asset.type,size:asset.size,folder:asset.folder,path:archivePath}))
   };
   zip.file('project.json', JSON.stringify(projectJson, null, 2));
-  const assetFolder = zip.folder('Assets');
-  for (const asset of exportingProject.assets) {
-    if (asset.blob) assetFolder.file(asset.path || `${asset.id}_${safeName(asset.name)}`, asset.blob);
+  for(const {asset,archivePath} of assetEntries)if(asset.blob)zip.file(archivePath,asset.blob);
+  const scenesFolder = zip.folder('Scenes'),usedSceneNames=new Set();
+  for (const item of [...exportingProject.scenes].sort((a,b)=>String(a.name).localeCompare(String(b.name))||String(a.id).localeCompare(String(b.id)))) {
+    let filename=`${safeName(item.name||'Scene')}.zescene`;
+    if(usedSceneNames.has(filename))filename=`${safeName(item.name||'Scene')}_${safeName(item.id||'scene').slice(-8)}.zescene`;
+    usedSceneNames.add(filename);scenesFolder.file(filename,JSON.stringify(item.data,null,2));
   }
-  const scenesFolder = zip.folder('Scenes');
-  for (const item of exportingProject.scenes) scenesFolder.file(`${safeName(item.name)}.zescene`, JSON.stringify(item.data, null, 2));
-  const scriptsFolder = zip.folder('Scripts');
-  for (const item of exportingProject.scripts) scriptsFolder.file(`${safeName(item.name)}.zs`, item.code || '');
+  const scriptsFolder = zip.folder('Scripts'),usedScriptNames=new Set();
+  for (const item of [...exportingProject.scripts].sort((a,b)=>String(a.name).localeCompare(String(b.name))||String(a.id).localeCompare(String(b.id)))) {
+    let filename=`${safeName(item.name||'Script')}.zs`;
+    if(usedScriptNames.has(filename))filename=`${safeName(item.name||'Script')}_${safeName(item.id||'script').slice(-8)}.zs`;
+    usedScriptNames.add(filename);scriptsFolder.file(filename,item.code||'');
+  }
+  zip.file('README.txt',`ZeroEngine project: ${exportingProject.name}\n\nOpen index.html via a local static server.\nProject data: project.json\nScenes: Scenes/\nModels and other resources: Assets/\nScripts: Scripts/\n\nResource paths in project.json point to the exact files inside Assets/. Keep the folder names when moving resources.`);
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 5 } });
   downloadBlob(blob, `${safeName(exportingProject.name)}.zeroengine.zip`);
   toast('ZIP проекта готов', 'success');
@@ -516,10 +592,14 @@ async function importProjectZip(file) {
     if (manifest.format !== 'ZeroEngineProject') throw new Error('Неизвестный формат проекта.');
     const project = normalizeProject({ ...manifest, id: uid(), updatedAt: new Date().toISOString(), assets: [], materials: manifest.materials || [], scripts: manifest.scripts || [], zeroBoxes: manifest.zeroBoxes || [], uiElements: manifest.uiElements || [], uiScreens: manifest.uiScreens || [], activeUIScreenId: manifest.activeUIScreenId || null, assetFolders: manifest.assetFolders || [], variables: manifest.variables || [] });
     for (const meta of manifest.assets || []) {
-      const entry = zip.file(meta.path);
-      if (!entry) continue;
+      const storedPath=String(meta.path||'').replace(/\\/g,'/').replace(/^\/+/, '');
+      const withoutAssets=storedPath.replace(/^(?:Assets\/)+/i,'');
+      const candidates=[storedPath,`Assets/${withoutAssets}`,`Assets/Assets/${withoutAssets}`,withoutAssets];
+      let entry=null,matchedPath='';
+      for(const candidate of [...new Set(candidates)]){entry=zip.file(candidate);if(entry){matchedPath=candidate;break;}}
+      if (!entry) { console.warn('Ресурс отсутствует в ZIP:',meta.path); continue; }
       const blob = await entry.async('blob');
-      project.assets.push({ ...meta, blob, size: blob.size });
+      project.assets.push({ ...meta, path:storedPath||matchedPath, blob, size: blob.size });
     }
     await putProject(project);
     $('#project-import-input').value = '';
@@ -560,10 +640,11 @@ function init3DEditor() {
   orbit.dampingFactor = .08;
   if(orbit.touches&&THREE.TOUCH){orbit.touches.ONE=THREE.TOUCH.ROTATE;orbit.touches.TWO=THREE.TOUCH.DOLLY_PAN;}
   orbit.rotateSpeed=1.05;orbit.panSpeed=.9;
-  orbit.enableZoom = true; orbit.zoomSpeed = 1.15; orbit.minDistance = .35; orbit.maxDistance = 3000;
-  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  orbit.enableZoom = true; orbit.zoomSpeed = 1.15; orbit.minDistance = 1.25; orbit.maxDistance = 2500;
+  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: undefined };
   orbit.target.set(0, 0.8, 0);
-  orbit.maxPolarAngle = Math.PI * .495;
+  orbit.minPolarAngle = .04; orbit.maxPolarAngle = Math.PI - .04;
+  editorCamera.near = .01; editorCamera.far = 12000; editorCamera.updateProjectionMatrix();
   gridHelper = new THREE.GridHelper(100, 100, 0x53645b, 0x334139);
   gridHelper.material.transparent = true; gridHelper.material.opacity = .55;
   scene.add(gridHelper);
@@ -576,7 +657,7 @@ function init3DEditor() {
   transform.addEventListener('mouseUp', () => { scheduleSave(); });
   scene.add(transform.getHelper());
   raycaster = new THREE.Raycaster(); pointer = new THREE.Vector2();
-  canvas.addEventListener('pointerdown', onViewportPointerDown);
+  canvas.addEventListener('pointerdown', onViewportPointerDown, true);
   canvas.addEventListener('wheel', event => { event.preventDefault(); }, { passive: false });
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('dragenter', event => { event.preventDefault(); $('#viewport-drop-overlay').classList.add('visible'); });
@@ -595,7 +676,7 @@ function init3DEditor() {
   window.addEventListener('resize', resizeRenderer);
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur',()=>{if(isPlaying){heldKeys.clear();activeKeyBindings.clear();for(const id of [...heldButtonIds]){const el=currentProject?.uiElements?.find(x=>x.id===id);if(el&&!el.sticky){el.pressed=false;heldButtonIds.delete(id);dispatchZeroBoxEvent('ButtonResting',id);}}}});
+  window.addEventListener('blur',()=>{if(isPlaying){heldKeys.clear();for(const id of [...heldButtonIds]){const el=currentProject?.uiElements?.find(x=>x.id===id);if(el&&!el.sticky){el.pressed=false;heldButtonIds.delete(id);dispatchZeroBoxEvent('ButtonResting',id);}}}});
   // Player camera input is bound when Play Mode starts.
   editorReady = true;
   setEditorCameraMode('perspective');
@@ -613,17 +694,9 @@ function resizeRenderer() {
   if (previewCamera) { previewCamera.aspect = width / height; previewCamera.updateProjectionMatrix(); }
 }
 function getColliderBounds(entity, position = entity.position) {
-  const cfg=entity.collision||{},size=cfg.size||[1,1,1],offset=cfg.offset||[0,0,0],scale=entity.scale||[1,1,1];
-  const localHalf=size.map((v,i)=>Math.max(.005,Math.abs(Number(v)||.01)*Math.abs(Number(scale[i])||1)/2));
-  const euler=new THREE.Euler(...(entity.rotation||[0,0,0]).map(value=>THREE.MathUtils.degToRad(Number(value)||0)),'XYZ');
-  const matrix=new THREE.Matrix4().makeRotationFromEuler(euler),elements=matrix.elements;
-  const half=[
-    Math.abs(elements[0])*localHalf[0]+Math.abs(elements[4])*localHalf[1]+Math.abs(elements[8])*localHalf[2],
-    Math.abs(elements[1])*localHalf[0]+Math.abs(elements[5])*localHalf[1]+Math.abs(elements[9])*localHalf[2],
-    Math.abs(elements[2])*localHalf[0]+Math.abs(elements[6])*localHalf[1]+Math.abs(elements[10])*localHalf[2]
-  ];
-  const rotatedOffset=new THREE.Vector3((Number(offset[0])||0)*Number(scale[0]||1),(Number(offset[1])||0)*Number(scale[1]||1),(Number(offset[2])||0)*Number(scale[2]||1)).applyEuler(euler);
-  const center=[0,1,2].map(i=>Number(position?.[i]||0)+rotatedOffset.getComponent(i));
+  const cfg=entity.collision||{}, size=cfg.size||[1,1,1], offset=cfg.offset||[0,0,0], scale=entity.scale||[1,1,1];
+  const half=size.map((v,i)=>Math.max(.005,Math.abs(Number(v)||.01)*Math.abs(Number(scale[i])||1)/2));
+  const center=position.map((v,i)=>Number(v||0)+(Number(offset[i])||0)*(Number(scale[i])||1));
   return {min:center.map((v,i)=>v-half[i]),max:center.map((v,i)=>v+half[i]),half,center};
 }
 function boundsOverlap(a,b,epsilon=1e-5) {
@@ -637,8 +710,7 @@ function findGroundSupport(entity, position=entity.position, maxDrop=.09, penetr
     const gap=bounds.min[1]-height;
     if(gap<=maxDrop&&gap>=-penetrationTolerance&&(!best||height>best.height))best={height,kind,gap};
   };
-  // The engine's world floor is a solid surface at Y=0.
-  consider(0,'world');
+  // No implicit world floor: falling is stopped only by objects with solid colliders.
   for(const other of activeSceneData()?.objects||[]){
     if(other.id===entity.id||!other.collision?.enabled||other.collision?.isTrigger)continue;
     const obstacle=getColliderBounds(other,other.position);
@@ -680,16 +752,13 @@ function moveEntityWithCollisions(entity, delta) {
         const sweptNegative=amount<0&&before.min[axis]>=obstacle.max[axis]-1e-6&&candidate.min[axis]<obstacle.max[axis];
         const alreadyOverlapping=candidate.min[axis]<obstacle.max[axis]-1e-6&&candidate.max[axis]>obstacle.min[axis]+1e-6;
         if(sweptPositive||alreadyOverlapping&&amount>0){
-          next[axis]+=obstacle.min[axis]-candidate.max[axis];
+          const localOffset=(Number(entity.collision.offset?.[axis])||0)*(Number(entity.scale?.[axis])||1);
+          next[axis]=obstacle.min[axis]-candidate.half[axis]-localOffset;
         } else if(sweptNegative||alreadyOverlapping&&amount<0){
-          next[axis]+=obstacle.max[axis]-candidate.min[axis];
+          const localOffset=(Number(entity.collision.offset?.[axis])||0)*(Number(entity.scale?.[axis])||1);
+          next[axis]=obstacle.max[axis]+candidate.half[axis]-localOffset;
         }
       }
-    }
-    if(axis===1){
-      const bounds=getColliderBounds(entity,next);
-      const floorBottom=ownEnabled?bounds.min[1]:next[1];
-      if(floorBottom<0)next[1]+= -floorBottom;
     }
   }
   const moved=next.map((value,i)=>value-start[i]);entity.position=next;object.position.fromArray(next);
@@ -697,33 +766,34 @@ function moveEntityWithCollisions(entity, delta) {
   return moved;
 }
 
-function stepBasicPhysics(delta){
+function stepBasicPhysics(delta) {
   if(!isPlaying||!currentProject)return;
-  const subSteps=Math.max(1,Math.min(8,Math.ceil(Math.max(0,delta)/(1/120)))),step=Math.max(0,delta)/subSteps;
-  for(let sub=0;sub<subSteps;sub++)for(const entity of activeSceneData()?.objects||[]){
-    const body=entity.physics;if(!body?.enabled)continue;body.velocity ||= [0,0,0];const velocity=body.velocity;
-    const supportBefore=findGroundSupport(entity,entity.position,.06);
-    if(supportBefore&&velocity[1]<=0){const bounds=getColliderBounds(entity,entity.position),correction=supportBefore.height-bounds.min[1];if(Math.abs(correction)>.0001){entity.position[1]+=correction;sceneObjects.get(entity.id)?.position.fromArray(entity.position);}velocity[1]=0;body.grounded=true;}else body.grounded=false;
-    if(body.useGravity!==false&&!body.grounded)velocity[1]-=9.81*step;
-    const damping=Math.max(0,Number(body.linearDamping)||0),damp=Math.exp(-damping*step);velocity[0]*=damp;velocity[2]*=damp;
-    const request=velocity.map(v=>v*step),moved=moveEntityWithCollisions(entity,request);
-    if(Math.abs(moved[0]-request[0])>1e-5)velocity[0]=0;if(Math.abs(moved[2]-request[2])>1e-5)velocity[2]=0;if(Math.abs(moved[1]-request[1])>1e-5)velocity[1]=0;
-    const supportAfter=findGroundSupport(entity,entity.position,.06);
-    if(supportAfter&&velocity[1]<=0){const bounds=getColliderBounds(entity,entity.position),correction=supportAfter.height-bounds.min[1];if(Math.abs(correction)>.0001){entity.position[1]+=correction;sceneObjects.get(entity.id)?.position.fromArray(entity.position);}velocity[1]=0;body.grounded=true;}else body.grounded=false;
-  }
-  for(const entity of activeSceneData()?.objects||[])if(entity.type==='player'&&previewCamera)syncPreviewCameraToPlayer();
-}
-
-function updatePlayerMovementAnimations(now){
-  if(!currentProject)return;
-  for(const entity of activeSceneData()?.objects||[]){if(entity.type!=='player')continue;const object=sceneObjects.get(entity.id);if(!object)continue;
-    object.userData.walkParts ||= object.children.filter(child=>!child.userData?.editorOnly).map(child=>({child,base:child.position.clone()}));
-    object.userData.walkBaseScale ||= object.scale.clone();object.userData.walkBaseRotationZ ??= object.rotation.z;
-    const previous=object.userData.walkPrevious||object.position.clone();const moved=Math.hypot(object.position.x-previous.x,object.position.z-previous.z);object.userData.walkPrevious=object.position.clone();
-    const velocity=entity.physics?.velocity||[0,0,0],walking=moved>.0005||Math.hypot(Number(velocity[0])||0,Number(velocity[2])||0)>.08;
-    const phase=now*.014,bob=walking&&isPlaying?Math.abs(Math.sin(phase))*.045:0;
-    for(const part of object.userData.walkParts){if(part.child.parent===object)part.child.position.y=part.base.y+bob;}
-    if(!object.userData.walkParts.length){const base=object.userData.walkBaseScale;object.scale.y=base.y*(walking&&isPlaying?1+Math.sin(phase)*.025:1);object.rotation.z=object.userData.walkBaseRotationZ+(walking&&isPlaying?Math.sin(phase)*.025:0);}
+  for(const entity of activeSceneData()?.objects||[]){
+    const body=entity.physics;if(!body?.enabled)continue;
+    body.velocity ||= [0,0,0];const velocity=body.velocity;
+    const supportBefore=findGroundSupport(entity,entity.position,.075);
+    if(supportBefore&&velocity[1]<=0){
+      const bounds=getColliderBounds(entity,entity.position);
+      const correction=supportBefore.height-bounds.min[1];
+      if(Math.abs(correction)>.0001){entity.position[1]+=correction;sceneObjects.get(entity.id)?.position.fromArray(entity.position);}
+      velocity[1]=0;body.grounded=true;
+    }else body.grounded=false;
+    if(body.useGravity!==false&&!body.grounded)velocity[1]-=9.81*delta;
+    const damping=Math.max(0,Number(body.linearDamping)||0);const damp=Math.exp(-damping*delta);
+    velocity[0]*=damp;velocity[2]*=damp;
+    const request=velocity.map(v=>v*delta);
+    const moved=moveEntityWithCollisions(entity,request);
+    if(Math.abs(moved[0]-request[0])>1e-5)velocity[0]=0;
+    if(Math.abs(moved[2]-request[2])>1e-5)velocity[2]=0;
+    if(Math.abs(moved[1]-request[1])>1e-5)velocity[1]=0;
+    const supportAfter=findGroundSupport(entity,entity.position,.075);
+    if(supportAfter&&velocity[1]<=0){
+      const bounds=getColliderBounds(entity,entity.position);
+      const correction=supportAfter.height-bounds.min[1];
+      if(Math.abs(correction)>.0001){entity.position[1]+=correction;sceneObjects.get(entity.id)?.position.fromArray(entity.position);}
+      velocity[1]=0;body.grounded=true;
+    }else body.grounded=false;
+    if(entity.type==='player'&&previewCamera)syncPreviewCameraToPlayer();
   }
 }
 
@@ -731,10 +801,9 @@ function renderFrame(now) {
   if (!renderer || !scene) return;
   const delta = Math.min((now - lastFrame) / 1000, .05); lastFrame = now;
   if (!isPlaying) orbit?.update();
-  const skyboxMesh=scene.userData.skyboxMesh,activeViewCamera=isPlaying&&previewCamera?previewCamera:editorCamera;if(skyboxMesh&&activeViewCamera)skyboxMesh.position.copy(activeViewCamera.position);
+  const skybox=scene?.userData?.zeroEngineSkybox;if(skybox){const activeCamera=isPlaying&&previewCamera?previewCamera:editorCamera;skybox.position.copy(activeCamera.position);}
   const scaledDelta=delta*(isPlaying?gameSpeedMultiplier:1);
   for (const mixer of animationMixers.values()) mixer.update(scaledDelta);
-  updatePlayerMovementAnimations(now);
   updateCustomAnimations(scaledDelta);
   if (isPlaying) { processHeldZeroBoxes(scaledDelta); stepBasicPhysics(scaledDelta); }
   if (!isPlaying) for (const helper of selectionHelpers.values()) helper.update();
@@ -742,8 +811,29 @@ function renderFrame(now) {
   fpsFrames++;
   if (now - fpsStarted > 1000) { $('#fps-label').textContent = `${Math.round(fpsFrames * 1000 / (now - fpsStarted))} FPS`; fpsFrames = 0; fpsStarted = now; }
 }
+function startSceneBoxSelection(event){
+  const canvas=renderer?.domElement,wrap=$('#viewport-wrap');if(!canvas||!wrap)return;
+  const start={x:event.clientX,y:event.clientY},rect=canvas.getBoundingClientRect();
+  const selection=document.createElement('div');selection.className='scene-selection-rect';selection.style.left=`${start.x-rect.left}px`;selection.style.top=`${start.y-rect.top}px`;wrap.appendChild(selection);
+  const oldOrbit=orbit?.enabled;if(orbit)orbit.enabled=false;
+  const move=e=>{const left=Math.min(start.x,e.clientX)-rect.left,top=Math.min(start.y,e.clientY)-rect.top,width=Math.abs(e.clientX-start.x),height=Math.abs(e.clientY-start.y);Object.assign(selection.style,{left:`${left}px`,top:`${top}px`,width:`${width}px`,height:`${height}px`});};
+  const finish=e=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);document.removeEventListener('pointercancel',cancel);selection.remove();if(orbit)orbit.enabled=oldOrbit!==false&&!isPlaying;
+    const x1=Math.min(start.x,e.clientX),x2=Math.max(start.x,e.clientX),y1=Math.min(start.y,e.clientY),y2=Math.max(start.y,e.clientY);
+    if(Math.hypot(e.clientX-start.x,e.clientY-start.y)<6)return;
+    const picked=[];const viewport=canvas.getBoundingClientRect();
+    for(const [id,obj] of sceneObjects){const entity=findEntity(id);if(!entity||entity.visible===false||!obj.visible)continue;obj.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(obj);if(bounds.isEmpty())continue;let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity,any=false;
+      for(let mask=0;mask<8;mask++){const corner=new THREE.Vector3(mask&1?bounds.max.x:bounds.min.x,mask&2?bounds.max.y:bounds.min.y,mask&4?bounds.max.z:bounds.min.z).project(editorCamera);if(corner.z<-1||corner.z>1)continue;const px=viewport.left+(corner.x+1)*.5*viewport.width,py=viewport.top+(1-corner.y)*.5*viewport.height;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py);any=true;}
+      if(any&&maxX>=x1&&minX<=x2&&maxY>=y1&&minY<=y2)picked.push(id);
+    }
+    selectedIds=new Set(picked);selectedId=picked.at(-1)||null;const active=selectedId?sceneObjects.get(selectedId):null;if(transform){if(active)transform.attach(active);else transform.detach();}updateSelectionHelpers();renderHierarchy();renderInspector();updateSelectedStatus();
+  };
+  const cancel=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);selection.remove();if(orbit)orbit.enabled=oldOrbit!==false&&!isPlaying;};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',finish);document.addEventListener('pointercancel',cancel);
+}
 function onViewportPointerDown(event) {
-  if (isPlaying || event.button !== 0 || transform?.dragging) return;
+  if(isPlaying||transform?.dragging)return;
+  if(event.button===2){event.preventDefault();event.stopImmediatePropagation();startSceneBoxSelection(event);return;}
+  if(event.button!==0)return;
   const canvas=renderer.domElement,startX=event.clientX,startY=event.clientY;
   const finish=upEvent=>{
     canvas.removeEventListener('pointerup',finish);
@@ -766,7 +856,7 @@ function onKeyDown(event) {
   const inModelStudio = !$('#model-studio')?.classList.contains('hidden');
   if (inModelStudio) {
     if (editing) return;
-    const key=normalizeKeyBinding(event);
+    const key=event.key.toLowerCase();
     if ((event.ctrlKey||event.metaKey)&&key==='s') { event.preventDefault(); saveModelStudioAsset(); return; }
     if ((event.ctrlKey||event.metaKey)&&key==='z') { event.preventDefault(); undoModelStudio(); return; }
     if ((event.ctrlKey||event.metaKey)&&key==='y') { event.preventDefault(); redoModelStudio(); return; }
@@ -776,15 +866,15 @@ function onKeyDown(event) {
     if (key==='e') { setModelTool('rotate'); return; }
     if (key==='r') { setModelTool('scale'); return; }
     if (event.key==='Delete'||event.key==='Backspace') { setModelTool('delete'); return; }
-    if (event.key==='Escape') { closeModelStudio(); return; }
+    if (event.key==='Escape') { if(modelStudio.activeTool){modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;clearModelCreationPreview();modelStudio.mode='object';$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.remove('active'));modelStudio.transform.enabled=true;if(modelStudio.selected)modelStudio.transform.attach(modelStudio.selected);$('#model-selection-info').textContent='Инструмент отменён';return;} closeModelStudio(); return; }
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && normalizeKeyBinding(event) === 's') { event.preventDefault(); exportProjectZip(); return; }
-  if ((event.ctrlKey || event.metaKey) && normalizeKeyBinding(event) === 'z' && !editing) { event.preventDefault(); undo(); return; }
-  if ((event.ctrlKey || event.metaKey) && normalizeKeyBinding(event) === 'y' && !editing) { event.preventDefault(); redo(); return; }
-  if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && normalizeKeyBinding(event)==='a') { event.preventDefault(); const box=currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if(box){selectedBlockIds=new Set(box.blocks.map(b=>b.id));selectedBlockId=box.blocks[0]?.id||null;renderWorkbench();} return; }
-  if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && normalizeKeyBinding(event)==='c') { event.preventDefault(); copyZeroBlocks(); return; }
-  if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && normalizeKeyBinding(event)==='v') { event.preventDefault(); pasteZeroBlocks(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); exportProjectZip(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !editing) { event.preventDefault(); undo(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y' && !editing) { event.preventDefault(); redo(); return; }
+  if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='a') { event.preventDefault(); const box=currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if(box){selectedBlockIds=new Set(box.blocks.map(b=>b.id));selectedBlockId=box.blocks[0]?.id||null;renderWorkbench();} return; }
+  if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='c') { event.preventDefault(); copyZeroBlocks(); return; }
+  if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='v') { event.preventDefault(); pasteZeroBlocks(); return; }
   if (uiKeyCaptureId) {
     event.preventDefault();
     const captureId = uiKeyCaptureId;
@@ -792,8 +882,8 @@ function onKeyDown(event) {
     uiKeyCaptureId = null;
     ignoreKeyUpCode = event.code || event.key;
     if (uiElement) {
-      uiElement.key = normalizeKeyBinding(event,true);
-      uiElement.keyLabel = displayKeyBinding(event);
+      uiElement.key = event.key;
+      uiElement.keyLabel = event.key === ' ' ? 'Space' : event.key;
       renderWorkbench(); scheduleSave();
       toast(`Клавиша ${uiElement.keyLabel} назначена`, 'success');
     }
@@ -802,9 +892,9 @@ function onKeyDown(event) {
   if (event.key === 'Escape' && isPlaying) { stopPlayMode(); return; }
   if (isPlaying) { triggerZeroBoxKey(event); return; }
   if (editing) return;
-  if (normalizeKeyBinding(event) === 'w') setTransformMode('translate');
-  if (normalizeKeyBinding(event) === 'e') setTransformMode('rotate');
-  if (normalizeKeyBinding(event) === 'r') setTransformMode('scale');
+  if (event.key.toLowerCase() === 'w') setTransformMode('translate');
+  if (event.key.toLowerCase() === 'e') setTransformMode('rotate');
+  if (event.key.toLowerCase() === 'r') setTransformMode('scale');
   if ((event.key === 'Delete' || event.key === 'Backspace') && workbenchMode==='zerobox' && selectedConnectionId) { const box=currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if(box){box.connections=box.connections.filter(c=>c.id!==selectedConnectionId);selectedConnectionId=null;renderWorkbench();scheduleSave();} return; }
   if ((event.key === 'Delete' || event.key === 'Backspace') && workbenchMode==='zerobox' && selectedBlockIds.size) { const id=[...selectedBlockIds][0]; deleteZeroBlock(id); return; }
   if (event.key === 'Delete' || event.key === 'Backspace') deleteSelectedObject();
@@ -881,18 +971,19 @@ function syncSelectedTransform() {
 function addObjectToScene(type = 'primitive', options = {}) {
   if (!currentProject) return;
   if (!isPlaying) snapshotHistory();
-  const labelMap = {cube:'Cube',sphere:'Sphere',plane:'Plane',cylinder:'Cylinder',cone:'Cone',capsule:'Capsule',torus:'Torus',torusKnot:'Torus Knot',dodecahedron:'Dodecahedron',icosahedron:'Icosahedron',octahedron:'Octahedron',tetrahedron:'Tetrahedron',camera:'Camera',player:'Player',spawn:'Player Start',light:'Point Light',environmentLight:'Environment Light',skybox:'Skybox'};
+  const labelMap = {cube:'Cube',sphere:'Sphere',plane:'Plane',cylinder:'Cylinder',cone:'Cone',capsule:'Capsule',torus:'Torus',torusKnot:'Torus Knot',icosphere:'Icosphere',monkey:'Monkey',circle:'Circle',ring:'Ring',pyramid:'Pyramid',hexagonalPrism:'Hexagonal Prism',octahedron:'Octahedron',dodecahedron:'Dodecahedron',tetrahedron:'Tetrahedron',tube:'Tube',spring:'Spring',wedge:'Wedge',camera:'Camera',player:'Player',spawn:'Player Start',light:'Point Light',environmentLight:'Environment Light',skybox:'Skybox'};
   const entity = {
     id: uid(), name: options.name || (type === 'primitive' ? labelMap[options.primitive] || 'Object' : labelMap[type] || 'Object'),
     type, primitive: options.primitive || undefined, assetId: options.assetId || undefined,
-    position: options.position || [0, type === 'primitive' && options.primitive === 'plane' || type === 'player' ? 0 : 0.5, 0],
+    position: options.position || [0, type === 'primitive' && ['plane','circle','ring'].includes(options.primitive) || type === 'player' ? 0 : 0.5, 0],
     rotation: [0,0,0], scale: [1,1,1], visible: true, gameVisible: type !== 'spawn',
     cameraMount: type === 'player' ? { mode: 'back', offset: [0,1.6,0], fov: 70 } : undefined,
-    collision: type === 'player' ? { enabled: true, shape: 'capsule', size: [.6,1.8,.6], offset: [0,.9,0], isTrigger: false } : type === 'primitive' ? { enabled: true, shape: 'box', size: ({cube:[1.2,1.2,1.2],plane:[4,.05,4],sphere:[1.4,1.4,1.4],cylinder:[1.1,1.2,1.1],cone:[1.4,1.35,1.4],capsule:[.84,1.54,.84]})[options.primitive] || [1.2,1.2,1.2], offset: [0,0,0], isTrigger: false } : type === 'model' ? { enabled: true, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false, autoFit: true } : { enabled: false, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false },
+    collision: type === 'player' ? { enabled: true, shape: 'capsule', size: [.6,1.8,.6], offset: [0,.9,0], isTrigger: false } : type === 'primitive' ? { enabled: true, shape: 'box', size: ({plane:[4,.05,4],sphere:[1.4,1.4,1.4],cylinder:[1.1,1.2,1.1],cone:[1.4,1.35,1.4],capsule:[.84,1.54,.84]})[options.primitive] || [1.2,1.2,1.2], offset: [0,0,0], isTrigger: false } : type === 'model' ? { enabled: true, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false, autoFit: true } : { enabled: false, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false },
     physics: type === 'player' ? { enabled: true, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 } : { enabled: false, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 },
     material: { color: '#a5ef4c', roughness: .72, tileX: 1, tileY: 1, seamless:false, seamWidth:.12 },
     light: type === 'light' ? { kind: 'point', color: '#fff2d6', intensity: 2, distance: 12 } : undefined,
-    environment: type === 'environmentLight' ? { shape:'sphere', size:24, color:'#ffffff', groundColor:'#777777', intensity:1 } : undefined
+    environment: type === 'environmentLight' ? { shape:'sphere', size:24, color:'#ffffff', groundColor:'#777777', intensity:1 } : undefined,
+    skybox: type === 'skybox' ? { shape:'sphere', tileX:1, tileY:1, smoothing:true, rotationY:0, brightness:1 } : undefined
   };
   activeSceneData().objects.push(entity);
   createRuntimeObject(entity).then(() => { selectObject(entity.id); renderHierarchy(); scheduleSave(); }).catch(error => { console.error(error); activeSceneData().objects = activeSceneData().objects.filter(item => item.id !== entity.id); sceneObjects.delete(entity.id); renderHierarchy(); renderInspector(); toast(`Не удалось добавить объект: ${error.message || 'ошибка загрузки'}`, 'error'); scheduleSave(); });
@@ -910,10 +1001,25 @@ function createPrimitiveMesh(entity) {
     case 'capsule': geometry = new THREE.CapsuleGeometry(.42, .7, 5, 14); break;
     case 'torus': geometry = new THREE.TorusGeometry(.65,.2,12,32); break;
     case 'torusKnot': geometry = new THREE.TorusKnotGeometry(.52,.16,80,12); break;
-    case 'dodecahedron': geometry = new THREE.DodecahedronGeometry(.78,0); break;
-    case 'icosahedron': geometry = new THREE.IcosahedronGeometry(.78,0); break;
-    case 'octahedron': geometry = new THREE.OctahedronGeometry(.78,0); break;
+    case 'icosphere': geometry = new THREE.IcosahedronGeometry(.78,1); break;
+    case 'monkey': {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color: entity.material?.color || '#a5ef4c', roughness: Number(entity.material?.roughness ?? .72), metalness: Number(entity.material?.metalness ?? 0) });
+      const head = new THREE.Mesh(new THREE.SphereGeometry(.58,20,14),mat); head.scale.set(1,1.05,.82); group.add(head);
+      for (const side of [-1,1]) { const ear = new THREE.Mesh(new THREE.SphereGeometry(.25,14,10),mat); ear.position.set(side*.54,.3,0); group.add(ear); }
+      const muzzle = new THREE.Mesh(new THREE.SphereGeometry(.28,14,10),mat); muzzle.position.set(0,-.14,.43); muzzle.scale.set(.9,.65,.65); group.add(muzzle);
+      return group;
+    }
+    case 'circle': geometry = new THREE.CircleGeometry(.8,48); geometry.rotateX(-Math.PI/2); break;
+    case 'ring': geometry = new THREE.RingGeometry(.42,.8,48); geometry.rotateX(-Math.PI/2); break;
+    case 'pyramid': geometry = new THREE.ConeGeometry(.8,1.4,4,1); break;
+    case 'hexagonalPrism': geometry = new THREE.CylinderGeometry(.75,.75,1.3,6,1); break;
+    case 'octahedron': geometry = new THREE.OctahedronGeometry(.85,0); break;
+    case 'dodecahedron': geometry = new THREE.DodecahedronGeometry(.82,0); break;
     case 'tetrahedron': geometry = new THREE.TetrahedronGeometry(.9,0); break;
+    case 'tube': { const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0,-.8,0),new THREE.Vector3(-.5,-.2,0),new THREE.Vector3(.45,.2,0),new THREE.Vector3(0,.8,0)]); geometry = new THREE.TubeGeometry(curve,48,.12,10,false); break; }
+    case 'spring': geometry = new THREE.TorusKnotGeometry(.48,.11,160,12,2,5); break;
+    case 'wedge': { const g=new THREE.BufferGeometry(); const v=[-.8,-.55,-.65,.8,-.55,-.65,.8,-.55,.65,-.8,-.55,.65,-.8,.45,-.65,.8,.45,-.65]; const ids=[0,2,1,0,3,2,0,1,5,0,5,4,1,2,5,2,3,4,2,4,5,3,0,4]; g.setAttribute('position',new THREE.Float32BufferAttribute(v,3)); g.setIndex(ids); g.computeVertexNormals(); geometry=g; break; }
     default: geometry = new THREE.BoxGeometry(1.2, 1.2, 1.2);
   }
   const material = new THREE.MeshStandardMaterial({ color: entity.material?.color || '#a5ef4c', roughness: Number(entity.material?.roughness ?? .72), metalness: Number(entity.material?.metalness ?? 0) });
@@ -1003,26 +1109,47 @@ function updateCollisionHelper(entity) {
   const old = collisionHelpers.get(entity.id); if (old) { object.remove(old); old.geometry.dispose(); old.material.dispose(); collisionHelpers.delete(entity.id); }
   attachCollisionHelper(entity, object);
 }
-function applySceneSkybox(){
-  if(!scene||!activeSceneData())return;
-  const data=activeSceneData(),settings=data.skyboxSettings||{shape:'sphere',tileX:1,tileY:1,smooth:true};
-  const oldMesh=scene.userData.skyboxMesh;if(oldMesh){scene.remove(oldMesh);oldMesh.geometry?.dispose?.();oldMesh.material?.dispose?.();scene.userData.skyboxMesh=null;}
-  scene.userData.skyboxCubeTarget?.dispose?.();scene.userData.skyboxCubeTarget=null;
-  scene.userData.skyboxSourceTexture?.dispose?.();scene.userData.skyboxSourceTexture=null;
-  const asset=currentProject?.assets.find(item=>item.id===data.skyboxAssetId&&item.type==='texture');
-  scene.background=new THREE.Color(data.background||'#182126');scene.environment=null;
-  if(!asset?.blob)return;
-  new THREE.TextureLoader().load(getAssetUrl(asset),texture=>{
-    texture.colorSpace=THREE.SRGBColorSpace;texture.mapping=THREE.EquirectangularReflectionMapping;texture.wrapS=THREE.RepeatWrapping;texture.wrapT=THREE.RepeatWrapping;
-    texture.repeat.set(Math.max(.1,Number(settings.tileX)||1),Math.max(.1,Number(settings.tileY)||1));
-    texture.anisotropy=settings.smooth!==false&&renderer?.capabilities?renderer.capabilities.getMaxAnisotropy():1;
-    texture.generateMipmaps=settings.smooth!==false;texture.minFilter=settings.smooth!==false?THREE.LinearMipmapLinearFilter:THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;texture.needsUpdate=true;
-    scene.userData.skyboxSourceTexture=texture;scene.environment=texture;
-    if(settings.shape==='box'&&renderer){
-      try{const target=new THREE.WebGLCubeRenderTarget(1024,{generateMipmaps:settings.smooth!==false,minFilter:settings.smooth!==false?THREE.LinearMipmapLinearFilter:THREE.LinearFilter});target.fromEquirectangularTexture(renderer,texture);scene.userData.skyboxCubeTarget=target;scene.background=target.texture;}
-      catch(error){console.warn('Cubemap conversion failed; using panorama background',error);scene.background=texture;}
-    }else scene.background=texture;
-  },undefined,error=>{console.warn('Skybox texture failed',error);toast('Не удалось загрузить Skybox','error');});
+function applySceneSkybox() {
+  if (!scene || !activeSceneData()) return;
+  const data=activeSceneData();
+  const entity=(data.objects||[]).find(item=>item.type==='skybox');
+  const cfg=entity?.skybox||{};
+  const assetId=entity?.assetId||null;
+  const asset=entity?.visible!==false?currentProject?.assets.find(item=>item.id===assetId&&item.type==='texture'):null;
+  const old=scene.userData.zeroEngineSkybox;
+  if (!asset?.blob) {
+    if(old){scene.remove(old);old.geometry?.dispose?.();old.material?.map?.dispose?.();old.material?.dispose?.();scene.userData.zeroEngineSkybox=null;scene.userData.zeroEngineSkyboxKey=null;}
+    scene.background=new THREE.Color(data.background||'#182126');
+    scene.environment=null;
+    return;
+  }
+  const key=[asset.id,cfg.shape||'sphere',cfg.tileX||1,cfg.tileY||1,cfg.smoothing!==false,cfg.rotationY||0,cfg.brightness??1].join('|');
+  if(scene.userData.zeroEngineSkyboxKey===key&&old)return;
+  const url=getAssetUrl(asset);
+  new THREE.TextureLoader().load(url,texture=>{
+    // Ignore late loads when the user has already selected another image/configuration.
+    const current=(activeSceneData()?.objects||[]).find(item=>item.type==='skybox');
+    const currentCfg=current?.skybox||{};
+    const currentKey=[current?.assetId||null,currentCfg.shape||'sphere',currentCfg.tileX||1,currentCfg.tileY||1,currentCfg.smoothing!==false,currentCfg.rotationY||0,currentCfg.brightness??1].join('|');
+    if(currentKey!==key){texture.dispose();return;}
+    if(scene.userData.zeroEngineSkybox){const prev=scene.userData.zeroEngineSkybox;scene.remove(prev);prev.geometry?.dispose?.();prev.material?.map?.dispose?.();prev.material?.dispose?.();}
+    texture.colorSpace=THREE.SRGBColorSpace;
+    texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
+    texture.repeat.set(Math.max(.05,Number(cfg.tileX)||1),Math.max(.05,Number(cfg.tileY)||1));
+    texture.magFilter=cfg.smoothing===false?THREE.NearestFilter:THREE.LinearFilter;
+    texture.minFilter=cfg.smoothing===false?THREE.NearestMipmapNearestFilter:THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps=true;
+    texture.anisotropy=renderer?.capabilities?.getMaxAnisotropy?.()||1;
+    texture.needsUpdate=true;
+    const geometry=cfg.shape==='box'?new THREE.BoxGeometry(18000,18000,18000):new THREE.SphereGeometry(9000,64,40);
+    const brightness=Math.max(0,Math.min(3,Number(cfg.brightness??1)));
+    const material=new THREE.MeshBasicMaterial({map:texture,color:new THREE.Color().setScalar(brightness),side:THREE.BackSide,depthWrite:false,depthTest:false,fog:false});
+    const dome=new THREE.Mesh(geometry,material);dome.name='ZeroEngine Skybox Image';dome.frustumCulled=false;dome.renderOrder=-1000;
+    dome.rotation.y=THREE.MathUtils.degToRad(Number(cfg.rotationY)||0);
+    scene.add(dome);scene.userData.zeroEngineSkybox=dome;scene.userData.zeroEngineSkyboxKey=key;
+    scene.background=new THREE.Color(data.background||'#182126');
+    scene.environment=null;
+  },undefined,error=>{console.warn('Skybox image failed',error);toast('Не удалось загрузить картинку Skybox','error');});
 }
 
 async function createRuntimeObject(entity) {
@@ -1031,7 +1158,6 @@ async function createRuntimeObject(entity) {
   let object;
   if (entity.type === 'model') object = await loadModelAsset(entity.assetId);
   else if (entity.type === 'player' && entity.modelAssetId) object = await loadModelAsset(entity.modelAssetId);
-  else if (entity.type === 'player' && entity.playerPrimitive) object = createPrimitiveMesh({...entity,type:'primitive',primitive:entity.playerPrimitive});
   else if (entity.type === 'camera' || entity.type === 'player' || entity.type === 'spawn' || entity.type === 'skybox') object = makeMarker(entity);
   else if (entity.type === 'light') object = makeLightObject(entity);
   else if (entity.type === 'environmentLight') object = makeEnvironmentLightObject(entity);
@@ -1041,7 +1167,7 @@ async function createRuntimeObject(entity) {
   object.name = entity.name;
   object.position.fromArray(entity.position || [0,0,0]);
   const rot = entity.rotation || [0,0,0]; object.rotation.set(...rot.map(value => THREE.MathUtils.degToRad(value)));
-  if (entity.type === 'skybox' && entity.assetId) { activeSceneData().skyboxAssetId = entity.assetId; applySceneSkybox(); }
+  if (entity.type === 'skybox') { entity.skybox ||= {shape:'sphere',tileX:1,tileY:1,smoothing:true,rotationY:0,brightness:1}; applySceneSkybox(); }
   if (entity.type === 'model' && entity.collision?.autoFit && !entity.collision.autoFitApplied) {
     const localBounds = new THREE.Box3().setFromObject(object);
     const localSize = localBounds.getSize(new THREE.Vector3());
@@ -1089,7 +1215,6 @@ async function loadSceneIntoViewport() {
     try { await createRuntimeObject(entity); }
     catch (error) { console.warn('Не удалось загрузить объект', entity, error); toast(`Не удалось загрузить «${entity.name}»`, 'error'); }
   }
-  applySceneAttachments();
   isRestoring = false;
   selectObject(null);
   renderHierarchy();
@@ -1104,6 +1229,7 @@ function removeSceneObject(id, takeSnapshot = true) {
   selectedIds.delete(id); if(selectedId===id)selectedId=[...selectedIds].at(-1)||null;
   if(transform){const active=selectedId?sceneObjects.get(selectedId):null;if(active)transform.attach(active);else transform.detach();}
   setAllEditorMaterials();
+  if(entity.type==='skybox')applySceneSkybox();
   updateSelectionHelpers(); return entity;
 }
 function deleteSelectedObject() {
@@ -1360,40 +1486,6 @@ async function exportMaterial(id) {
   downloadBlob(new Blob([JSON.stringify({format:'ZeroEngineMaterial',version:1,material:portable},null,2)],{type:'application/json'}),`${safeName(material.name)}.zemat`);
 }
 
-function applySceneAttachments(){
-  if(!scene||!currentProject)return;
-  for(const entity of activeSceneData()?.objects||[]){
-    if(!entity.attachmentTargetId||entity.attachmentTargetId==='__player_camera__')continue;
-    const child=sceneObjects.get(entity.id),parent=sceneObjects.get(entity.attachmentTargetId);if(!child||!parent||child===parent)continue;
-    parent.add(child);child.position.fromArray(entity.attachmentPosition||[0,0,0]);child.rotation.set(...(entity.attachmentRotation||[0,0,0]).map(v=>THREE.MathUtils.degToRad(v)));child.scale.fromArray(entity.attachmentScale||entity.scale||[1,1,1]);
-  }
-}
-function applyPreviewCameraAttachments(){
-  if(!previewCamera||!currentProject)return;
-  for(const entity of activeSceneData()?.objects||[]){if(entity.attachmentTargetId!=='__player_camera__')continue;const child=sceneObjects.get(entity.id);if(!child)continue;previewCamera.add(child);child.position.fromArray(entity.attachmentPosition||[0,0,0]);child.rotation.set(...(entity.attachmentRotation||[0,0,0]).map(v=>THREE.MathUtils.degToRad(v)));child.scale.fromArray(entity.attachmentScale||entity.scale||[1,1,1]);}
-}
-function openAttachmentEditor(entity){
-  const parents=(activeSceneData()?.objects||[]).filter(item=>item.id!==entity.id&&['player','camera'].includes(item.type));
-  const currentTarget=entity.attachmentTargetId||'';
-  showModal(`<div class="modal-header"><div><span class="panel-kicker">3D ATTACHMENT EDITOR</span><h2 id="modal-title">Привязка объекта</h2><p>Перемещай объект прямо в 3D-окне относительно Player или камеры.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body attach-editor-body"><label class="field-label">К чему прикрепить<select class="field-select" id="attach-target"><option value="">Не привязывать</option><option value="__player_camera__" ${currentTarget==='__player_camera__'?'selected':''}>Игровая камера</option>${parents.map(parent=>`<option value="${parent.id}" ${currentTarget===parent.id?'selected':''}>${escapeHtml(parent.name)} (${parent.type})</option>`).join('')}</select></label><canvas id="attach-editor-canvas" width="900" height="500"></canvas><div class="field-row three"><label class="field-label">X<input class="field-input" id="attach-x" type="number" step=".05" value="${Number(entity.attachmentPosition?.[0]??0)}"></label><label class="field-label">Y<input class="field-input" id="attach-y" type="number" step=".05" value="${Number(entity.attachmentPosition?.[1]??.5)}"></label><label class="field-label">Z<input class="field-input" id="attach-z" type="number" step=".05" value="${Number(entity.attachmentPosition?.[2]??0)}"></label></div><div class="modal-note">Манипулятор в 3D-окне: оси X/Y/Z. Изменения сохраняются после нажатия «Применить».</div></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="apply-attachment">Применить</button></div>`);
-  const canvas=$('#attach-editor-canvas'),miniScene=new THREE.Scene();miniScene.background=new THREE.Color('#20272b');
-  const miniCamera=new THREE.PerspectiveCamera(48,canvas.width/canvas.height,.01,100);miniCamera.position.set(3,2.5,4);miniCamera.lookAt(0,.6,0);
-  const miniRenderer=new THREE.WebGLRenderer({canvas,antialias:true});miniRenderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));miniRenderer.setSize(canvas.clientWidth||900,canvas.clientHeight||500,false);
-  miniScene.add(new THREE.HemisphereLight(0xffffff,0x55606b,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(4,7,5);miniScene.add(light);miniScene.add(new THREE.GridHelper(10,20));
-  const parentProxy=new THREE.Mesh(new THREE.CapsuleGeometry(.32,.9,4,10),new THREE.MeshStandardMaterial({color:0x6a94a9,transparent:true,opacity:.7}));parentProxy.position.y=.65;miniScene.add(parentProxy);
-  const source=sceneObjects.get(entity.id),preview=source?source.clone(true):new THREE.Mesh(new THREE.BoxGeometry(.5,.5,.5),new THREE.MeshStandardMaterial({color:0xb7ef68}));
-  preview.traverse(child=>{if(child.isMesh){child.material=Array.isArray(child.material)?child.material.map(m=>m.clone()):child.material.clone();child.userData.editorOnly=false;}});
-  preview.position.set(Number(entity.attachmentPosition?.[0]??0),Number(entity.attachmentPosition?.[1]??.5),Number(entity.attachmentPosition?.[2]??0));preview.rotation.set(...(entity.attachmentRotation||[0,0,0]).map(v=>THREE.MathUtils.degToRad(v)));preview.scale.set(1,1,1);miniScene.add(preview);
-  const miniOrbit=new OrbitControls(miniCamera,canvas);miniOrbit.enableDamping=true;const miniTransform=new TransformControls(miniCamera,canvas);miniTransform.attach(preview);miniTransform.setMode('translate');miniScene.add(miniTransform.getHelper?miniTransform.getHelper():miniTransform);miniTransform.addEventListener('dragging-changed',e=>miniOrbit.enabled=!e.value);
-  const syncFields=()=>{['x','y','z'].forEach((axis,index)=>$('#attach-'+axis).value=preview.position.getComponent(index).toFixed(2));};miniTransform.addEventListener('objectChange',syncFields);
-  ['x','y','z'].forEach((axis,index)=>$('#attach-'+axis).addEventListener('change',e=>{preview.position.setComponent(index,Number(e.target.value)||0);}));
-  let raf=0;const draw=()=>{if(!$('#modal-backdrop')||$('#modal-backdrop').classList.contains('hidden'))return;raf=requestAnimationFrame(draw);miniOrbit.update();miniRenderer.render(miniScene,miniCamera);};draw();
-  const dispose=()=>{cancelAnimationFrame(raf);miniTransform.detach();miniOrbit.dispose();miniRenderer.dispose();preview.traverse(child=>{child.geometry?.dispose?.();if(child.material)for(const m of(Array.isArray(child.material)?child.material:[child.material]))m.dispose?.();});};
-  $('#apply-attachment').addEventListener('click',async()=>{entity.attachmentTargetId=$('#attach-target').value||null;entity.attachmentPosition=preview.position.toArray();entity.attachmentRotation=[THREE.MathUtils.radToDeg(preview.rotation.x),THREE.MathUtils.radToDeg(preview.rotation.y),THREE.MathUtils.radToDeg(preview.rotation.z)];entity.attachmentScale=preview.scale.toArray();dispose();closeModal();await loadSceneIntoViewport();renderHierarchy();renderInspector();scheduleSave();toast('Привязка сохранена','success');});
-  $('#modal-backdrop').addEventListener('click',event=>{if(event.target.id==='modal-backdrop')dispose();},{once:true});
-  $$('#modal-content [data-close-modal],#modal-content .modal-close').forEach(button=>button.addEventListener('click',dispose,{once:true}));
-}
-
 // ---------- Inspector ----------
 function renderInspector() {
   const root = $('#inspector-content');
@@ -1409,7 +1501,7 @@ function renderInspector() {
     <section class="inspector-section"><div class="inspector-section-title">Объект <span>${entity.type.toUpperCase()}</span></div><div class="inspector-section-body">
       <label class="field-label">Название<input class="field-input" id="ins-name" value="${escapeAttr(entity.name)}" maxlength="64" /></label>
       <label class="check-line"><input type="checkbox" id="ins-visible" ${entity.visible !== false ? 'checked' : ''}/> Видимость объекта</label>
-      <div class="inspector-actions"><button class="button" id="duplicate-object">⧉ Дублировать</button><button class="button button-danger" id="delete-object">Удалить</button></div>${['primitive','model','player'].includes(entity.type)?'<button class="button button-primary" id="make-player-from-scene">♟ Сделать Player</button>':''}
+      <div class="inspector-actions"><button class="button" id="duplicate-object">⧉ Дублировать</button><button class="button button-danger" id="delete-object">Удалить</button></div>
     </div></section>
     <section class="inspector-section"><div class="inspector-section-title">Трансформация <span>TRANSFORM</span></div><div class="inspector-section-body">
       ${vectorFields('Позиция','pos',position)}${vectorFields('Вращение','rot',rotation)}${vectorFields('Масштаб','scale',scale)}
@@ -1420,12 +1512,11 @@ function renderInspector() {
       <div class="inspector-actions"><button class="button button-primary" id="open-camera-editor">◉ Настроить положение в 3D</button></div><div class="modal-note">Эти настройки принадлежат выбранному объекту Player и сохраняются в проекте. На обзор камеры самого редактора они не влияют. В 3D-редакторе можно перетащить камеру в любое место относительно модели игрока.</div>
     </div></section>` : ''}
     ${entity.type === 'spawn' ? `<section class="inspector-section"><div class="inspector-section-title">Player Start <span>SPAWN</span></div><div class="inspector-section-body"><label class="check-line"><input type="checkbox" id="spawn-game-visible" ${entity.gameVisible===true?'checked':''}/> Показывать точку спавна в игре</label><div class="modal-note">По умолчанию маркер виден только в редакторе и скрыт в игровом просмотре.</div></div></section>` : ''}
-    <section class="inspector-section"><div class="inspector-section-title">Привязка <span>ATTACHMENT</span></div><div class="inspector-section-body"><div class="modal-note">Прикрепи объект к Player или игровой камере. Его позиция станет локальной относительно выбранной точки.</div><button class="button button-primary" id="open-attachment-editor">⌖ Открыть 3D-окно привязки</button><div class="modal-note">${entity.attachmentTargetId==='__player_camera__'?'Привязан к игровой камере':entity.attachmentTargetId?`Привязан к ${escapeHtml(findEntity(entity.attachmentTargetId)?.name||'объекту')}`:'Не привязан'}</div></div></section>
-    <section class="inspector-section"><div class="inspector-section-title">Коллизии <span>COLLISION</span></div><div class="inspector-section-body">
+    ${entity.type!=='skybox' ? `<section class="inspector-section"><div class="inspector-section-title">Коллизии <span>COLLISION</span></div><div class="inspector-section-body">
       <div class="collision-summary"><span class="collision-state-dot ${entity.collision?.enabled?'active':''}"></span><span>${entity.collision?.enabled ? 'Коллизия включена' : 'Коллизия отключена'}</span><span class="asset-meta">${escapeHtml((entity.collision?.shape||'box').toUpperCase())}</span></div>
       <button class="button" id="open-collision-editor">▦ Открыть редактор коллизии</button>
       <div class="modal-note">Форма, размеры, смещение и Trigger настраиваются в отдельном окне.</div>
-    </div></section>
+    </div></section>` : ''}
     ${!['camera','spawn','light','skybox'].includes(entity.type) ? `<section class="inspector-section"><div class="inspector-section-title">Физика <span>PHYSICS</span></div><div class="inspector-section-body">
       <label class="check-line"><input type="checkbox" id="physics-enabled" ${entity.physics?.enabled?'checked':''}/> Включить физику</label>
       <label class="check-line"><input type="checkbox" id="physics-gravity" ${entity.physics?.useGravity!==false?'checked':''}/> Гравитация</label>
@@ -1434,20 +1525,20 @@ function renderInspector() {
     </div></section>` : ''}
     ${entity.type === 'light' ? `<section class="inspector-section"><div class="inspector-section-title">Источник света <span>LIGHT</span></div><div class="inspector-section-body"><label class="field-label">Тип<select class="field-select" id="light-kind"><option value="point" ${(entity.light?.kind||'point')==='point'?'selected':''}>Точечный</option><option value="directional" ${entity.light?.kind==='directional'?'selected':''}>Направленный</option><option value="spot" ${entity.light?.kind==='spot'?'selected':''}>Прожектор</option></select></label><label class="field-label">Цвет<input class="field-input" id="light-color" type="color" value="${entity.light?.color||'#fff2d6'}" /></label><label class="field-label">Интенсивность<input class="field-input" id="light-intensity" type="number" min="0" max="100" step=".1" value="${entity.light?.intensity??2}" /></label><label class="field-label">Дальность<input class="field-input" id="light-distance" type="number" min="0" max="1000" step=".5" value="${entity.light?.distance??12}" /></label></div></section>` : ''}
     ${entity.type === 'environmentLight' ? `<section class="inspector-section"><div class="inspector-section-title">Окружной источник света <span>ENVIRONMENT</span></div><div class="inspector-section-body"><label class="field-label">Форма области<select class="field-select" id="env-shape"><option value="sphere" ${(entity.environment?.shape||'sphere')==='sphere'?'selected':''}>Большая сфера</option><option value="box" ${entity.environment?.shape==='box'?'selected':''}>Куб</option></select></label><label class="field-label">Размер области (м)<input class="field-input" id="env-size" type="number" min="1" max="1000" step="1" value="${entity.environment?.size??24}" /></label><label class="field-label">Цвет верхнего света<input class="field-input" id="env-color" type="color" value="${entity.environment?.color||'#ffffff'}" /></label><label class="field-label">Цвет нижнего света<input class="field-input" id="env-ground-color" type="color" value="${entity.environment?.groundColor||'#777777'}" /></label><label class="field-label">Интенсивность<input class="field-input" id="env-intensity" type="number" min="0" max="5" step=".1" value="${entity.environment?.intensity??1}" /></label><div class="modal-note">Освещает сцену со всех сторон через Hemisphere Light. Тени не создаёт. Область отображается только как ориентир в редакторе.</div></div></section>` : ''}
-    ${entity.type === 'skybox' ? `<section class="inspector-section"><div class="inspector-section-title">Skybox <span>ENVIRONMENT</span></div><div class="inspector-section-body"><label class="field-label">Панорамная текстура<select class="field-select" id="skybox-texture"><option value="">Не выбрана</option>${currentProject.assets.filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${entity.assetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><div class="modal-note">Skybox использует панорамную текстуру (equirectangular), предпочтительно HDR/360° или широкую панораму.</div></div></section>` : ''}
+    ${entity.type === 'skybox' ? (()=>{const cfg=entity.skybox||{shape:'sphere',tileX:1,tileY:1,smoothing:true,rotationY:0,brightness:1};return `<section class="inspector-section"><div class="inspector-section-title">Skybox <span>IMAGE ENVIRONMENT</span></div><div class="inspector-section-body"><label class="field-label">Картинка Skybox<select class="field-select" id="skybox-image"><option value="">Не выбрана</option>${currentProject.assets.filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${entity.assetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Форма окружения<select class="field-select" id="skybox-shape"><option value="sphere" ${(cfg.shape||'sphere')==='sphere'?'selected':''}>Круг / сфера</option><option value="box" ${cfg.shape==='box'?'selected':''}>Квадрат / куб</option></select></label><div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="skybox-tile-x" type="number" min="0.05" max="100" step="0.1" value="${Number(cfg.tileX??1)}"></label><label class="field-label">Tiling Y<input class="field-input" id="skybox-tile-y" type="number" min="0.05" max="100" step="0.1" value="${Number(cfg.tileY??1)}"></label></div><label class="field-label">Поворот изображения по Y<input class="field-input" id="skybox-rotation" type="number" min="-360" max="360" step="1" value="${Number(cfg.rotationY||0)}"></label><label class="field-label">Яркость <span id="skybox-brightness-value">${Number(cfg.brightness??1).toFixed(2)}</span><input class="field-input" id="skybox-brightness" type="range" min="0" max="3" step="0.05" value="${Number(cfg.brightness??1)}"></label><label class="check-line"><input type="checkbox" id="skybox-smoothing" ${cfg.smoothing!==false?'checked':''}> Сглаживание изображения</label><div class="modal-note">Skybox управляется только этим объектом. Выбери изображение из ресурсов проекта; материал и отдельная текстура здесь не назначаются.</div></div></section>`;})() : ''}
     ${entity.type === 'model' ? `<section class="inspector-section"><div class="inspector-section-title">Масштаб модели <span>MODEL UNITS</span></div><div class="inspector-section-body"><label class="field-label">Единицы исходной модели<select class="field-select" id="model-unit-mode"><option value="auto" ${(entity.unitMode||'auto')==='auto'?'selected':''}>Автоопределение</option><option value="meters" ${entity.unitMode==='meters'?'selected':''}>Метры (×1)</option><option value="centimeters" ${entity.unitMode==='centimeters'?'selected':''}>Сантиметры (×0.01)</option><option value="millimeters" ${entity.unitMode==='millimeters'?'selected':''}>Миллиметры (×0.001)</option></select></label><button class="button" id="apply-model-units">Применить единицы</button><div class="modal-note">Автоопределение исправляет типичные FBX/Blender расхождения. Для точного размера можно выбрать единицы вручную; окончательный масштаб также регулируется выше в Transform.</div></div></section><section class="inspector-section"><div class="inspector-section-title">Анимации и скелет <span>ANIMATION</span></div><div class="inspector-section-body"><label class="field-label">Клип GLTF/FBX<select class="field-select" id="model-animation-select"><option value="">Выбери анимацию</option>${(entity.availableAnimations||[]).map(name=>`<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join('')}</select></label><div class="inspector-actions"><button class="button" id="play-model-animation">▶ Проиграть</button><button class="button" id="stop-model-animation">■ Стоп</button></div><div class="modal-note" id="skeleton-info">${countSkinnedBones(sceneObjects.get(entity.id))} костей в импортированном скелете · клипы GLTF/FBX доступны выше.</div><button class="button" id="create-basic-rig">＋ Создать базовый скелет</button><div class="modal-note">${entity.rig?.bones?.map(b=>escapeHtml(b.name)).join(' · ')||'Собственный скелет ещё не создан.'}</div></div></section>` : ''}
     ${!['camera','spawn','light','skybox'].includes(entity.type) ? `<section class="inspector-section"><div class="inspector-section-title">Анимация объекта <span>KEYFRAMES</span></div><div class="inspector-section-body"><div class="inspector-actions"><button class="button" id="add-transform-key">＋ Записать ключ</button><button class="button" id="play-custom-animation">▶ Проиграть</button><button class="button" id="stop-custom-animation">■ Стоп</button></div><div id="custom-animation-list" class="modal-note">${(entity.animations||[]).map(a=>`${escapeHtml(a.name)} — ${a.keys?.length||0} ключей`).join('<br>') || 'Пользовательских анимаций пока нет.'}</div></div></section>` : ''}
-    <section class="inspector-section"><div class="inspector-section-title">Материал <span>MATERIAL</span></div><div class="inspector-section-body">
+    ${entity.type!=='skybox' ? `<section class="inspector-section"><div class="inspector-section-title">Материал <span>MATERIAL</span></div><div class="inspector-section-body">
       <label class="field-label">Основной цвет<input class="field-input" id="ins-color" type="color" value="${escapeAttr(material.color || '#a5ef4c')}" /></label>
-      <label class="field-label">Прозрачность <span id="opacity-value">${Math.round(Number(material.opacity??1)*100)}%</span><input class="field-input" id="ins-opacity" type="range" min="0" max="1" step=".01" value="${Number(material.opacity??1)}" /></label><button class="button button-quiet" id="remove-base-color">Убрать базовый цвет</button><label class="field-label">Шероховатость <span id="roughness-value">${Number(material.roughness ?? .72).toFixed(2)}</span><input class="field-input" id="ins-roughness" type="range" min="0" max="1" step=".01" value="${Number(material.roughness ?? .72)}" /></label>
+      <label class="field-label">Шероховатость <span id="roughness-value">${Number(material.roughness ?? .72).toFixed(2)}</span><input class="field-input" id="ins-roughness" type="range" min="0" max="1" step=".01" value="${Number(material.roughness ?? .72)}" /></label>
       <label class="field-label">Текстура ${textureAsset ? `<span>${escapeHtml(textureAsset.name)}</span>` : ''}<button class="button button-quiet" id="choose-texture-button">${textureAsset ? 'Заменить текстуру' : 'Назначить из файлов'}</button></label><label class="field-label">Библиотека материалов<select class="field-select" id="ins-material-select"><option value="">Выбери сохранённый материал</option>${(currentProject.materials||[]).map(m=>`<option value="${m.id}" ${material.materialId===m.id?'selected':''}>${escapeHtml(m.name)}</option>`).join('')}</select></label><button class="button" id="apply-library-material">Применить материал</button><button class="button button-quiet" id="save-material-to-library">＋ Сохранить материал в библиотеку</button>
       <div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="tile-x" type="number" min="0.01" max="100" step="0.1" value="${Number(material.tileX || 1)}" /></label><label class="field-label">Tiling Y<input class="field-input" id="tile-y" type="number" min="0.01" max="100" step="0.1" value="${Number(material.tileY || 1)}" /></label></div>
       <label class="check-line"><input type="checkbox" id="texture-seamless" ${material.seamless===true?'checked':''}/> Сглаживать стыки текстуры</label>
       <label class="field-label">Ширина сглаживания <span id="texture-seam-value">${Math.round(Number(material.seamWidth??.12)*100)}%</span><input class="field-input" id="texture-seam-width" type="range" min="0.03" max="0.24" step="0.01" value="${Number(material.seamWidth??.12)}" /></label>
       <div class="modal-note">Обрабатываются противоположные края текстуры. Оригинальный файл не изменяется.</div>
-    </div></section>`;
-  $('#ins-name').addEventListener('change', event => { entity.name = event.target.value.trim() || 'Object'; const obj = sceneObjects.get(entity.id); if (obj) obj.name = entity.name; renderHierarchy(); updateSelectedStatus(); scheduleSave(); });
-  $('#ins-visible').addEventListener('change', event => { entity.visible = event.target.checked; const obj = sceneObjects.get(entity.id); if (obj) obj.visible = entity.visible; setAllEditorMaterials(); scheduleSave(); });
+    </div></section>` : ''}
+  $('#ins-name')?.addEventListener('change', event => { entity.name = event.target.value.trim() || 'Object'; const obj = sceneObjects.get(entity.id); if (obj) obj.name = entity.name; renderHierarchy(); updateSelectedStatus(); scheduleSave(); });
+  $('#ins-visible')?.addEventListener('change', event => { entity.visible = event.target.checked; const obj = sceneObjects.get(entity.id); if (obj) obj.visible = entity.visible; setAllEditorMaterials(); scheduleSave(); });
   if (entity.type === 'player') {
     entity.cameraMount ||= {mode:'back',offset:[0,1.6,0],fov:70};
     delete entity.cameraMount.viewMode;
@@ -1455,17 +1546,21 @@ function renderInspector() {
     $('#open-camera-editor')?.addEventListener('click',()=>openCameraEditor(entity));
     $('#player-camera-mode')?.addEventListener('change', event => { entity.cameraMount.mode = event.target.value; scheduleSave(); });
   }
-  if (entity.type === 'spawn') $('#spawn-game-visible').addEventListener('change',event=>{entity.gameVisible=event.target.checked;scheduleSave();});
+  if (entity.type === 'spawn') $('#spawn-game-visible')?.addEventListener('change',event=>{entity.gameVisible=event.target.checked;scheduleSave();});
   entity.collision ||= {enabled:false,shape:'box',size:[1,1,1],offset:[0,0,0],isTrigger:false};
-  $('#open-collision-editor').addEventListener('click',()=>openCollisionEditor(entity));
-  $('#open-attachment-editor')?.addEventListener('click',()=>openAttachmentEditor(entity));
-  $('#skybox-texture')?.addEventListener('change',event=>{entity.assetId=event.target.value||null;activeSceneData().skyboxAssetId=entity.assetId;applySceneSkybox();scheduleSave();});
+  $('#open-collision-editor')?.addEventListener('click',()=>openCollisionEditor(entity));
+  if(entity.type==='skybox'){
+    const updateSkybox=()=>{entity.skybox ||= {shape:'sphere',tileX:1,tileY:1,smoothing:true,rotationY:0,brightness:1};entity.skybox.shape=$('#skybox-shape')?.value||'sphere';entity.skybox.tileX=Math.max(.05,Number($('#skybox-tile-x')?.value)||1);entity.skybox.tileY=Math.max(.05,Number($('#skybox-tile-y')?.value)||1);entity.skybox.rotationY=Number($('#skybox-rotation')?.value)||0;entity.skybox.brightness=Number($('#skybox-brightness')?.value??1);entity.skybox.smoothing=$('#skybox-smoothing')?.checked!==false;const value=$('#skybox-brightness-value');if(value)value.textContent=entity.skybox.brightness.toFixed(2);applySceneSkybox();scheduleSave();};
+    $('#skybox-image')?.addEventListener('change',event=>{entity.assetId=event.target.value||null;updateSkybox();});
+    ['skybox-shape','skybox-tile-x','skybox-tile-y','skybox-rotation','skybox-smoothing'].forEach(id=>$(`#${id}`)?.addEventListener('change',updateSkybox));
+    $('#skybox-brightness')?.addEventListener('input',updateSkybox);
+  }
   if ($('#physics-enabled')) {
     entity.physics ||= {enabled:false,useGravity:true,mass:1,velocity:[0,0,0],linearDamping:.05};
-    $('#physics-enabled').addEventListener('change',event=>{entity.physics.enabled=event.target.checked;entity.physics.velocity ||= [0,0,0];if(event.target.checked&&entity.collision&&entity.collision.enabled==null)entity.collision.enabled=true;scheduleSave();});
-    $('#physics-gravity').addEventListener('change',event=>{entity.physics.useGravity=event.target.checked;scheduleSave();});
-    $('#physics-mass').addEventListener('change',event=>{entity.physics.mass=Math.max(.01,Number(event.target.value)||1);scheduleSave();});
-    $('#physics-damping').addEventListener('change',event=>{entity.physics.linearDamping=Math.max(0,Number(event.target.value)||0);scheduleSave();});
+    $('#physics-enabled')?.addEventListener('change',event=>{entity.physics.enabled=event.target.checked;entity.physics.velocity ||= [0,0,0];if(event.target.checked&&entity.collision&&entity.collision.enabled==null)entity.collision.enabled=true;scheduleSave();});
+    $('#physics-gravity')?.addEventListener('change',event=>{entity.physics.useGravity=event.target.checked;scheduleSave();});
+    $('#physics-mass')?.addEventListener('change',event=>{entity.physics.mass=Math.max(.01,Number(event.target.value)||1);scheduleSave();});
+    $('#physics-damping')?.addEventListener('change',event=>{entity.physics.linearDamping=Math.max(0,Number(event.target.value)||0);scheduleSave();});
   }
   if (entity.type === 'light') {
     ['kind','color','intensity','distance'].forEach(key=>$(`#light-${key}`).addEventListener('change',event=>{entity.light ||= {};entity.light[key]=key==='intensity'||key==='distance'?Number(event.target.value):event.target.value;const pos=entity.position.slice(),rot=entity.rotation.slice(),scl=entity.scale.slice();createRuntimeObject(entity).then(()=>{const o=sceneObjects.get(entity.id);o.position.fromArray(pos);o.rotation.set(...rot.map(v=>THREE.MathUtils.degToRad(v)));o.scale.fromArray(scl);selectObject(entity.id);});scheduleSave();}));
@@ -1488,21 +1583,18 @@ function renderInspector() {
   $('#add-transform-key')?.addEventListener('click',()=>recordTransformKey(entity));
   $('#play-custom-animation')?.addEventListener('click',()=>{const a=entity.animations?.[0];if(a)playCustomAnimation(entity,a);else toast('Сначала запиши несколько ключей','error');});
   $('#stop-custom-animation')?.addEventListener('click',()=>activeCustomAnimations.delete(entity.id));
-  $('#duplicate-object').addEventListener('click', duplicateSelectedObject);
-  $('#make-player-from-scene')?.addEventListener('click',()=>convertSceneObjectToPlayer(entity));
-  $('#delete-object').addEventListener('click', deleteSelectedObject);
-  $('#ins-color').addEventListener('input', event => {
+  $('#duplicate-object')?.addEventListener('click', duplicateSelectedObject);
+  $('#delete-object')?.addEventListener('click', deleteSelectedObject);
+  $('#ins-color')?.addEventListener('input', event => {
     entity.material ||= {}; entity.material.color = event.target.value; entity.material.overrideColor = true;
     const obj = sceneObjects.get(entity.id); obj?.traverse(child => { if (child.isMesh && child.material) eachEntityMaterial(child, mat => { if (mat.color) mat.color.set(event.target.value); }); });
     scheduleSave();
   });
-  $('#ins-opacity')?.addEventListener('input',event=>{const opacity=THREE.MathUtils.clamp(Number(event.target.value),0,1);entity.material ||= {};entity.material.opacity=opacity;$('#opacity-value').textContent=`${Math.round(opacity*100)}%`;const obj=sceneObjects.get(entity.id);obj?.traverse(child=>{if(child.isMesh&&child.material)eachEntityMaterial(child,mat=>{mat.transparent=opacity<1;mat.opacity=opacity;mat.needsUpdate=true;});});scheduleSave();});
-  $('#remove-base-color')?.addEventListener('click',()=>{entity.material ||= {};delete entity.material.color;entity.material.overrideColor=false;entity.material.opacity=1;const obj=sceneObjects.get(entity.id);if(obj)obj.traverse(child=>{if(child.isMesh&&child.material)eachEntityMaterial(child,mat=>{mat.color?.set(0xffffff);mat.opacity=1;mat.transparent=false;mat.needsUpdate=true;});});renderInspector();scheduleSave();});
-  $('#ins-roughness').addEventListener('input', event => {
+  $('#ins-roughness')?.addEventListener('input', event => {
     entity.material ||= {}; entity.material.roughness = Number(event.target.value); $('#roughness-value').textContent = Number(event.target.value).toFixed(2);
     const obj = sceneObjects.get(entity.id); obj?.traverse(child => { if (child.isMesh && child.material) eachEntityMaterial(child, mat => { if ('roughness' in mat) mat.roughness = Number(event.target.value); }); }); scheduleSave();
   });
-  ['tile-x','tile-y'].forEach(id => $(`#${id}`).addEventListener('change', () => {
+  ['tile-x','tile-y'].forEach(id => $(`#${id}`)?.addEventListener('change', () => {
     entity.material ||= {}; entity.material.tileX = Math.max(.01, Number($('#tile-x').value) || 1); entity.material.tileY = Math.max(.01, Number($('#tile-y').value) || 1);
     if (entity.material.textureAssetId) applyTextureToEntity(entity);
     scheduleSave();
@@ -1515,7 +1607,7 @@ function renderInspector() {
   $('#texture-seamless')?.addEventListener('change',updateSeamlessTexture);
   $('#texture-seam-width')?.addEventListener('input',()=>{const value=Number($('#texture-seam-width').value)||.12;$('#texture-seam-value').textContent=`${Math.round(value*100)}%`;});
   $('#texture-seam-width')?.addEventListener('change',updateSeamlessTexture);
-  $('#choose-texture-button').addEventListener('click', () => { setAssetTab('assets'); toast('Выбери текстуру в нижней панели', 'success'); });
+  $('#choose-texture-button')?.addEventListener('click', () => { setAssetTab('assets'); toast('Выбери текстуру в нижней панели', 'success'); });
   $('#save-material-to-library')?.addEventListener('click',()=>saveMaterialToLibrary(entity));
   $('#apply-library-material')?.addEventListener('click',()=>{const saved=currentProject.materials?.find(m=>m.id===$('#ins-material-select')?.value);if(saved)applyMaterialToEntity(entity,saved);else toast('Выбери материал из библиотеки','error');});
   bindVectorInputs();
@@ -1799,7 +1891,7 @@ function bindPreviewCameraInput() {
   wrap.style.touchAction='none';wrap.classList.add('preview-camera-active');canvas.style.touchAction='none';
   const rotate=(dx,dy)=>{
     if(!isPlaying||!previewCamera)return;
-    previewYaw-=dx*.006;previewPitch=THREE.MathUtils.clamp(previewPitch-dy*.004,-1.35,1.35);
+    previewYaw-=dx*.006;previewPitch=THREE.MathUtils.clamp(previewPitch-dy*.004,-Math.PI/2+.015,Math.PI/2-.015);
     if((activeSceneData()?.objects||[]).some(item=>item.type==='player'))syncPreviewCameraToPlayer();
     else previewCamera.rotation.set(previewPitch,previewYaw,0,'YXZ');
   };
@@ -1857,13 +1949,12 @@ async function startPlayMode() {
     snapEntityToGround(player,.65);
     player.physics.velocity[1]=0;
   }
-  gameSpeedMultiplier=1;heldKeys.clear();activeKeyBindings.clear();heldButtonIds.clear();previewYaw=player?THREE.MathUtils.degToRad(Number(player.rotation?.[1])||0):0;previewPitch=-.18;
+  gameSpeedMultiplier=1;heldKeys.clear();heldButtonIds.clear();previewYaw=player?THREE.MathUtils.degToRad(Number(player.rotation?.[1])||0):0;previewPitch=-.18;
   const mount=player?.cameraMount||{};
   previewCamera = new THREE.PerspectiveCamera(Number(mount.fov) || 70, editorCamera.aspect, .08, 2000);
   if(player)syncPreviewCameraToPlayer();
   else if(sceneCamera){previewCamera.position.fromArray(sceneCamera.position||basePosition);previewCamera.rotation.set(...(sceneCamera.rotation||[0,0,0]).map(v=>THREE.MathUtils.degToRad(v)),'YXZ');}
   else previewCamera.position.set(basePosition[0],basePosition[1]+1.6,basePosition[2]);
-  applyPreviewCameraAttachments();
   objects.forEach(entity=>{
     const object=sceneObjects.get(entity.id);if(!object)return;
     const firstPersonPlayer = entity.type === 'player' && (player?.cameraMount?.mode || 'head') === 'head';
@@ -1882,7 +1973,7 @@ async function stopPlayMode() {
   if(!isPlaying)return;
   if(document.pointerLockElement===renderer?.domElement)document.exitPointerLock?.();
   $('#viewport-wrap')?.classList.remove('preview-camera-active');
-  isPlaying=false;previewCamera=null;orbit.enabled=true;heldKeys.clear();activeKeyBindings.clear();heldButtonIds.clear();gameSpeedMultiplier=1;
+  isPlaying=false;previewCamera=null;orbit.enabled=true;heldKeys.clear();heldButtonIds.clear();gameSpeedMultiplier=1;
   gridHelper.visible=axesHelper.visible=activeSceneData()?.grid!==false;
   $('#play-overlay')?.classList.add('hidden');$('#play-button')?.classList.remove('hidden');
   $('#game-ui-layer').innerHTML='';
@@ -2096,6 +2187,9 @@ function bindUI() {
   $('#model-import-open').addEventListener('click',()=>$('#model-import-input').click());
   $('#model-import-input').addEventListener('change',e=>importModelStudioFile(e.target.files?.[0]));
   $('#model-save').addEventListener('click', saveModelStudioAsset);
+  $('#model-join-selected').addEventListener('click', joinSelectedModelObjects);
+  $('#model-separate-selected').addEventListener('click', separateSelectedModelGroup);
+  $$('#model-studio [data-model-view]').forEach(button=>button.addEventListener('click',()=>snapModelView(button.dataset.modelView)));
   $('#model-undo').addEventListener('click', undoModelStudio);
   $('#model-redo').addEventListener('click', redoModelStudio);
   $('#model-copy').addEventListener('click', copyModelObject); $('#model-paste').addEventListener('click', pasteModelObject);
@@ -2105,10 +2199,7 @@ function bindUI() {
   $('#model-reference-remove').addEventListener('click',removeModelReference);
   $('#model-texture-add').addEventListener('click',()=>$('#model-texture-input').click());
   $('#model-texture-input').addEventListener('change',e=>loadModelTexture(e.target.files?.[0]));
-  $('#model-texture-crop').addEventListener('click',openModelUVEditor);
-  $$('[data-model-component-create]').forEach(button=>button.addEventListener('click',()=>createModelComponent(button.dataset.modelComponentCreate)));
-  $('#model-surface-double').addEventListener('click',toggleModelDoubleSided);
-  $('#model-surface-reset').addEventListener('click',resetModelSurface);
+  $('#model-texture-crop').addEventListener('click',cropModelTexture);
   $('#model-paint-open').addEventListener('click',()=>$('#model-paint-panel').classList.toggle('hidden'));
   $('#model-paint-apply').addEventListener('click',applyModelPaint);
   $('#model-paint-canvas').addEventListener('pointerdown',startModelPaint);
@@ -2119,23 +2210,24 @@ function bindUI() {
   $$('#model-studio [data-model-mode]').forEach(b=>b.addEventListener('click',()=>setModelMode(b.dataset.modelMode)));
   $$('#model-studio [data-model-tool]').forEach(b=>b.addEventListener('click',()=>runModelTool(b.dataset.modelTool)));
   $$('#model-studio [data-model-mirror]').forEach(b=>b.addEventListener('click',()=>mirrorModelObject(Number(b.dataset.modelMirror))));
-  $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>`<button data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇'][i]} ${n}</button>`).join('');
+  $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>`<button type="button" data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇','♟','○','◌','⌂','⬡','◇','⬟','△','∿','⟲','◩'][i]} ${n}</button>`).join('');
   $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
   $('#close-workbench').addEventListener('click', closeWorkbench);
   $('#open-settings-workbench').addEventListener('click',openDeviceSettings);
   $('#workbench-save').addEventListener('click', async () => { const ok=await saveProject(false); if(ok)toast('ZeroBox и интерфейсы сохранены','success'); });
   $('#workbench-run').addEventListener('click', () => { const box = currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if (box) runZeroBox(box, 'manual'); else toast('Выбери ZeroBox', 'error'); });
   $('#stop-play-button').addEventListener('click', stopPlayMode);
+  $('#play-home-button')?.addEventListener('click', async()=>{await stopPlayMode();await saveProject(false);showHome();});
   $('#toggle-hierarchy').addEventListener('click', () => $('#hierarchy-panel').classList.toggle('open'));
   $('#toggle-inspector').addEventListener('click', () => $('#inspector-panel').classList.toggle('open'));
   $('#close-inspector').addEventListener('click', () => $('#inspector-panel').classList.remove('open'));
   $('#add-object-menu').addEventListener('click', openAddObjectMenu);
-  $('#scene-options').addEventListener('click', () => showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE SETTINGS</span><h2 id="modal-title">Настройки сцены</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Название<input class="field-input" id="scene-setting-name" value="${escapeAttr(activeScene().name)}" /></label><label class="field-label">Цвет фона<input class="field-input" id="scene-setting-bg" type="color" value="${activeSceneData().background || '#182126'}" /></label><label class="field-label">Skybox<select class="field-select" id="scene-setting-skybox"><option value="">Без Skybox</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${activeSceneData().skyboxAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Форма Skybox<select class="field-select" id="scene-setting-sky-shape"><option value="sphere" ${(activeSceneData().skyboxSettings?.shape||'sphere')==='sphere'?'selected':''}>Сфера</option><option value="box" ${activeSceneData().skyboxSettings?.shape==='box'?'selected':''}>Куб</option></select></label><div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="scene-setting-sky-x" type="number" min=".1" step=".1" value="${Number(activeSceneData().skyboxSettings?.tileX||1)}"></label><label class="field-label">Tiling Y<input class="field-input" id="scene-setting-sky-y" type="number" min=".1" step=".1" value="${Number(activeSceneData().skyboxSettings?.tileY||1)}"></label></div><label class="check-line"><input type="checkbox" id="scene-setting-sky-smooth" ${activeSceneData().skyboxSettings?.smooth!==false?'checked':''}/> Сглаживание текстуры</label><label class="check-line"><input type="checkbox" id="scene-setting-grid" ${activeSceneData().grid !== false ? 'checked' : ''}/> Показывать сетку и оси</label></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="save-scene-settings">Применить</button></div>`));
+  $('#scene-options').addEventListener('click', () => showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE SETTINGS</span><h2 id="modal-title">Настройки сцены</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Название<input class="field-input" id="scene-setting-name" value="${escapeAttr(activeScene().name)}" /></label><label class="field-label">Цвет фона<input class="field-input" id="scene-setting-bg" type="color" value="${activeSceneData().background || '#182126'}" /></label><label class="check-line"><input type="checkbox" id="scene-setting-grid" ${activeSceneData().grid !== false ? 'checked' : ''}/> Показывать сетку и оси</label></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="save-scene-settings">Применить</button></div>`));
   $('#undo-button').addEventListener('click', undo); $('#redo-button').addEventListener('click', redo);
   $$('[data-transform]').forEach(button => button.addEventListener('click', () => setTransformMode(button.dataset.transform)));
   $('#focus-object').addEventListener('click', focusSelectedObject);
   $('#grid-toggle').addEventListener('click', () => { activeSceneData().grid = !activeSceneData().grid; gridHelper.visible = axesHelper.visible = activeSceneData().grid; scheduleSave(); });
-  $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · ПКМ — перемещать обзор · Колесо — приблизить/отдалить · Gizmo — двигать выбранный объект')); 
+  $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · СКМ — панорама · ПКМ + перетаскивание — выделение рамкой · Колесо — масштаб'));  
   $('#import-files-button').addEventListener('click', () => $('#asset-files-input').click());
   $('#import-folder-button').addEventListener('click', () => $('#asset-folder-input').click());
   $('#new-folder-button').addEventListener('click', createAssetFolder);
@@ -2151,7 +2243,7 @@ function bindUI() {
     const apply = $('#save-scene-settings'); if (!apply) return;
     apply.addEventListener('click', () => {
       const name = $('#scene-setting-name').value.trim() || 'Scene';
-      const data = activeSceneData(); data.name = name; data.background = $('#scene-setting-bg').value; data.skyboxAssetId = $('#scene-setting-skybox').value || null; data.skyboxSettings={shape:$('#scene-setting-sky-shape').value,tileX:Math.max(.1,Number($('#scene-setting-sky-x').value)||1),tileY:Math.max(.1,Number($('#scene-setting-sky-y').value)||1),smooth:$('#scene-setting-sky-smooth').checked}; data.grid = $('#scene-setting-grid').checked;
+      const data = activeSceneData(); data.name = name; data.background = $('#scene-setting-bg').value; data.grid = $('#scene-setting-grid').checked;
       activeScene().name = name; scene.background = new THREE.Color(data.background); applySceneSkybox(); gridHelper.visible = axesHelper.visible = data.grid;
       $('#active-scene-name').textContent = $('#viewport-scene-name').textContent = name;
       closeModal(); scheduleSave(); renderAssetPanel();
@@ -2161,7 +2253,7 @@ function bindUI() {
 function openAddObjectMenu() {
   const categories=[
     {id:'basic',label:'Основные',icon:'◈',items:[['cube','Куб','⬡'],['plane','Плоскость','▱'],['sphere','Сфера','●'],['cylinder','Цилиндр','⬭'],['cone','Конус','△'],['capsule','Капсула','◉']]},
-    {id:'advanced',label:'Дополнительные формы',icon:'◇',items:[['torus','Тор','◎'],['torusKnot','Узел тор','♧'],['dodecahedron','Додекаэдр','⬟'],['icosahedron','Икосаэдр','⬢'],['octahedron','Октаэдр','◇'],['tetrahedron','Тетраэдр','△']]},
+    {id:'advanced',label:'Дополнительные формы',icon:'◇',items:[['torus','Тор','◎'],['torusKnot','Узел тор','♧'],['icosphere','Икосфера','⬢'],['monkey','Обезьяна','♟'],['circle','Круг','○'],['ring','Кольцо','◌'],['pyramid','Пирамида','⌂'],['hexagonalPrism','Шестиугольная призма','⬡'],['octahedron','Октаэдр','◇'],['dodecahedron','Додекаэдр','⬟'],['tetrahedron','Тетраэдр','△'],['tube','Труба','∿'],['spring','Пружина','⟲'],['wedge','Клин','◩']]},
     {id:'game',label:'Игровые объекты',icon:'♟',items:[['player','Player','♟'],['spawn','Player Start','⌖'],['camera','Камера','▣'],['skybox','Skybox','☁'],['light','Источник света','✦'],['environmentLight','Окружной свет','☼']]}
   ];
   const active='basic';
@@ -2209,7 +2301,7 @@ function deleteScene(sceneId) {
 const ZEROBOX_CATEGORIES = [
   {name:'События', icon:'⚡', color:'#e4a64c', items:['Straightaway','Buttonclicked','Buttonpressed','ButtonResting']},
   {name:'Player', icon:'♟', color:'#68b7d8', items:['Side','Speed','Squat','Jumpup','Life']},
-  {name:'Управление', icon:'✥', color:'#65c6bd', items:['Joystick']},
+  {name:'Управление', icon:'✥', color:'#65c6bd', items:['Joystick','JoystickMovement']},
   {name:'Математика', icon:'∑', color:'#aa91e8', items:['Number','NumericArray','Minus','Plus','Divide','Multiply','Size']},
   {name:'Логика', icon:'⑂', color:'#d68abd', items:['Change','Loop','Branching','ForkYesorno','Close']},
   {name:'Движение и физика', icon:'↗', color:'#83c77b', items:['Moving','Twist','Collision','Physics','Gamespeed','Laser']},
@@ -2224,7 +2316,7 @@ const ZEROBOX_DEFAULTS = {
   x:0, y:0, z:0, color:'#a5ef4c', enabled:true, key:'', buttonId:'', distance:25,
   repeat:3, condition:'true', assetId:'', animation:'', text:'Hello from ZeroBox',
   sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableY:'JoystickY', variableZ:'JoystickY',
-  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:''
+  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', orientation:'object', deadZone:0.08
 };
 function createZeroBox() {
   const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[]};
@@ -2269,17 +2361,18 @@ function zeroBlockFields(block) {
   const select=(key,label,options)=>`<label class="field-label">${label}<select class="field-select" data-block-field="${key}">${options}</select></label>`;
   let html='';
   if (['Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type)) html += select('buttonId','Кнопка интерфейса',buttonOptions)+input('key','Или клавиша клавиатуры','text');
-  if (block.type==='Side') html += select('side','Сторона','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>');
+  if (block.type==='Side') html += select('side','Сторона',`<option value="Forward" ${c.side==='Forward'?'selected':''}>Север / вперёд</option><option value="Backward" ${c.side==='Backward'?'selected':''}>Юг / назад</option><option value="Left" ${c.side==='Left'?'selected':''}>Запад / влево</option><option value="Right" ${c.side==='Right'?'selected':''}>Восток / вправо</option><option value="Up" ${c.side==='Up'?'selected':''}>Вверх</option><option value="Down" ${c.side==='Down'?'selected':''}>Вниз</option>`);
   if (['Speed','Jumpup','Squat','Twist','Minus','Plus','Divide','Multiply'].includes(block.type)) html += input('amount','Значение');
   if (block.type==='Gamespeed') html += input('gameSpeed','Множитель времени (0.1–4)');
   if (block.type==='Spawn') html += select('spawnType','Тип создаваемого объекта','<option value="cube">Куб</option><option value="sphere">Сфера</option><option value="plane">Плоскость</option><option value="cylinder">Цилиндр</option><option value="cone">Конус</option><option value="capsule">Капсула</option><option value="player">Player</option><option value="spawn">Player Start</option><option value="camera">Camera</option><option value="light">Point Light</option><option value="environmentLight">Environment Light</option>')+input('spawnName','Название объекта','text')+input('x','Позиция X')+input('y','Позиция Y')+input('z','Позиция Z');
   if (block.type==='Text') html += input('value','Текстовое значение','text');
   if (block.type==='Asset') html += select('assetId','Ресурс',`<option value="">Не выбран</option>${(currentProject.assets||[]).map(a=>`<option value="${a.id}" ${c.assetId===a.id?'selected':''}>${escapeHtml(a.name)} · ${a.type}</option>`).join('')}`);
   if (block.type==='Joystick') html += select('joystickId','Выбрать джойстик',`<option value="">Первый доступный</option>${(currentProject.uiScreens||[]).flatMap(screen=>(screen.elements||[]).filter(el=>el.type==='Joystick').map(el=>({...el,screenName:screen.name}))).map(el=>`<option value="${el.id}" ${c.joystickId===el.id?'selected':''}>${escapeHtml(el.screenName)} / ${escapeHtml(el.text||'Joystick')} · ${el.id.slice(0,5)}</option>`).join('')}`)+input('variableX','Переменная выхода X','text')+input('variableY','Переменная выхода Y','text');
-  if (block.type==='Moving') html += select('movementMode','Режим движения','<option value="direction">Постоянное движение (пока удерживается)</option><option value="offset">Смещение на координаты</option><option value="variables">По переменным джойстика</option>')+select('side','Направление','<option value="Forward">Север / вперёд</option><option value="Backward">Юг / назад</option><option value="Left">Запад / влево</option><option value="Right">Восток / вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+input('speed','Скорость (м/с)')+select('variableX','Переменная X джойстика',varOptions)+select('variableY','Переменная Y джойстика',varOptions);
+  if (block.type==='JoystickMovement') { const joystickOptions=[...new Map([...(currentProject.uiElements||[]),...(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[])].filter(el=>el.type==='Joystick').map(el=>[el.id,el])).values()]; html += select('joystickId','Источник джойстика',`<option value="">Первый доступный</option>${joystickOptions.map(el=>`<option value="${el.id}" ${c.joystickId===el.id?'selected':''}>${escapeHtml(el.text||'Joystick')} · ${el.id.slice(0,5)}</option>`).join('')}`)+select('targetObjectId','Двигать объект',`<option value="">Player / активный объект</option>${(activeSceneData()?.objects||[]).map(e=>`<option value="${e.id}" ${c.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}`)+input('speed','Скорость (м/с)')+select('orientation','Ориентация направления',`<option value="object" ${c.orientation==='object'?'selected':''}>По повороту объекта (Y)</option><option value="camera" ${c.orientation==='camera'?'selected':''}>По повороту камеры</option><option value="world" ${c.orientation==='world'?'selected':''}>Мировые оси</option>`)+input('deadZone','Мёртвая зона (0–0.5)'); }
+  if (block.type==='Moving') html += select('movementMode','Режим движения',`<option value="direction" ${c.movementMode==='direction'?'selected':''}>Постоянное движение (пока удерживается)</option><option value="offset" ${c.movementMode==='offset'?'selected':''}>Смещение на координаты</option><option value="variables" ${c.movementMode==='variables'?'selected':''}>По переменным джойстика</option>`)+select('side','Направление',`<option value="Forward" ${c.side==='Forward'?'selected':''}>Север / вперёд</option><option value="Backward" ${c.side==='Backward'?'selected':''}>Юг / назад</option><option value="Left" ${c.side==='Left'?'selected':''}>Запад / влево</option><option value="Right" ${c.side==='Right'?'selected':''}>Восток / вправо</option><option value="Up" ${c.side==='Up'?'selected':''}>Вверх</option><option value="Down" ${c.side==='Down'?'selected':''}>Вниз</option>`)+input('speed','Скорость (м/с)')+select('variableX','Переменная X джойстика',varOptions)+select('variableY','Переменная Y джойстика',varOptions);
   if (block.type==='Loop') html += input('repeat','Количество повторений');
   if (['Moving','Size','Laser'].includes(block.type)) html += input('x',block.type==='Laser'?'Смещение X':'X')+input('y',block.type==='Laser'?'Смещение Y':'Y')+input('z',block.type==='Laser'?'Смещение Z':'Z');
-  if (block.type==='Laser') html += input('distance','Длина луча')+input('radius','Радиус проверки')+select('variable','Записать результат в',varOptions)+select('side','Направление','<option value="Forward">Вперёд</option><option value="Backward">Назад</option><option value="Left">Влево</option><option value="Right">Вправо</option><option value="Up">Вверх</option><option value="Down">Вниз</option>')+select('stopCondition','Условие остановки','<option value="Hit">При попадании</option><option value="NoHit">Если ничего не найдено</option>');
+  if (block.type==='Laser') html += input('distance','Длина луча')+input('radius','Радиус проверки')+select('variable','Записать результат в',varOptions)+select('side','Направление',`<option value="Forward" ${c.side==='Forward'?'selected':''}>Вперёд</option><option value="Backward" ${c.side==='Backward'?'selected':''}>Назад</option><option value="Left" ${c.side==='Left'?'selected':''}>Влево</option><option value="Right" ${c.side==='Right'?'selected':''}>Вправо</option><option value="Up" ${c.side==='Up'?'selected':''}>Вверх</option><option value="Down" ${c.side==='Down'?'selected':''}>Вниз</option>`)+select('stopCondition','Условие остановки',`<option value="Hit" ${c.stopCondition==='Hit'?'selected':''}>При попадании</option><option value="NoHit" ${c.stopCondition==='NoHit'?'selected':''}>Если ничего не найдено</option>`);
   if (['Number','NumericArray','Yesorno','Transparency','Color'].includes(block.type)) html += input('variable','Имя переменной','text')+input('value','Стартовое значение',block.type==='Color'?'color':'text');
   if (['Moving','Twist','Size','Collision','Physics','Life','Laser','Delete','ChangeColor','ChangeTransparency','ChangeTexture','ChangeModel','Changinganimation','Changesound','Playsound',"Don'tSound",'Pausesound','Jumpup','Squat'].includes(block.type)) html += select('targetObjectId','Целевой объект',block.type==='Physics'?groupOptions:objectOptions);
   if (['Writes','ChangeColor','ChangeTransparency'].includes(block.type)) html += select('targetUIId','UI-элемент',uiOptions);
@@ -2301,7 +2394,7 @@ function zeroBlockFields(block) {
 function zeroPortLayout(block) {
   const isEvent=['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type);
   const isEnd=block.type==='Close',isBranch=['Branching','ForkYesorno'].includes(block.type);
-  const isDataSource=['Joystick','Text','Asset'].includes(block.type);
+  const isDataSource=['Joystick','JoystickMovement','Text','Asset'].includes(block.type);
   return {input:!isEvent&&!isDataSource,outputs:isEnd||isDataSource?[]:isBranch?['yes','no']:['out'],inputLabel:'Вход',outputLabel:'Выход'};
 }
 function zeroDataOutputs(block){
@@ -2338,8 +2431,9 @@ function zeroNodePortTop(block,side,portName){
   const ports=side==='out'?zeroDataOutputs(block):zeroDataInputs(block),index=Math.max(0,ports.findIndex(item=>item.name===portName));
   return 79+index*23;
 }
+function zeroBlockLabel(type) { return type==='JoystickMovement' ? 'Joystick Movement' : type; }
 function zeroBlockIcon(type) {
-  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',Text:'T',Asset:'▧'};
+  const icons={Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',JoystickMovement:'🕹',Text:'T',Asset:'▧'};
   return icons[type]||'◇';
 }
 function renderZeroBoxPicker() {
@@ -2355,7 +2449,7 @@ function zeroHelpText(type) {
     Buttonclicked:'Срабатывает один раз после клика по назначенной кнопке.',
     Buttonpressed:'Срабатывает в момент нажатия кнопки или клавиши.',
     ButtonResting:'Срабатывает после отпускания кнопки или клавиши.',
-    Side:'Выбирает направление для блока Moving.', Speed:'Задаёт скорость движения для блока Moving.', Moving:'Перемещает объект. Режим «Направление» работает непрерывно, пока Buttonpressed удерживается; «Смещение» перемещает на заданные координаты.', Gamespeed:'Ускоряет или замедляет игровое время и физические процессы.', NumericArray:'Создаёт изменяемую числовую переменную для HP, выносливости и других игровых параметров. Значение общее и меняется в реальном времени.',
+    Side:'Выбирает направление для блока Moving.', Speed:'Задаёт скорость движения для блока Moving.', Moving:'Перемещает объект. Режим «Направление» работает непрерывно, пока Buttonpressed удерживается; «Смещение» перемещает на заданные координаты.', JoystickMovement:'Отдельный скрипт непрерывного движения: читает X/Y выбранного экранного джойстика, поворачивает вектор по Y объекта или камеры и перемещает цель с учётом коллизий.', Gamespeed:'Ускоряет или замедляет игровое время и физические процессы.', NumericArray:'Создаёт изменяемую числовую переменную для HP, выносливости и других игровых параметров. Значение общее и меняется в реальном времени.',
     Squat:'Уменьшает высоту коллайдера объекта.', Jumpup:'Поднимает Player по вертикали.', Life:'Записывает состояние жив/мёртв.',
     Number:'Создаёт числовую переменную.', Yesorno:'Создаёт логическую переменную Да/Нет.', Transparency:'Создаёт переменную прозрачности от 0 до 1.', Color:'Создаёт переменную цвета.',
     Size:'Меняет размер объекта по X, Y и Z.', Minus:'Вычитает указанное число из переменной.', Plus:'Прибавляет число к переменной.', Divide:'Делит переменную на указанное число.', Multiply:'Умножает переменную на указанное число.',
@@ -2380,6 +2474,7 @@ function addZeroBoxBlock(type, dropX=null, dropY=null) {
   const block = {id:uid(), type, x:Math.max(0,Number.isFinite(dropX)?dropX:viewX), y:Math.max(0,Number.isFinite(dropY)?dropY:viewY), config:{...ZEROBOX_DEFAULTS}};
   if(type==='Text')block.config.value='Введите текст';
   if(type==='Asset')block.config.assetId='';
+  if(type==='JoystickMovement')Object.assign(block.config,{speed:4,orientation:'object',deadZone:0.08,joystickId:'',targetObjectId:''});
   if (type==='Size') Object.assign(block.config,{x:1,y:1,z:1});
   if (['Number','NumericArray','Yesorno','Transparency','Color'].includes(type)) {
     const dataType = type === 'NumericArray' ? 'NumericArray' : type === 'Number' ? 'Number' : type === 'Yesorno' ? 'Yesorno' : type;
@@ -2466,24 +2561,17 @@ function renderWorkbench() {
     const nodes=box.blocks.map(block=>{
       const ports=zeroPortLayout(block);
       const inputPort=ports.input?`<button class="zero-port input-port" style="top:51px" data-port-side="in" data-port-type="exec" data-port-name="execIn" title="Вход выполнения"><i></i><span>Вход</span></button>`:'';
-      const dataInputs=zeroDataInputs(block).map(port=>`<button class="zero-port input-port data-port" style="top:${zeroNodePortTop(block,'in',port.name)}px" data-port-side="in" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Вход ${escapeAttr(port.label)}"><i></i></button>`).join('');
+      const dataInputs=zeroDataInputs(block).map(port=>`<button class="zero-port input-port data-port" style="top:${zeroNodePortTop(block,'in',port.name)}px" data-port-side="in" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Вход ${escapeAttr(port.label)}"><i></i><span>${escapeHtml(port.label)}</span></button>`).join('');
       const outputPorts=ports.outputs.map(name=>`<button class="zero-port output-port ${name==='yes'?'yes-port':name==='no'?'no-port':''}" style="top:${zeroNodePortTop(block,'out',name==='out'?'execOut':name)}px" data-port-side="out" data-port-type="exec" data-port-name="${name==='out'?'execOut':name}" title="Выход ${name}"><span>${name==='yes'?'Да':name==='no'?'Нет':'Выход'}</span><i></i></button>`).join('');
-      const dataOutputs=zeroDataOutputs(block).map(port=>`<button class="zero-port output-port data-port" style="top:${zeroNodePortTop(block,'out',port.name)}px" data-port-side="out" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Выход ${escapeAttr(port.label)}"><i></i></button>`).join('');
-      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(block.type)}</strong><span class="node-kind">${ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}${dataOutputs}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
+      const dataOutputs=zeroDataOutputs(block).map(port=>`<button class="zero-port output-port data-port" style="top:${zeroNodePortTop(block,'out',port.name)}px" data-port-side="out" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Выход ${escapeAttr(port.label)}"><span>${escapeHtml(port.label)}</span><i></i></button>`).join('');
+      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(zeroBlockLabel(block.type))}</strong><span class="node-kind">${block.type==='Moving'?escapeHtml(({Forward:'Вперёд',Backward:'Назад',Left:'Влево',Right:'Вправо',Up:'Вверх',Down:'Вниз'})[block.config?.side||'Forward']||'Вперёд'):ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}${dataOutputs}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
     }).join('');
     body.innerHTML = `<div class="workbench-grid zero-workbench-grid">
-      <aside class="workbench-sidebar"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||type.toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(type)}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
+      <aside class="workbench-sidebar"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||zeroBlockLabel(type).toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(zeroBlockLabel(type))}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
       <main class="node-canvas zero-node-canvas" id="zero-node-canvas"><div class="zero-node-surface" id="zero-node-surface" style="width:26000px;height:18000px"><svg id="zero-wires" class="zero-wires" width="26000" height="18000" viewBox="0 0 26000 18000" aria-label="Связи ZeroBox"></svg>${nodes||'<div class="zero-empty zero-canvas-empty">Добавь блоки из библиотеки слева, затем размести их на большом поле.</div>'}</div></main>
       <aside class="workbench-properties"><div class="panel-resize-handle resize-zero-right-handle" data-resize="zero-right" title="Изменить ширину свойств"></div><div class="workbench-section-title">СВОЙСТВА ZEROBOX</div><label class="field-label">Название<input class="field-input" id="zerobox-name" value="${escapeAttr(box.name)}" /></label><label class="field-label">Назначить ZeroBox объекту<select class="field-select" id="zerobox-target"><option value="">Не назначен</option>${(activeSceneData().objects||[]).map(e=>`<option value="${e.id}" ${box.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}</select></label><button class="button button-danger button-small" id="delete-zero-selection">Удалить выбранные блоки</button><div class="zero-box-stats">Блоков: ${box.blocks.length}<br>Соединений: ${box.connections.length}</div><div class="modal-note">Порядок выполнения задаётся проводами, а не расположением блоков. Для старых ZeroBox без проводов сохранён запуск сверху вниз.</div><button class="button button-quiet" id="export-zerobox">↓ Экспорт .zbox</button></aside>
     </div>`;
     activeZeroBoxCanvas=$('#zero-node-canvas');
-    $$('#zero-node-canvas .node-card').forEach(card=>{
-      card.querySelectorAll('.node-port-row .input-port.data-port').forEach(port=>{
-        const field=[...card.querySelectorAll('[data-block-field]')].find(input=>input.dataset.blockField===port.dataset.portName);
-        const label=field?.closest('.field-label');if(!label)return;
-        port.classList.add('field-data-port');port.style.removeProperty('top');label.classList.add('has-data-input-port');label.prepend(port);
-      });
-    });
     const surface=$('#zero-node-surface');if(surface)surface.style.zoom=String(zeroZoom);
     $('#zero-zoom-out')?.addEventListener('click',()=>setZeroZoom(zeroZoom*.85));$('#zero-zoom-in')?.addEventListener('click',()=>setZeroZoom(zeroZoom*1.18));$('#zero-zoom-reset')?.addEventListener('click',()=>setZeroZoom(1));
     if(previousScroll){activeZeroBoxCanvas.scrollLeft=previousScroll.left;activeZeroBoxCanvas.scrollTop=previousScroll.top;}
@@ -2504,7 +2592,7 @@ function renderWorkbench() {
       const onWire=!!event.target.closest('.zero-wire-hit');
       const onControl=!!event.target.closest('button,input,select,textarea');
       const backgroundLeftDrag=event.button===0&&!onNode&&!onWire&&!onControl;
-      const panButton=event.button===1||event.button===2||(event.button===0&&(event.shiftKey||event.getModifierState?.(' ')));
+      const panButton=event.button===1||event.button===2||backgroundLeftDrag||(event.button===0&&event.shiftKey);
       if(!panButton||onNode||onWire||onControl)return;
       event.preventDefault();zeroCanvas.setPointerCapture?.(event.pointerId);zeroCanvasPanActive=true;const sx=event.clientX,sy=event.clientY,sl=zeroCanvas.scrollLeft,st=zeroCanvas.scrollTop;zeroCanvas.classList.add('panning');
       const move=e=>{zeroCanvas.scrollLeft=sl-(e.clientX-sx);zeroCanvas.scrollTop=st-(e.clientY-sy);};
@@ -2515,13 +2603,13 @@ function renderWorkbench() {
     zeroCanvas.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('application/x-zeroengine-block')||event.dataTransfer.types.includes('application/x-zeroengine-object'))event.preventDefault();});
     zeroCanvas.addEventListener('drop',event=>{const type=event.dataTransfer.getData('application/x-zeroengine-block');const objectId=event.dataTransfer.getData('application/x-zeroengine-object');if(!type&&!objectId)return;event.preventDefault();const rect=zeroCanvas.getBoundingClientRect();const x=(event.clientX-rect.left+zeroCanvas.scrollLeft)/zeroZoom;const y=(event.clientY-rect.top+zeroCanvas.scrollTop)/zeroZoom;if(type)addZeroBoxBlock(type,x,y);else{const entity=findEntity(objectId);if(!entity)return;const block={id:uid(),type:'Moving',x:Math.max(0,x),y:Math.max(0,y),config:{...ZEROBOX_DEFAULTS,targetObjectId:entity.id,x:0,y:0,z:0}};box.blocks.push(block);selectedBlockId=block.id;selectedBlockIds=new Set([block.id]);renderWorkbench();scheduleSave();toast(`Объект «${entity.name}» добавлен в ZeroBox`, 'success');}});
     $$('[data-node-id]').forEach(card=>card.addEventListener('click',e=>{if(e.target.closest('button,input,select'))return;if(zeroMultiSelectMode||e.ctrlKey||e.metaKey||e.shiftKey){if(selectedBlockIds.has(card.dataset.nodeId))selectedBlockIds.delete(card.dataset.nodeId);else selectedBlockIds.add(card.dataset.nodeId);selectedBlockId=card.dataset.nodeId;}else{selectedBlockId=card.dataset.nodeId;selectedBlockIds=new Set([selectedBlockId]);}renderWorkbench();}));
-    $$('[data-node-drag]').forEach(handle=>handle.addEventListener('pointerdown',event=>{if(event.button!==0||event.target.closest('button'))return;event.preventDefault();event.stopPropagation();event.stopImmediatePropagation?.();const node=box.blocks.find(b=>b.id===handle.dataset.nodeDrag);if(!node)return;if(!selectedBlockIds.has(node.id)){selectedBlockId=node.id;selectedBlockIds=new Set([node.id]);}event.preventDefault();handle.setPointerCapture?.(event.pointerId);const startX=event.clientX,startY=event.clientY,dragIds=selectedBlockIds.size>1&&selectedBlockIds.has(node.id)?[...selectedBlockIds]:[node.id],origins=dragIds.map(id=>{const b=box.blocks.find(x=>x.id===id);return {id,x:b.x||0,y:b.y||0};});const move=e=>{const dx=(e.clientX-startX)/zeroZoom,dy=(e.clientY-startY)/zeroZoom;origins.forEach(origin=>{const b=box.blocks.find(x=>x.id===origin.id);if(!b)return;b.x=Math.max(0,origin.x+dx);b.y=Math.max(0,origin.y+dy);const card=$(`[data-node-id="${b.id}"]`);if(card){card.style.left=`${b.x}px`;card.style.top=`${b.y}px`;}});renderZeroWires(box);};const up=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',up);handle.removeEventListener('pointercancel',up);scheduleSave();};handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',up);handle.addEventListener('pointercancel',up);}));
+    $$('[data-node-drag]').forEach(handle=>handle.addEventListener('pointerdown',event=>{if(event.button!==0||event.target.closest('button'))return;const node=box.blocks.find(b=>b.id===handle.dataset.nodeDrag);if(!node)return;if(!selectedBlockIds.has(node.id)){selectedBlockId=node.id;selectedBlockIds=new Set([node.id]);}event.preventDefault();handle.setPointerCapture?.(event.pointerId);const startX=event.clientX,startY=event.clientY,dragIds=selectedBlockIds.size>1&&selectedBlockIds.has(node.id)?[...selectedBlockIds]:[node.id],origins=dragIds.map(id=>{const b=box.blocks.find(x=>x.id===id);return {id,x:b.x||0,y:b.y||0};});const move=e=>{const dx=(e.clientX-startX)/zeroZoom,dy=(e.clientY-startY)/zeroZoom;origins.forEach(origin=>{const b=box.blocks.find(x=>x.id===origin.id);if(!b)return;b.x=Math.max(0,origin.x+dx);b.y=Math.max(0,origin.y+dy);const card=$(`[data-node-id="${b.id}"]`);if(card){card.style.left=`${b.x}px`;card.style.top=`${b.y}px`;}});renderZeroWires(box);};const up=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',up);handle.removeEventListener('pointercancel',up);scheduleSave();};handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',up);handle.addEventListener('pointercancel',up);}));
     $$('[data-port-side]').forEach(port=>port.addEventListener('click',event=>{event.stopPropagation();const card=port.closest('[data-node-id]');beginZeroWire(card.dataset.nodeId,port.dataset.portSide,port.dataset.portType,port.dataset.portName,port.dataset.portValueType||'');}));
     $$('.zero-wire-hit').forEach(path=>{const remove=event=>{event.preventDefault();event.stopPropagation();selectedConnectionId=path.dataset.connectionId;box.connections=box.connections.filter(c=>c.id!==selectedConnectionId);selectedConnectionId=null;renderWorkbench();scheduleSave();toast('Провод удалён','success');};path.addEventListener('click',remove);path.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')remove(event);});path.addEventListener('contextmenu',remove);});
     $$('[data-node-help]').forEach(button=>button.addEventListener('click',()=>showModal(`<div class="modal-header"><div><span class="panel-kicker">ZEROBOX HELP</span><h2 id="modal-title">${escapeHtml(button.dataset.nodeHelp)}</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><p>${escapeHtml(zeroHelpText(button.dataset.nodeHelp))}</p></div><div class="modal-footer"><button class="button button-primary" data-close-modal>Понятно</button></div>`)));
     $$('[data-node-copy]').forEach(button=>button.addEventListener('click',()=>{selectedBlockIds=new Set([button.dataset.nodeCopy]);selectedBlockId=button.dataset.nodeCopy;copyZeroBlocks();}));
     $$('[data-node-delete]').forEach(button=>button.addEventListener('click',()=>deleteZeroBlock(button.dataset.nodeDelete)));
-    $$('[data-block-field]').forEach(input=>input.addEventListener('change',()=>{const b=box.blocks.find(item=>item.id===input.closest('[data-node-id]').dataset.nodeId);if(!b)return;let val=input.value;if(input.type==='number')val=Number(val);if(input.type==='checkbox')val=input.checked;const key=input.dataset.blockField;const previous=b.config[key];b.config[key]=val;if(key==='variableY')b.config.variableZ=val;if(b.type==='Joystick'&&key==='joystickId'){const joystick=(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[]).find(el=>el.id===val&&el.type==='Joystick')||(currentProject.uiElements||[]).find(el=>el.id===val&&el.type==='Joystick');if(joystick){b.config.variableX=joystick.xVariable||'JoystickX';b.config.variableY=joystick.yVariable||'JoystickY';b.config.variableZ=b.config.variableY;}}if(key==='variable'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const clean=String(val||'Variable').trim().replace(/[^a-zA-Z0-9_А-Яа-я]/g,'_');b.config[key]=clean;box.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.zeroBoxes?.forEach(other=>other.blocks?.forEach(block=>{if(block.config?.variable===previous)block.config.variable=clean;}));}if(key==='value'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const v=currentProject.variables?.find(x=>x.name===b.config.variable);if(v)v.value=val;}scheduleSave();}));
+    $$('[data-block-field]').forEach(input=>input.addEventListener('change',()=>{const b=box.blocks.find(item=>item.id===input.closest('[data-node-id]').dataset.nodeId);if(!b)return;let val=input.value;if(input.type==='number')val=Number(val);if(input.type==='checkbox')val=input.checked;const key=input.dataset.blockField;const previous=b.config[key];b.config[key]=val;if(key==='variableY')b.config.variableZ=val;if(['Joystick','JoystickMovement'].includes(b.type)&&key==='joystickId'){const joystick=[...(currentProject.uiElements||[]),...(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[])].find(el=>el.id===val&&el.type==='Joystick');if(joystick){b.config.variableX=joystick.xVariable||'JoystickX';b.config.variableY=joystick.yVariable||'JoystickY';}}if(key==='variable'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const clean=String(val||'Variable').trim().replace(/[^a-zA-Z0-9_А-Яа-я]/g,'_');b.config[key]=clean;box.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.variables?.forEach(v=>{if(v.name===previous)v.name=clean;});currentProject.zeroBoxes?.forEach(other=>other.blocks?.forEach(block=>{if(block.config?.variable===previous)block.config.variable=clean;}));}if(key==='value'&&['Number','NumericArray','Yesorno','Transparency','Color'].includes(b.type)){const v=currentProject.variables?.find(x=>x.name===b.config.variable);if(v)v.value=val;}if(b.type==='Moving'&&key==='side'){b.config.side=String(val||'Forward');}scheduleSave();if(input.tagName==='SELECT'||key==='side')renderWorkbench();}));
     $('#zerobox-name').addEventListener('change',e=>{box.name=e.target.value.trim()||'ZeroBox';$('#workbench-title').textContent=`${box.name} — ZeroBox`;renderAssetPanel();scheduleSave();});
     $('#zerobox-target').addEventListener('change',e=>{box.targetObjectId=e.target.value;scheduleSave();});
     $('#add-zero-variable').addEventListener('click',createCustomVariable);
@@ -2559,7 +2647,7 @@ function defaultUIElement(type) {
 }
 function addUIElement(type) {
   const el=defaultUIElement(type);currentProject.uiElements||=[];currentProject.uiElements.push(el);
-  if(type==='Joystick'){currentProject.variables||=[];for(const name of ['JoystickX','JoystickY'])if(!currentProject.variables.some(v=>v.name===name))currentProject.variables.push({id:uid(),name,type:'Number',value:0,system:true});}
+  if(type==='Joystick'){currentProject.variables||=[];const existing=[...new Map([...(currentProject.uiElements||[]),...(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[])].filter(item=>item.type==='Joystick').map(item=>[item.id,item])).values()];let index=existing.length;let prefix=index===1?'Joystick':`Joystick${index}`;while(currentProject.variables.some(v=>v.name===`${prefix}X`||v.name===`${prefix}Y`)){index++;prefix=`Joystick${index}`;}el.xVariable=`${prefix}X`;el.yVariable=`${prefix}Y`;for(const name of [el.xVariable,el.yVariable])if(!currentProject.variables.some(v=>v.name===name))currentProject.variables.push({id:uid(),name,type:'Number',value:0,system:true});}
   selectedUIElementId=el.id;renderWorkbench();scheduleSave();
 }
 function renderUIStage(host, design=false) {
@@ -2574,7 +2662,7 @@ function renderUIStage(host, design=false) {
     else if(el.type==='Slider'){const input=document.createElement('input');input.type='range';input.min='0';input.max=String(el.max||100);input.style.accentColor=el.color||'#a5ef4c';const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);input.value=String(v? v.value : el.value||0);if(!design)input.addEventListener('input',()=>{el.value=Number(input.value);if(v)v.value=el.value;scheduleSave();});node.appendChild(input);}
     else if(el.type==='Background'){node.style.background=el.color||'#182b35';node.style.borderRadius='5px';}
     else if(el.type==='CameraControlArea'){node.classList.add('camera-control-area');node.textContent=design?'◉ ОБЛАСТЬ УПРАВЛЕНИЯ КАМЕРОЙ':'';}
-    else if(el.type==='Joystick'){node.classList.add('joystick-widget');const base=document.createElement('div');base.className='joystick-base';const knob=document.createElement('div');knob.className='joystick-knob';base.appendChild(knob);node.appendChild(base);if(!design){let pointerId=null;const update=e=>{const r=base.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,rad=Math.max(1,Math.min(r.width,r.height)*.34);const dx=e.clientX-cx,dy=e.clientY-cy,len=Math.hypot(dx,dy),k=len>rad?rad/len:1,nx=dx*k,ny=dy*k;knob.style.transform=`translate(${nx}px,${ny}px)`;const xv=(currentProject.variables||[]).find(v=>v.name===(el.xVariable||'JoystickX'));const yv=(currentProject.variables||[]).find(v=>v.name===(el.yVariable||'JoystickY'));if(xv)xv.value=THREE.MathUtils.clamp(nx/rad,-1,1);if(yv)yv.value=THREE.MathUtils.clamp(-ny/rad,-1,1);};const end=()=>{pointerId=null;knob.style.transform='translate(0,0)';for(const name of [el.xVariable||'JoystickX',el.yVariable||'JoystickY']){const v=(currentProject.variables||[]).find(x=>x.name===name);if(v)v.value=0;}};base.addEventListener('pointerdown',e=>{pointerId=e.pointerId;base.setPointerCapture(e.pointerId);update(e);e.preventDefault();});base.addEventListener('pointermove',e=>{if(pointerId===e.pointerId)update(e);});base.addEventListener('pointerup',end);base.addEventListener('pointercancel',end);}}
+    else if(el.type==='Joystick'){node.classList.add('joystick-widget');const base=document.createElement('div');base.className='joystick-base';const knob=document.createElement('div');knob.className='joystick-knob';base.appendChild(knob);node.appendChild(base);if(!design){let pointerId=null;const setAxes=(x,y)=>{const xv=(currentProject.variables||[]).find(v=>v.name===(el.xVariable||'JoystickX'));const yv=(currentProject.variables||[]).find(v=>v.name===(el.yVariable||'JoystickY'));if(xv)xv.value=x;if(yv)yv.value=y;};const update=e=>{const r=base.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,travel=Math.max(1,Math.min(r.width,r.height)*.29);let dx=e.clientX-cx,dy=e.clientY-cy;const len=Math.hypot(dx,dy);if(len>travel){const k=travel/len;dx*=k;dy*=k;}knob.style.transform=`translate3d(${dx}px,${dy}px,0)`;setAxes(THREE.MathUtils.clamp(dx/travel,-1,1),THREE.MathUtils.clamp(-dy/travel,-1,1));};const end=()=>{if(pointerId===null)return;pointerId=null;knob.style.transform='translate3d(0,0,0)';setAxes(0,0);base.classList.remove('active');};base.addEventListener('pointerdown',e=>{if(pointerId!==null)return;pointerId=e.pointerId;base.classList.add('active');base.setPointerCapture?.(e.pointerId);update(e);e.preventDefault();});base.addEventListener('pointermove',e=>{if(pointerId===e.pointerId)update(e);});base.addEventListener('pointerup',end);base.addEventListener('pointercancel',end);base.addEventListener('lostpointercapture',end);}}
     if(design){
       if(selectedUIElementId===el.id)['nw','n','ne','e','se','s','sw','w'].forEach(direction=>{const handle=document.createElement('span');handle.className=`ui-resize-handle ui-resize-${direction}`;handle.dataset.uiResize=direction;handle.setAttribute('aria-label',`Изменить размер ${direction}`);node.appendChild(handle);});
     } else if(el.type==='Button'||el.type==='ScreenButton'){
@@ -2639,25 +2727,11 @@ function renderUIProperties() {
   $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
 }
 function renderGameUI() { const layer=$('#game-ui-layer');if(layer)renderUIStage(layer,false); }
-
-function normalizeKeyBinding(eventOrKey,includeModifiers=false){
-  const map={' ':'space','control':'ctrl','ctrl':'ctrl','shift':'shift','alt':'alt','meta':'meta','escape':'escape','arrowup':'arrowup','arrowdown':'arrowdown','arrowleft':'arrowleft','arrowright':'arrowright','enter':'enter','tab':'tab','backspace':'backspace','delete':'delete'};
-  if(typeof eventOrKey==='string')return String(eventOrKey).toLowerCase().split('+').map(part=>map[part]||part).filter(Boolean).join('+');
-  const raw=String(eventOrKey?.key||'').toLowerCase(),key=map[raw]||raw;
-  if(!includeModifiers||['ctrl','shift','alt','meta'].includes(key))return key;
-  const modifiers=[];if(eventOrKey?.ctrlKey)modifiers.push('ctrl');if(eventOrKey?.altKey)modifiers.push('alt');if(eventOrKey?.shiftKey)modifiers.push('shift');if(eventOrKey?.metaKey)modifiers.push('meta');
-  return [...modifiers,key].filter(Boolean).join('+');
-}
-function displayKeyBinding(event){
-  const labels={space:'Space',ctrl:'Ctrl',shift:'Shift',alt:'Alt',meta:'Meta',escape:'Esc',arrowup:'↑',arrowdown:'↓',arrowleft:'←',arrowright:'→',enter:'Enter',tab:'Tab',backspace:'Backspace',delete:'Delete'};
-  return normalizeKeyBinding(event,true).split('+').map(key=>labels[key]||(key.length===1?key.toUpperCase():key)).join(' + ');
-}
-
 function triggerUIKey(event) {
-  const key=normalizeKeyBinding(event,true);
+  const key=event.key.toLowerCase();
   const activeScreen=currentProject?.uiScreens?.find(screen=>screen.id===currentProject.activeUIScreenId);
   for(const el of (activeScreen?.elements||currentProject?.uiElements||[])){
-    if(el.type!=='Button'||!el.key||normalizeKeyBinding(el.key,true)!==key)continue;
+    if(el.type!=='Button'||!el.key||el.key.toLowerCase()!==key)continue;
     if(el.sticky){
       el.pressed=!el.pressed;
       if(el.pressed){heldButtonIds.add(el.id);dispatchZeroBoxEvent('Buttonpressed',el.id,1/60);}
@@ -2668,19 +2742,20 @@ function triggerUIKey(event) {
   }
   if(isPlaying)renderGameUI();
 }
-function releaseZeroBoxBinding(key){
-  if(!key)return;heldKeys.delete(key);
+function triggerZeroBoxKeyUp(event) {
+  const key=event.key.toLowerCase();heldKeys.delete(key);
   const keyScreen=currentProject?.uiScreens?.find(screen=>screen.id===currentProject.activeUIScreenId);
   for(const el of (keyScreen?.elements||currentProject?.uiElements||[])){
-    if(el.type==='Button'&&normalizeKeyBinding(el.key,true)===key&&!el.sticky){el.pressed=false;heldButtonIds.delete(el.id);dispatchZeroBoxEvent('ButtonResting',el.id);dispatchZeroBoxEvent('Buttonclicked',el.id);}
+    if(el.type==='Button'&&el.key?.toLowerCase()===key&&!el.sticky){
+      el.pressed=false;heldButtonIds.delete(el.id);
+      dispatchZeroBoxEvent('ButtonResting',el.id);
+      dispatchZeroBoxEvent('Buttonclicked',el.id);
+    }
   }
-  const keyedButtons=(currentProject?.uiElements||[]).filter(el=>el.type==='Button'&&normalizeKeyBinding(el.key,true)===key);
-  for(const box of currentProject?.zeroBoxes||[]){const events=box.blocks.filter(b=>['ButtonResting','Buttonclicked'].includes(b.type)&&normalizeKeyBinding(b.config?.key,true)===key);for(const ev of events){const duplicate=keyedButtons.some(el=>!ev.config.buttonId||el.id===ev.config.buttonId);if(!duplicate)runZeroBox(box,ev.type,ev.config.buttonId||'',1,ev.id);}}
-}
-function triggerZeroBoxKeyUp(event){
-  const code=event.code||event.key,binding=activeKeyBindings.get(code)||normalizeKeyBinding(event,true);activeKeyBindings.delete(code);releaseZeroBoxBinding(binding);
-  const modifier=normalizeKeyBinding(event);if(['ctrl','shift','alt','meta'].includes(modifier)){
-    for(const [physical,chord] of [...activeKeyBindings])if(chord.split('+').includes(modifier)){activeKeyBindings.delete(physical);releaseZeroBoxBinding(chord);}
+  const keyedButtons=(currentProject?.uiElements||[]).filter(el=>el.type==='Button'&&el.key?.toLowerCase()===key);
+  for(const box of currentProject?.zeroBoxes||[]){
+    const events=box.blocks.filter(b=>['ButtonResting','Buttonclicked'].includes(b.type)&&b.config?.key?.toLowerCase()===key);
+    for(const ev of events){const duplicate=keyedButtons.some(el=>!ev.config.buttonId||el.id===ev.config.buttonId);if(!duplicate)runZeroBox(box,ev.type,ev.config.buttonId||'',1,ev.id);}
   }
   if(isPlaying)renderGameUI();
 }
@@ -2692,11 +2767,17 @@ function dispatchZeroBoxEvent(eventName, uiElementId, deltaSeconds=1/60) {
   }
   if(el?.zeroBoxId && eventName==='Buttonclicked'){const box=currentProject.zeroBoxes.find(b=>b.id===el.zeroBoxId);const hasButtonEvents=box?.blocks.some(b=>['Buttonclicked','Buttonpressed','ButtonResting'].includes(b.type));if(box&&!hasButtonEvents)runZeroBox(box,'manual');}
 }
-function triggerZeroBoxKey(event){
-  if(!currentProject)return;const key=normalizeKeyBinding(event,true),code=event.code||event.key;
-  if(heldKeys.has(key))return;heldKeys.add(key);activeKeyBindings.set(code,key);triggerUIKey(event);
-  const keyedButtons=(currentProject.uiElements||[]).filter(el=>el.type==='Button'&&normalizeKeyBinding(el.key,true)===key);
-  for(const box of currentProject.zeroBoxes||[]){const matches=box.blocks.filter(b=>b.type==='Buttonpressed'&&b.config?.key&&normalizeKeyBinding(b.config.key,true)===key);for(const ev of matches){const duplicate=keyedButtons.some(el=>!ev.config.buttonId||el.id===ev.config.buttonId);if(!duplicate)runZeroBox(box,'Buttonpressed',ev.config.buttonId||'',1/60,ev.id);}}
+function triggerZeroBoxKey(event) {
+  if(!currentProject)return;
+  const key=event.key.toLowerCase();
+  if(heldKeys.has(key))return;
+  heldKeys.add(key);
+  triggerUIKey(event);
+  const keyedButtons=(currentProject.uiElements||[]).filter(el=>el.type==='Button'&&el.key?.toLowerCase()===key);
+  for(const box of currentProject.zeroBoxes||[]){
+    const matches=box.blocks.filter(b=>b.type==='Buttonpressed'&&b.config?.key&&b.config.key.toLowerCase()===key);
+    for(const ev of matches){const duplicate=keyedButtons.some(el=>!ev.config.buttonId||el.id===ev.config.buttonId);if(!duplicate)runZeroBox(box,'Buttonpressed',ev.config.buttonId||'',1/60,ev.id);}
+  }
 }
 function processHeldZeroBoxes(deltaSeconds) {
   if(!isPlaying||!currentProject)return;
@@ -2706,18 +2787,31 @@ function processHeldZeroBoxes(deltaSeconds) {
     if(!el || (!el.pressed&&!el.sticky)){heldButtonIds.delete(buttonId);continue;}
     dispatchZeroBoxEvent('Buttonpressed',buttonId,dt);
   }
-  const keyedButtons=(currentProject.uiElements||[]).filter(el=>el.type==='Button'&&el.key&&heldKeys.has(normalizeKeyBinding(el.key,true)));
+  const keyedButtons=(currentProject.uiElements||[]).filter(el=>el.type==='Button'&&el.key&&heldKeys.has(el.key.toLowerCase()));
   for(const key of heldKeys){
     for(const box of currentProject.zeroBoxes||[]){
-      const events=box.blocks.filter(b=>b.type==='Buttonpressed'&&normalizeKeyBinding(b.config?.key,true)===key);
+      const events=box.blocks.filter(b=>b.type==='Buttonpressed'&&b.config?.key?.toLowerCase()===key);
       for(const ev of events){const duplicate=keyedButtons.some(el=>!ev.config.buttonId||el.id===ev.config.buttonId);if(!duplicate)runZeroBox(box,'Buttonpressed',ev.config.buttonId||'',dt,ev.id);}
     }
   }
-  const joystickVariables=new Set((currentProject.uiElements||[]).filter(el=>el.type==='Joystick').flatMap(el=>[el.xVariable||'JoystickX',el.yVariable||'JoystickY']));
+  const activeJoysticks=(currentProject.uiElements||[]).filter(el=>el.type==='Joystick');
+  const joystickVariables=new Set(activeJoysticks.flatMap(el=>[el.xVariable||'JoystickX',el.yVariable||'JoystickY']));
   const joystickActive=(currentProject.variables||[]).some(v=>joystickVariables.has(v.name)&&Math.abs(Number(v.value)||0)>.02);
   if(joystickActive)for(const box of currentProject.zeroBoxes||[]){
     const movingNodes=box.blocks.filter(node=>node.type==='Moving'&&(node.config?.movementMode==='variables'||(box.connections||[]).some(link=>link.type==='data'&&['x','y'].includes(link.to?.port)&&link.to?.nodeId===node.id&&box.blocks.some(source=>source.id===link.from?.nodeId&&source.type==='Joystick'))));
     movingNodes.forEach(node=>runZeroBox(box,'manual','',dt,node.id));
+  }
+  // Dedicated Joystick Movement script: it runs every frame and does not need an execution wire.
+  for(const box of currentProject.zeroBoxes||[])for(const script of (box.blocks||[]).filter(node=>node.type==='JoystickMovement')){
+    const cfg=script.config||{};const joystick=cfg.joystickId?activeJoysticks.find(el=>el.id===cfg.joystickId):activeJoysticks[0];if(!joystick)continue;
+    const xName=joystick.xVariable||cfg.variableX||'JoystickX',yName=joystick.yVariable||cfg.variableY||'JoystickY';
+    const x=Number((currentProject.variables||[]).find(v=>v.name===xName)?.value)||0,y=Number((currentProject.variables||[]).find(v=>v.name===yName)?.value)||0;
+    if(Math.hypot(x,y)<=Math.max(0,Math.min(.5,Number(cfg.deadZone??.08)||0)))continue;
+    const objects=activeSceneData()?.objects||[];const target=objects.find(entity=>entity.id===cfg.targetObjectId)||objects.find(entity=>entity.type==='player')||objects[0];if(!target)continue;
+    const yaw=cfg.orientation==='world'?0:cfg.orientation==='camera'?previewYaw:target.type==='player'?THREE.MathUtils.degToRad(Number(target.rotation?.[1])||0):THREE.MathUtils.degToRad(Number(target.rotation?.[1])||0);
+    const object=sceneObjects.get(target.id);if(!object)continue;
+    const moved=joystickMovementStep({entity:target,x,y,speed:Math.max(0,Number(cfg.speed)||4),deltaSeconds:dt,yawRadians:yaw,deadZone:Math.max(0,Math.min(.5,Number(cfg.deadZone??.08)||0)),moveEntityWithCollisions});
+    if((Math.abs(moved[0])+Math.abs(moved[2]))>.000001&&target.type==='player'&&previewCamera)syncPreviewCameraToPlayer();
   }
 }
 function targetEntityForBlock(block) {
@@ -2738,7 +2832,7 @@ function resolveZeroDataOutput(source,portName,box,seen=new Set()){
     const variableName=portName==='x'?(config.variableX||joystick?.xVariable||'JoystickX'):(config.variableY||config.variableZ||joystick?.yVariable||'JoystickY');
     return Number((currentProject.variables||[]).find(v=>v.name===variableName)?.value)||0;
   }
-  if(['Number','NumericArray','Transparency'].includes(source.type)){const raw=(currentProject.variables||[]).find(v=>v.name===config.variable)?.value??config.value??0;return Number(raw)||0;}
+  if(['Number','NumericArray','Transparency'].includes(source.type))return (currentProject.variables||[]).find(v=>v.name===config.variable)?.value??config.value??0;
   if(source.type==='Side')return config.side||'Forward';
   if(source.type==='Speed'){const incoming=zeroDataInputsForBlock(box,source,seen);return Number(incoming.amount??config.amount??config.speed)||0;}
   if(source.type==='Yesorno')return (currentProject.variables||[]).find(v=>v.name===config.variable)?.value??(config.value==='true');
@@ -2776,9 +2870,9 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     current=eventBlockId;
   } else if(isGraph) {
     const incoming=new Set(connections.filter(c=>(c.type||'exec')==='exec').map(c=>c.to?.nodeId));
-    const dataSources=new Set(['Joystick','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset']);
+    const dataSources=new Set(['Joystick','JoystickMovement','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset']);
     current=blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type)&&!dataSources.has(b.type))?.id||blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type))?.id||null;
-  } else { const first=blocks.find(b=>!['Joystick','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset'].includes(b.type));current=first?.id||blocks[0]?.id||null; }
+  } else { const first=blocks.find(b=>!['Joystick','JoystickMovement','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset'].includes(b.type));current=first?.id||blocks[0]?.id||null; }
   const visited=new Map();
   while(current&&byId.has(current)&&executed<250){
     const {b,i}=byId.get(current),c={...(b.config||{})},dataInputs=zeroDataInputsForBlock(box,b),entity=targetEntityForBlock(b),obj=entity&&sceneObjects.get(entity.id);
@@ -2811,7 +2905,7 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
       const v=getVar(c.variable||'Value');const testValue=c.value!==undefined?c.value:v?.value;const pass=String(testValue)==='true'||Number(testValue)>0;
       current=isGraph?outgoing(b.id,pass?'yes':'no'):(blocks[i+(pass?1:2)]?.id||null);continue;
     }
-    else if(entity&&obj&&b.type==='Moving'){const movementConfig={...c,side:movingSideSet?movingSide:(c.side||'Forward'),speed:movingSpeedSet?movingSpeed:(c.dataSpeed!==undefined?Number(c.dataSpeed):(Number(c.speed)||1)),deltaSeconds};movementConfig.variableY=movementConfig.variableY||movementConfig.variableZ;executeZeroBoxAction({...b,config:movementConfig},entity,obj);}
+    else if(entity&&obj&&b.type==='Moving'){const movementConfig={...c,side:movingSideSet?movingSide:(c.side||'Forward'),speed:c.dataSpeed!==undefined?Number(c.dataSpeed):(movingSpeedSet?movingSpeed:(Number(c.speed)||movingSpeed)),deltaSeconds};movementConfig.variableY=movementConfig.variableY||movementConfig.variableZ;executeZeroBoxAction({...b,config:movementConfig},entity,obj);}
     else if(entity&&obj)executeZeroBoxAction(b,entity,obj);
     current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);
   }
@@ -2844,7 +2938,7 @@ function executeZeroBoxAction(block,entity=null,obj=null) {
     let v=[0,0,0];
     if(movementMode==='variables'){
       const vx=c.dataX!==undefined?Number(c.dataX):(Number((currentProject.variables||[]).find(x=>x.name===c.variableX)?.value)||0);
-      const vz=c.dataY!==undefined?Number(c.dataY):(c.dataZ!==undefined?Number(c.dataZ):(Number((currentProject.variables||[]).find(x=>x.name===(c.variableY||c.variableZ))?.value)||0));
+      const vz=c.dataY!==undefined?Number(c.dataY):(Number((currentProject.variables||[]).find(x=>x.name===(c.variableY||c.variableZ))?.value)||0);
       const dir=new THREE.Vector3(vx,0,-vz).clampLength(0,1);
       if(entity.type==='player')dir.applyAxisAngle(new THREE.Vector3(0,1,0),previewYaw);
       v=dir.toArray().map(n=>n*speed*dt);
@@ -2917,7 +3011,7 @@ function focusSelectedObject() {
 // ---------- Zero Model Studio ----------
 async function openModelStudioProjectPicker(){
   let projects=[];
-  try{projects=(await getAllProjects()).filter(project=>project.projectKind==='model').sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));}
+  try{projects=(await getAllProjects()).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));}
   catch(error){console.error(error);toast('Не удалось прочитать список проектов','error');return;}
   const projectRows=projects.map(project=>`<div class="model-project-choice-row"><button type="button" class="model-project-choice" data-model-project="${escapeAttr(project.id)}"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.description||'Без описания')}</small></button><button type="button" class="model-project-delete" data-delete-model-project="${escapeAttr(project.id)}" title="Удалить проект" aria-label="Удалить проект ${escapeAttr(project.name)}">×</button></div>`).join('');
   showModal(`<div class="modal-header"><div><span class="panel-kicker">ZERO MODEL STUDIO</span><h2 id="modal-title">3D-моделирование</h2><p>Выбери проект, в который будет сохранена готовая модель.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><div class="model-project-choices">${projectRows||'<div class="modal-note">Пока нет проектов. Создай проект прямо здесь, чтобы начать моделирование.</div>'}</div><button type="button" class="button button-primary" id="model-create-project">＋ Создать проект</button></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button></div>`);
@@ -2937,7 +3031,7 @@ async function openModelStudioProjectPicker(){
 function openModelStudioCreateProjectForm(){
   showModal(`<div class="modal-header"><div><span class="panel-kicker">NEW MODEL WORKSPACE</span><h2 id="modal-title">Новый проект для модели</h2><p>Модель будет сохранена в этом проекте и попадёт в его ZIP-архив.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="model-create-project-form"><div class="modal-body"><label class="field-label">Название проекта<input class="field-input" id="model-new-project-name" maxlength="48" placeholder="Например, My Character" required></label><label class="field-label">Описание<textarea class="field-textarea" id="model-new-project-description" maxlength="240" placeholder="Необязательно"></textarea></label></div><div class="modal-footer"><button type="button" class="button button-quiet" id="model-create-project-cancel">Назад</button><button class="button button-primary" type="submit">Создать и открыть</button></div></form>`);
   $('#model-create-project-cancel').addEventListener('click',openModelStudioProjectPicker);
-  $('#model-create-project-form').addEventListener('submit',async event=>{event.preventDefault();const name=$('#model-new-project-name').value.trim();if(!name)return;const project=makeProject(name,$('#model-new-project-description').value,'model');try{await putProject(project);closeModal();await enterModelStudio(project);}catch(error){console.error(error);toast('Не удалось создать проект','error');}});
+  $('#model-create-project-form').addEventListener('submit',async event=>{event.preventDefault();const name=$('#model-new-project-name').value.trim();if(!name)return;const project=makeProject(name,$('#model-new-project-description').value);try{await putProject(project);closeModal();await enterModelStudio(project);}catch(error){console.error(error);toast('Не удалось создать проект','error');}});
 }
 async function enterModelStudio(project){
   currentProject=normalizeProject(project);selectedId=null;selectedIds=new Set();releaseObjectUrls();
@@ -2953,12 +3047,12 @@ function openModelStudio(){
     r.renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});r.renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
     r.scene=new THREE.Scene();r.scene.background=new THREE.Color('#202326');
     r.camera=new THREE.PerspectiveCamera(50,1,.01,3000);r.camera.position.set(5,4,6);r.camera.lookAt(0,0,0);
-    r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;r.orbit.enablePan=true;r.orbit.target.set(0,0,0);
+    r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;r.orbit.enablePan=true;r.orbit.minDistance=.2;r.orbit.maxDistance=2000;r.orbit.minPolarAngle=.0001;r.orbit.maxPolarAngle=Math.PI-.0001;r.orbit.target.set(0,0,0);
     if(r.orbit.touches&&THREE.TOUCH){r.orbit.touches.ONE=THREE.TOUCH.ROTATE;r.orbit.touches.TWO=THREE.TOUCH.DOLLY_PAN;}
     r.orbit.rotateSpeed=1.05;r.orbit.zoomSpeed=1.1;r.orbit.panSpeed=0.9;
     r.scene.add(new THREE.HemisphereLight(0xffffff,0x555b65,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,5);r.scene.add(key);
     r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);r.scene.add(new THREE.GridHelper(200,200,0x555b5b,0x343a3d));
-    r.transform=new TransformControls(r.camera,canvas);r.transform.setSize((window.matchMedia?.('(pointer: coarse)').matches)?1.6:1.15);
+    r.transform=new TransformControls(r.camera,canvas);r.transform.setSize((window.matchMedia?.('(max-width: 850px)').matches||window.matchMedia?.('(pointer: coarse)').matches)?0.82:1.15);
     r.componentPivot=new THREE.Object3D();r.scene.add(r.componentPivot);
     r.transform.addEventListener('dragging-changed',event=>{
       r.orbit.enabled=!event.value;
@@ -2977,26 +3071,23 @@ function openModelStudio(){
     if(r.transformHelper?.isObject3D)r.scene.add(r.transformHelper);
     r.raycaster=new THREE.Raycaster();r.pointer=new THREE.Vector2();
     canvas.addEventListener('pointerdown',selectModelObject);
-    canvas.addEventListener('dblclick',focusModelObjectAtEvent);
-    const resize=()=>{const box=canvas.getBoundingClientRect();if(!box.width||!box.height)return;r.renderer.setSize(box.width,box.height,false);r.camera.aspect=box.width/box.height;r.camera.updateProjectionMatrix();};
-    r.resize=resize;window.addEventListener('resize',resize);
+    const resize=()=>{const box=$('#model-studio').querySelector('.model-viewport').getBoundingClientRect();if(!box.width||!box.height)return;r.renderer.setSize(Math.max(1,Math.floor(box.width)),Math.max(1,Math.floor(box.height)),false);r.camera.aspect=box.width/box.height;r.camera.updateProjectionMatrix();r.transform?.setSize((window.matchMedia?.('(max-width: 850px)').matches||window.matchMedia?.('(pointer: coarse)').matches)?0.82:1.15);};
+    r.resize=resize;window.addEventListener('resize',resize);window.visualViewport?.addEventListener('resize',resize);
     if(typeof ResizeObserver!=='undefined'){r.resizeObserver=new ResizeObserver(()=>resize());r.resizeObserver.observe($('#model-studio').querySelector('.model-studio-layout'));r.resizeObserver.observe(canvas);}
     const tick=()=>{if($('#model-studio').classList.contains('hidden'))return;r.raf=requestAnimationFrame(tick);r.orbit.update();r.renderer.render(r.scene,r.camera);};r.tick=tick;
   }
   if(r.projectId!==currentProject.id){
-    r.transform.detach();if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
+    clearModelCreationPreview();r.historyLimited=false;r.transform.detach();if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
     for(const child of [...r.root.children]){r.root.remove(child);disposeModelNode(child);}
-    r.selected=null;r.componentTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
+    r.selected=null;r.selectedObjects.clear();clearModelTopologyOverlay();r.componentTarget=null;r.activeTool=null;r.creationPoints=[];r.creationTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
     $('#model-name').value='New Model';$('#model-paint-panel').classList.add('hidden');
     $('#model-selection-info').textContent='Объект не выбран';
   }
   if(!r.history.length)r.history.push([]);
-  try{r.mode=localStorage.getItem('zeroengine-model-edit-mode')||r.mode;r.transformTool=localStorage.getItem('zeroengine-model-transform-tool')||r.transformTool; if(!['object','vertex','edge','face'].includes(r.mode))r.mode='object'; if(!['move','rotate','scale','move-plane','scale-uniform'].includes(r.transformTool))r.transformTool='move';}catch{}
-  syncModelTransformToolButtons();$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===r.mode));
   r.resize();r.orbit.update();cancelAnimationFrame(r.raf);r.tick();renderModelObjectList();renderModelFields();setModelMobilePanel('viewport');requestAnimationFrame(()=>r.resize?.());
 }
 async function closeModelStudio(){
-  if(modelStudio.transform)modelStudio.transform.detach();cancelAnimationFrame(modelStudio.raf);
+  clearModelCreationPreview();clearModelTopologyOverlay();if(modelStudio.transform)modelStudio.transform.detach();cancelAnimationFrame(modelStudio.raf);
   if(currentProject)await saveProject(false);
   $('#model-studio').classList.add('hidden');$('#home-screen').classList.remove('hidden');$('#editor-screen').classList.add('hidden');
   currentProject=null;releaseObjectUrls();renderProjectList();
@@ -3016,18 +3107,34 @@ function focusModelObject(object){
   const distance=Math.max(.05,size*1.8);modelStudio.orbit.target.copy(center);modelStudio.camera.position.copy(center).add(direction.multiplyScalar(distance));
   modelStudio.camera.near=Math.max(.005,distance/2000);modelStudio.camera.far=Math.max(3000,distance*30);modelStudio.camera.updateProjectionMatrix();modelStudio.orbit.update();
 }
-function focusModelObjectAtEvent(event){
-  const r=modelStudio,canvas=$('#model-canvas');if(!r.root||!canvas)return;
-  const rect=canvas.getBoundingClientRect();r.pointer.set((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height)*2+1);
-  r.root.updateMatrixWorld(true);r.raycaster.setFromCamera(r.pointer,r.camera);
-  const hit=r.raycaster.intersectObjects(r.root.children,true).find(item=>item.object.isMesh&&!item.object.userData.reference);
-  if(!hit)return;let object=hit.object;while(object.parent&&object.parent!==r.root)object=object.parent;selectModelMesh(object);focusModelObject(object);
+function modelGeometry(index){
+  switch(index){
+    case 1:return new THREE.SphereGeometry(.75,32,24);
+    case 2:{const g=new THREE.PlaneGeometry(2,2,1,1);g.rotateX(-Math.PI/2);return g;}
+    case 3:return new THREE.CylinderGeometry(.65,.65,1.4,32);
+    case 4:return new THREE.ConeGeometry(.75,1.5,32);
+    case 5:return new THREE.CapsuleGeometry(.45,.8,6,16);
+    case 6:return new THREE.TorusGeometry(.7,.22,16,48);
+    case 7:return new THREE.TorusKnotGeometry(.55,.17,100,16);
+    case 8:return new THREE.IcosahedronGeometry(.8,1);
+    case 10:{const g=new THREE.CircleGeometry(.8,48);g.rotateX(-Math.PI/2);return g;}
+    case 11:{const g=new THREE.RingGeometry(.42,.8,48);g.rotateX(-Math.PI/2);return g;}
+    case 12:return new THREE.ConeGeometry(.8,1.4,4,1);
+    case 13:return new THREE.CylinderGeometry(.75,.75,1.3,6,1);
+    case 14:return new THREE.OctahedronGeometry(.85,0);
+    case 15:return new THREE.DodecahedronGeometry(.82,0);
+    case 16:return new THREE.TetrahedronGeometry(.9,0);
+    case 17:{const curve=new THREE.CatmullRomCurve3([new THREE.Vector3(0,-.8,0),new THREE.Vector3(-.5,-.2,0),new THREE.Vector3(.45,.2,0),new THREE.Vector3(0,.8,0)]);return new THREE.TubeGeometry(curve,48,.12,10,false);}
+    case 18:return new THREE.TorusKnotGeometry(.48,.11,160,12,2,5);
+    case 19:{const g=new THREE.BufferGeometry();const v=[-.8,-.55,-.65,.8,-.55,-.65,.8,-.55,.65,-.8,-.55,.65,-.8,.45,-.65,.8,.45,-.65];const ids=[0,2,1,0,3,2,0,1,5,0,5,4,1,2,5,2,3,4,2,4,5,3,0,4];g.setAttribute('position',new THREE.Float32BufferAttribute(v,3));g.setIndex(ids);g.computeVertexNormals();return g;}
+    default:return new THREE.BoxGeometry(1.4,1.4,1.4);
+  }
 }
-function modelGeometry(index){switch(index){case 1:return new THREE.SphereGeometry(.75,32,24);case 2:return new THREE.PlaneGeometry(2,2,1,1);case 3:return new THREE.CylinderGeometry(.65,.65,1.4,32);case 4:return new THREE.ConeGeometry(.75,1.5,32);case 5:return new THREE.CapsuleGeometry(.45,.8,6,16);case 6:return new THREE.TorusGeometry(.7,.22,16,48);case 7:return new THREE.TorusKnotGeometry(.55,.17,100,16);case 8:return new THREE.IcosahedronGeometry(.8,1);case 9:return new THREE.BoxGeometry(1,1,1);default:return new THREE.BoxGeometry(1.4,1.4,1.4);}}
 function addModelPrimitive(index){
-  if(index<0||index>=MODEL_PRIMITIVES.length)return;
-  const mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72,metalness:0}));
-  mesh.name=MODEL_PRIMITIVES[index];mesh.userData.modelName=mesh.name;mesh.position.x=modelStudio.root.children.filter(child=>!child.userData.reference).length*1.65;mesh.traverse(n=>{n.castShadow=true;n.receiveShadow=true;});modelStudio.root.add(mesh);selectModelMesh(mesh);focusModelObject(mesh);pushModelHistory();renderModelObjectList();
+  const names=MODEL_PRIMITIVES;let mesh;
+  if(index===9){mesh=new THREE.Group();const mat=new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72});const head=new THREE.Mesh(new THREE.SphereGeometry(.62,24,18),mat);head.scale.set(1,1.05,.8);mesh.add(head);for(const side of [-1,1]){const ear=new THREE.Mesh(new THREE.SphereGeometry(.27,16,12),mat);ear.position.set(side*.55,.35,0);mesh.add(ear);}const muzzle=new THREE.Mesh(new THREE.SphereGeometry(.3,16,12),mat);muzzle.position.set(0,-.15,.48);muzzle.scale.set(.8,.65,.6);mesh.add(muzzle);}
+  else mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72,metalness:0}));
+  mesh.name=names[index];mesh.userData.modelName=mesh.name;mesh.position.x=modelStudio.root.children.filter(child=>!child.userData.reference).length*1.65;mesh.traverse?.(n=>{n.castShadow=true;n.receiveShadow=true;});modelStudio.root.add(mesh);selectModelMesh(mesh);focusModelObject(mesh);pushModelHistory();renderModelObjectList();
 }
 function clearModelComponentHelper(){
   const r=modelStudio;
@@ -3072,6 +3179,22 @@ function applyModelComponentTransform(){
 function finishModelComponentTransform(){
   modelStudio.componentStart=null;syncModelComponentPivot();renderModelFields();renderModelObjectList();
 }
+function clearModelCreationPreview(){
+  const preview=modelStudio.creationPreview;
+  if(preview){preview.parent?.remove(preview);disposeModelNode(preview);}
+  modelStudio.creationPreview=null;modelStudio.creationWorldPoints=[];
+}
+function updateModelCreationPreview(worldPoint){
+  const r=modelStudio;
+  if(!r.creationPreview){r.creationPreview=new THREE.Group();r.creationPreview.name='Model tool click preview';r.creationPreview.userData.editorOnly=true;r.scene.add(r.creationPreview);}
+  const marker=new THREE.Mesh(new THREE.SphereGeometry(.055,12,8),new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false}));
+  marker.position.copy(worldPoint);marker.renderOrder=2000;marker.userData.editorOnly=true;r.creationPreview.add(marker);
+  r.creationWorldPoints.push(worldPoint.clone());
+  if(r.creationWorldPoints.length>1){
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(r.creationWorldPoints),new THREE.LineBasicMaterial({color:0x52d9ff,depthTest:false,depthWrite:false}));
+    line.renderOrder=1999;line.userData.editorOnly=true;r.creationPreview.add(line);
+  }
+}
 function renderModelComponentMarker(){
   const r=modelStudio,selection=r.componentSelection;if(!selection||!r.componentHelper)return;
   const target=selection.target,vertices=uniqueComponentVertices(target,selection.indices);if(!vertices.length)return;
@@ -3079,13 +3202,14 @@ function renderModelComponentMarker(){
   const material=new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false});
   if(r.mode==='face'){
     const boundary=extractModelBoundaryLoop(target.geometry,selection.faceIndices||[selection.face]);
-    if(boundary.length>=3){const points=boundary.map(v=>v.applyMatrix4(target.matrixWorld));const outline=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false}));outline.renderOrder=1001;r.componentHelper.add(outline);}
+    const boundaryWorld=boundary.map(v=>v.clone().applyMatrix4(target.matrixWorld));
+    if(boundaryWorld.length>=3){const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(boundaryWorld),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false}));line.renderOrder=1001;r.componentHelper.add(line);boundaryWorld.forEach(point=>{const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,10,8),material.clone());dot.position.copy(point);dot.renderOrder=1002;r.componentHelper.add(dot);});}
     const center=world.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/world.length);
-    const marker=new THREE.Mesh(new THREE.SphereGeometry(.045,12,8),material);marker.position.copy(center);marker.renderOrder=1002;r.componentHelper.add(marker);
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(.04,12,8),material);marker.position.copy(center);marker.renderOrder=1003;r.componentHelper.add(marker);
   }else if(r.mode==='vertex'){
-    world.forEach(point=>{const marker=new THREE.Mesh(new THREE.SphereGeometry(.065,12,8),material);marker.position.copy(point);marker.renderOrder=1001;r.componentHelper.add(marker);});
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(.065,12,8),material);marker.position.copy(world[0]);marker.renderOrder=1001;r.componentHelper.add(marker);
   }else if(r.mode==='edge'&&world.length>=2){
-    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(world.slice(0,2)),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false}));line.renderOrder=1001;r.componentHelper.add(line);
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(world.slice(0,2)),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false}));line.renderOrder=1001;r.componentHelper.add(line);
   }
 }
 function modelPointKey(v){return `${Math.round(v.x*1e5)},${Math.round(v.y*1e5)},${Math.round(v.z*1e5)}`;}
@@ -3117,7 +3241,7 @@ function collectModelIndicesAtPoints(geometry,points){
   for(let i=0;i<p.count;i++){const v=new THREE.Vector3().fromBufferAttribute(p,i);if(keys.has(modelPointKey(v)))out.push(i);}
   return out;
 }
-function selectModelComponent(hit,event={}){
+function selectModelComponent(hit){
   const r=modelStudio,target=hit.object;
   if(target.geometry?.index){const old=target.geometry;target.geometry=old.toNonIndexed();old.dispose();}
   const geometry=target.geometry,positions=geometry?.attributes?.position;if(!positions)return;
@@ -3126,18 +3250,13 @@ function selectModelComponent(hit,event={}){
   if(r.mode==='vertex'){
     const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
     const nearest=info.vertices.reduce((best,v,i)=>v.distanceTo(localHit)<info.vertices[best].distanceTo(localHit)?i:best,0);
-    const pointIndices=collectModelIndicesAtPoints(geometry,[info.vertices[nearest]]);
-    if(event.shiftKey&&r.componentSelection?.target===target&&r.componentSelection.mode==='vertex'){
-      const previous=[...r.componentSelection.indices];const existing=new Set(previous.map(index=>modelPointKey(new THREE.Vector3().fromBufferAttribute(positions,index))));
-      const key=modelPointKey(info.vertices[nearest]);indices=existing.has(key)?previous.filter(index=>modelPointKey(new THREE.Vector3().fromBufferAttribute(positions,index))!==key):[...previous,...pointIndices];
-    }else indices=pointIndices;
+    indices=collectModelIndicesAtPoints(geometry,[info.vertices[nearest]]);
   }else if(r.mode==='edge'){
     const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
-    const segmentDistance=(point,a,b)=>{const ab=b.clone().sub(a),lengthSq=ab.lengthSq(),t=lengthSq?THREE.MathUtils.clamp(point.clone().sub(a).dot(ab)/lengthSq,0,1):0;return point.distanceTo(a.clone().addScaledVector(ab,t));};
-    // Edge mode selects one of the mesh's actual triangle edges, including internal topology edges.
-    const pairs=[[info.vertices[0],info.vertices[1]],[info.vertices[1],info.vertices[2]],[info.vertices[2],info.vertices[0]]];
-    const edges=pairs.map(pair=>({pair,distance:segmentDistance(localHit,pair[0],pair[1])}));
-    edges.sort((a,b)=>a.distance-b.distance);indices=collectModelIndicesAtPoints(geometry,edges[0].pair);faceIndices=[face];
+    const segmentDistance=(point,a,b)=>{const ab=b.clone().sub(a),lengthSq=ab.lengthSq();const t=lengthSq?THREE.MathUtils.clamp(point.clone().sub(a).dot(ab)/lengthSq,0,1):0;return point.distanceTo(a.addScaledVector(ab,t));};
+    const edges=[[0,1],[1,2],[2,0]].map(pair=>({pair,distance:segmentDistance(localHit,info.vertices[pair[0]],info.vertices[pair[1]])}));
+    edges.sort((a,b)=>a.distance-b.distance);
+    indices=collectModelIndicesAtPoints(geometry,edges[0].pair.map(i=>info.vertices[i]));
   }else if(r.mode==='face'){
     faceIndices=connectedCoplanarModelFaces(geometry,face);
     indices=[...new Set(faceIndices.flatMap(faceId=>[faceId*3,faceId*3+1,faceId*3+2]))];
@@ -3145,42 +3264,75 @@ function selectModelComponent(hit,event={}){
   if(!indices.length)return;
   clearModelComponentHelper();r.selected=target;r.componentTarget=target;r.componentSelection={target,indices,face,faceIndices,mode:r.mode};
   r.componentHelper=new THREE.Group();r.scene.add(r.componentHelper);renderModelComponentMarker();
-  syncModelComponentPivot();r.transform.enabled=true;r.transform.attach(r.componentPivot);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale','move-plane':'translate','scale-uniform':'scale'})[r.transformTool]||'translate');syncModelTransformToolButtons();
+  syncModelComponentPivot();r.transform.enabled=true;r.transform.attach(r.componentPivot);r.transform.setMode('translate');
   const label=r.mode==='face'?`грань ${faceIndices.length>1?`(${faceIndices.length} треугольника)`:`${face}`}`:r.mode==='vertex'?`вершина ${indices[0]}`:`ребро ${face}`;
   $('#model-selection-info').textContent=`${r.mode}: ${label}`;
   renderModelFields();renderModelObjectList();
+}
+function createModelElementAtHit(hit,kind){
+  const r=modelStudio,target=hit.object;target.updateMatrixWorld(true);
+  const local=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
+  if(kind==='create-vertex'){
+    if(countModelTriangles(modelStudio.root||target)+192>MAX_MODEL_TRIANGLES){toast('Слишком много полигонов: точка не создана','error');return;}
+    const source=Array.isArray(target.material)?target.material[0]:target.material;
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,12,8),source?.clone?.()||new THREE.MeshStandardMaterial({color:0xffd166}));dot.name='New Vertex';dot.position.copy(local);dot.userData.createdComponent='vertex';target.add(dot);clearModelCreationPreview();pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новая точка создана';return;
+  }
+  if(r.creationTarget!==target){clearModelCreationPreview();r.creationTarget=target;r.creationPoints=[];}
+  r.creationPoints.push(local);updateModelCreationPreview(hit.point);
+  const required=kind==='create-edge'?2:3;
+  if(r.creationPoints.length<required){$('#model-selection-info').textContent=`${kind==='create-edge'?'Ребро':'Грань'}: точка ${r.creationPoints.length} из ${required}`;toast(`Выбери ещё ${required-r.creationPoints.length} точку на той же модели`);return;}
+  const points=r.creationPoints.slice(0,required);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();
+  const source=Array.isArray(target.material)?target.material[0]:target.material;
+  if(kind==='create-edge'){
+    if(countModelTriangles(modelStudio.root||target)+32>MAX_MODEL_TRIANGLES){toast('Слишком много полигонов: ребро не создано','error');return;}
+    const a=points[0],b=points[1],direction=b.clone().sub(a),length=direction.length();
+    if(length<.0001){toast('Точки ребра слишком близко друг к другу','error');return;}
+    const edge=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,length,8),source?.clone?.()||new THREE.MeshStandardMaterial({color:0xffd166}));edge.name='New Edge';edge.position.copy(a).add(b).multiplyScalar(.5);edge.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());edge.userData.createdComponent='edge';target.add(edge);
+  }else{
+    const area=points[1].clone().sub(points[0]).cross(points[2].clone().sub(points[0])).length();if(area<.0001){toast('Три точки лежат почти на одной линии','error');return;}
+    if(!makeModelTriangleMesh(target,[points],'New Face'))return;
+  }
+  pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent=kind==='create-edge'?'Новое ребро создано':'Новая грань создана';
 }
 function selectModelObject(e){
   const r=modelStudio;if((e.pointerType==='mouse'&&e.button!==0)||r.transform?.dragging||!e.isPrimary)return;
   const rect=e.currentTarget.getBoundingClientRect();if(!rect.width||!rect.height)return;
   r.pointer.set((e.clientX-rect.left)/rect.width*2-1,-((e.clientY-rect.top)/rect.height)*2+1);
   r.root.updateMatrixWorld(true);r.raycaster.setFromCamera(r.pointer,r.camera);
-  const hits=r.raycaster.intersectObjects(r.root.children,true).filter(hit=>hit.object.isMesh&&!hit.object.userData.reference&&!hit.object.userData.modelComponent&&hit.object.visible);
-  if(!hits.length){clearModelComponentHelper();r.selected=null;r.transform.detach();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent='Объект не выбран';return;}
+  const hits=r.raycaster.intersectObjects(r.root.children,true).filter(hit=>hit.object.isMesh&&!hit.object.userData.reference&&!hit.object.userData.editorOnly&&hit.object.visible);
+  if(!hits.length){if(!r.activeTool){clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();r.selected=null;r.mode='object';r.transform.detach();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent='Объект не выбран';}return;}
   const hit=hits[0];
-  if(r.mode!=='object'){selectModelComponent(hit,e);return;}
+  if(r.activeTool){
+    const tool=r.activeTool;
+    if(tool==='create-vertex'||tool==='create-edge'||tool==='create-face'){createModelElementAtHit(hit,tool);return;}
+    if(['extrude','inset','cut','bevel','sharpen'].includes(tool))r.mode='face';
+    else if(['joint'].includes(tool)&&r.mode==='object')r.mode='vertex';
+    selectModelComponent(hit);applyModelComponentTool(tool);return;
+  }
+  if(r.mode!=='object'){let componentObject=hit.object;while(componentObject.parent&&componentObject.parent!==r.root)componentObject=componentObject.parent;if(componentObject!==r.selected){r.selected=componentObject;updateModelTopologyOverlay();}selectModelComponent(hit);return;}
   let object=hit.object;while(object.parent&&object.parent!==r.root)object=object.parent;selectModelMesh(object);
 }
+
 function selectModelMesh(mesh){
-  const r=modelStudio;clearModelComponentHelper();r.selected=mesh;
-  syncModelTransformToolButtons();
-  $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===r.mode));
-  if(r.mode==='object'){r.transform.enabled=true;r.transform.attach(mesh);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale','move-plane':'translate','scale-uniform':'scale'})[r.transformTool]||'translate');}
-  else{r.transform.detach();r.transform.enabled=true;}
+  clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;modelStudio.selected=mesh;modelStudio.selectedObjects.clear();modelStudio.mode='object';
+  syncModelTransformToolButtons('move');
+  $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));
+  modelStudio.transform.enabled=true;modelStudio.transform.attach(mesh);modelStudio.transform.setMode('translate');
   $('#model-selection-info').textContent=mesh.name||'Объект';renderModelFields();renderModelObjectList();
 }
 function deleteModelObject(object){
   const r=modelStudio;if(!object)return;
   const wasSelected=r.selected===object||(r.selected&&object.getObjectById?.(r.selected.id));
-  if(wasSelected){r.transform.detach();clearModelComponentHelper();r.selected=null;}
-  object.parent?.remove(object);disposeModelNode(object);
+  if(wasSelected){r.transform.detach();clearModelComponentHelper();clearModelTopologyOverlay();r.selected=null;}
+  r.selectedObjects.delete(object.uuid);clearModelCreationPreview();object.parent?.remove(object);disposeModelNode(object);
   renderModelObjectList();renderModelFields();$('#model-selection-info').textContent=r.selected?.name||'Объект не выбран';pushModelHistory();
 }
 function renderModelObjectList(){
   const el=$('#model-object-list');if(!el)return;
   const objects=modelStudio.root?modelStudio.root.children.filter(o=>!o.userData.reference):[];
-  el.innerHTML=objects.map((o,i)=>`<div class="model-object-item"><button class="model-object-row ${o===modelStudio.selected||o.getObjectById?.(modelStudio.selected?.id)?'active':''}" data-model-object="${i}">◈ ${escapeHtml(o.name||'Object')}</button><button class="model-object-delete" data-model-delete="${i}" aria-label="Удалить ${escapeAttr(o.name||'Object')}" title="Удалить модель">×</button></div>`).join('')||'<small>Добавь модель слева</small>';
+  el.innerHTML=objects.map((o,i)=>`<div class="model-object-item"><input class="model-object-check" type="checkbox" data-model-choose="${o.uuid}" aria-label="Добавить ${escapeAttr(o.name||'Object')} в выбор для объединения" ${modelStudio.selectedObjects.has(o.uuid)?'checked':''}><button class="model-object-row ${o===modelStudio.selected||o.getObjectById?.(modelStudio.selected?.id)?'active':''}" data-model-object="${i}">◈ ${escapeHtml(o.name||'Object')}</button><button class="model-object-delete" data-model-delete="${i}" aria-label="Удалить ${escapeAttr(o.name||'Object')}" title="Удалить модель">×</button></div>`).join('')||'<small>Добавь модель слева</small>';
   el.querySelectorAll('[data-model-object]').forEach(button=>button.addEventListener('click',()=>{const object=objects[Number(button.dataset.modelObject)];if(object){selectModelMesh(object);focusModelObject(object);}}));
+  el.querySelectorAll('[data-model-choose]').forEach(input=>input.addEventListener('change',()=>{const id=input.dataset.modelChoose;if(input.checked)modelStudio.selectedObjects.add(id);else modelStudio.selectedObjects.delete(id);const count=modelStudio.selectedObjects.size;$('#model-selection-info').textContent=count?`Для объединения выбрано: ${count}`:(modelStudio.selected?.name||'Объект не выбран');}));
   el.querySelectorAll('[data-model-delete]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const object=objects[Number(button.dataset.modelDelete)];if(object)deleteModelObject(object);}));
 }
 function modelMeshesWithin(object){const result=[];object?.traverse?.(child=>{if(child.isMesh&&child.material)result.push(child);});if(object?.isMesh&&!result.includes(object)&&object.material)result.push(object);return result;}
@@ -3201,13 +3353,14 @@ function renderModelFields(){
   const repeat=first.map?.repeat||{x:1,y:1},offset=first.map?.offset||{x:0,y:0};
   materialHost.innerHTML=`<label class="field-label">Цвет<input class="field-input" type="color" data-model-material="color" value="${color}"></label><div class="model-vector-row"><b>UV повтор</b><label>U<input type="number" step="0.1" min="0.01" data-model-material="repeatX" value="${Number(repeat.x||1).toFixed(2)}"></label><label>V<input type="number" step="0.1" min="0.01" data-model-material="repeatY" value="${Number(repeat.y||1).toFixed(2)}"></label></div><div class="model-vector-row"><b>UV сдвиг</b><label>U<input type="number" step="0.05" data-model-material="offsetX" value="${Number(offset.x||0).toFixed(2)}"></label><label>V<input type="number" step="0.05" data-model-material="offsetY" value="${Number(offset.y||0).toFixed(2)}"></label></div><label class="field-label">Шероховатость <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="roughness" value="${Number(first.roughness??.7).toFixed(2)}"></label><label class="field-label">Металличность <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="metalness" value="${Number(first.metalness??0).toFixed(2)}"></label><small class="asset-meta">Изменение применяется ко всем материалам выбранной модели.</small>`;
   const nameInput=$('#model-object-name');nameInput?.addEventListener('change',()=>{object.name=nameInput.value.trim()||'Object';renderModelObjectList();$('#model-selection-info').textContent=object.name;pushModelHistory();});
-  transformHost.querySelectorAll('[data-model-vector]').forEach(field=>field.addEventListener('change',()=>{
+  const applyVectorField=(field,commit=false)=>{
     const kind=field.dataset.modelVector,axis=Number(field.dataset.modelAxis),value=Number(field.value);if(!Number.isFinite(value))return;
     if(kind==='position')object.position.setComponent(axis,value);else if(kind==='rotation')object.rotation.setComponent(axis,THREE.MathUtils.degToRad(value));else object.scale.setComponent(axis,value);
     object.updateMatrixWorld(true);if(modelStudio.mode!=='object'&&modelStudio.componentSelection)syncModelComponentPivot();
-    modelStudio.transform?.updateMatrixWorld?.();renderModelObjectList();pushModelHistory();
-  }));
-  materialHost.querySelectorAll('[data-model-material]').forEach(field=>field.addEventListener('change',()=>{
+    modelStudio.transform?.updateMatrixWorld?.();renderModelObjectList();if(commit)pushModelHistory();
+  };
+  transformHost.querySelectorAll('[data-model-vector]').forEach(field=>{field.addEventListener('input',()=>applyVectorField(field,false));field.addEventListener('change',()=>applyVectorField(field,true));field.addEventListener('keydown',event=>{if(event.key==='Enter'){field.blur();}});});
+  const applyMaterialField=(field,commit=false)=>{
     const key=field.dataset.modelMaterial,raw=field.value;let value=raw;
     if(field.type==='number'){value=Number(raw);if(!Number.isFinite(value))return;}
     modelMeshesWithin(object).forEach(mesh=>{for(const material of (Array.isArray(mesh.material)?mesh.material:[mesh.material])){
@@ -3216,17 +3369,60 @@ function renderModelFields(){
       else if(key==='metalness'&&'metalness'in material)material.metalness=THREE.MathUtils.clamp(value,0,1);
       else if(material.map){if(key==='repeatX')material.map.repeat.x=Math.max(.01,value);if(key==='repeatY')material.map.repeat.y=Math.max(.01,value);if(key==='offsetX')material.map.offset.x=value;if(key==='offsetY')material.map.offset.y=value;material.map.needsUpdate=true;}
       material.needsUpdate=true;
-    }});pushModelHistory();
-  }));
+    }});if(commit)pushModelHistory();
+  };
+  materialHost.querySelectorAll('[data-model-material]').forEach(field=>{field.addEventListener('input',()=>applyMaterialField(field,false));field.addEventListener('change',()=>applyMaterialField(field,true));field.addEventListener('keydown',event=>{if(event.key==='Enter')field.blur();});});
 }
+function clearModelTopologyOverlay(){
+  const overlay=modelStudio.topologyOverlay;if(!overlay)return;
+  overlay.parent?.remove(overlay);disposeModelNode(overlay);modelStudio.topologyOverlay=null;
+}
+function updateModelTopologyOverlay(){
+  const r=modelStudio;clearModelTopologyOverlay();
+  if(!r.selected||r.mode==='object')return;
+  const meshes=modelMeshesWithin(r.selected);if(!meshes.length)return;
+  const group=new THREE.Group();group.name='Editor topology overlay';group.userData.editorOnly=true;
+  meshes.forEach(mesh=>{
+    const position=mesh.geometry?.attributes?.position;if(!position)return;
+    const pointsGeometry=new THREE.BufferGeometry();pointsGeometry.setAttribute('position',position.clone());
+    const points=new THREE.Points(pointsGeometry,new THREE.PointsMaterial({color:0xffd166,size:window.matchMedia?.('(pointer: coarse)').matches?9:6,sizeAttenuation:false,depthTest:true}));points.userData.editorOnly=true;points.renderOrder=20;group.add(points);
+    const edgesGeometry=new THREE.EdgesGeometry(mesh.geometry,1);
+    const edges=new THREE.LineSegments(edgesGeometry,new THREE.LineBasicMaterial({color:0x52d9ff,transparent:true,opacity:.95,depthTest:true}));edges.userData.editorOnly=true;edges.renderOrder=19;group.add(edges);
+    // Copy the complete world transform: source meshes may be nested inside groups.
+    mesh.updateMatrixWorld(true);const localOverlay=new THREE.Group();localOverlay.matrixAutoUpdate=false;localOverlay.matrix.copy(mesh.matrixWorld);localOverlay.matrixWorldNeedsUpdate=true;localOverlay.add(points,edges);group.add(localOverlay);
+  });
+  r.scene.add(group);r.topologyOverlay=group;
+}
+function snapModelView(spec){
+  const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1;const r=modelStudio;if(!r.camera||!r.orbit)return;
+  const target=r.orbit.target.clone();const direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
+  const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,2,2000);
+  if(axis==='y')r.camera.up.set(0,0,sign>0?-1:1);else r.camera.up.set(0,1,0);
+  r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();
+  $$('#model-studio [data-model-view]').forEach(button=>button.classList.toggle('active',button.dataset.modelView===spec));
+}
+function joinSelectedModelObjects(){
+  const r=modelStudio,objects=(r.root?.children||[]).filter(object=>!object.userData.reference&&r.selectedObjects.has(object.uuid));
+  if(objects.length<2){toast('Отметь флажками минимум две модели для объединения','error');return;}
+  const group=new THREE.Group();group.name='Merged Model';r.root.add(group);objects.forEach(object=>group.attach(object));
+  selectModelMesh(group);r.selectedObjects.clear();r.selectedObjects.add(group.uuid);pushModelHistory();renderModelObjectList();toast(`Объединено объектов: ${objects.length}`,'success');
+}
+function separateSelectedModelGroup(){
+  const r=modelStudio;const candidates=new Set();
+  if(r.selected?.isGroup&&r.selected.children.length)candidates.add(r.selected);
+  for(const object of (r.root?.children||[]))if(r.selectedObjects.has(object.uuid)&&object.isGroup&&object.children.length)candidates.add(object);
+  if(!candidates.size){toast('Выбери группу, которую нужно разделить','error');return;}
+  let separated=0;
+  for(const group of candidates){const parent=group.parent||r.root;for(const child of [...group.children]){parent.attach(child);separated++;}parent.remove(group);}
+  r.selectedObjects.clear();r.selected=null;r.transform.detach();clearModelComponentHelper();clearModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();$('#model-selection-info').textContent=`Разделено объектов: ${separated}`;toast(`Группа разделена на ${separated} объектов`,'success');
+}
+
 function setModelMode(mode){
-  const r=modelStudio;r.mode=mode;clearModelComponentHelper();
-  try{localStorage.setItem('zeroengine-model-edit-mode',mode);}catch{}
-  syncModelTransformToolButtons();
+  const r=modelStudio;r.mode=mode;r.activeTool=null;r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-canvas')?.classList.remove('model-tool-cursor');clearModelComponentHelper();syncModelTransformToolButtons('move');
   $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===mode));
-  if(mode==='object'){r.transform.enabled=true;if(r.selected){r.transform.attach(r.selected);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale','move-plane':'translate','scale-uniform':'scale'})[r.transformTool]||'translate');}else r.transform.detach();}
-  else{r.transform.detach();r.transform.enabled=true;}
-  $('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — нажми на модель, чтобы выбрать компонент`;
+  if(mode==='object'){r.transform.enabled=true;if(r.selected)r.transform.attach(r.selected);else r.transform.detach();clearModelTopologyOverlay();}
+  else{r.transform.detach();r.transform.enabled=true;updateModelTopologyOverlay();}
+  $('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — выбери элемент прямо на модели`;
 }
 function mirrorModelObject(axis){
   const object=modelStudio.selected;if(!object||![0,1,2].includes(axis)){toast('Сначала выбери объект','error');return;}
@@ -3236,91 +3432,12 @@ function mirrorModelObject(axis){
 function modelFaceMaterialIndex(geometry,faceIndex){
   const start=faceIndex*3;const group=geometry.groups?.find(item=>start>=item.start&&start<item.start+item.count);return group?.materialIndex||0;
 }
-function ensureModelNonIndexed(target){
-  if(target?.geometry?.index){const old=target.geometry,next=old.toNonIndexed();target.geometry=next;old.dispose();}
-  return target?.geometry;
-}
-function rebuildModelMeshGeometry(target,removeFaces=[],extraTriangles=[]){
-  const source=ensureModelNonIndexed(target),position=source?.attributes?.position;if(!position)return false;
-  const remove=new Set(removeFaces),triangles=[];
-  for(let face=0;face<Math.floor(position.count/3);face++){
-    if(remove.has(face))continue;
-    const vertices=[],uvs=[];
-    for(let corner=0;corner<3;corner++){
-      const index=face*3+corner;vertices.push(new THREE.Vector3().fromBufferAttribute(position,index));
-      const uv=source.attributes.uv;uvs.push(uv?[uv.getX(index),uv.getY(index)]:[0,0]);
-    }
-    triangles.push({vertices,uvs,materialIndex:modelFaceMaterialIndex(source,face)});
-  }
-  for(const triangle of extraTriangles){
-    const vertices=triangle.vertices||triangle;const n=vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0]));
-    const axis=Math.abs(n.y)>Math.abs(n.x)&&Math.abs(n.y)>Math.abs(n.z)?[0,2]:Math.abs(n.x)>Math.abs(n.z)?[1,2]:[0,1];
-    const uvs=vertices.map(v=>[v.getComponent(axis[0]),v.getComponent(axis[1])]);
-    triangles.push({vertices,uvs,materialIndex:triangle.materialIndex??0});
-  }
-  const positions=[],uvs=[],groups=[];let offset=0;
-  for(const triangle of triangles){
-    for(let i=0;i<3;i++){const v=triangle.vertices[i],uv=triangle.uvs[i];positions.push(v.x,v.y,v.z);uvs.push(uv[0],uv[1]);}
-    const prev=groups.at(-1);if(prev&&prev.materialIndex===triangle.materialIndex)prev.count+=3;else groups.push({start:offset,count:3,materialIndex:triangle.materialIndex});offset+=3;
-  }
-  const next=new THREE.BufferGeometry();next.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));next.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
-  groups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();
-  target.geometry=next;source.dispose();target.updateMatrixWorld(true);weldModelGeometry(target);return true;
-}
-function weldModelGeometry(target,tolerance=1e-5){
-  const source=target?.geometry,position=source?.attributes?.position;if(!position||source.index)return false;
-  const attributes=Object.keys(source.attributes),maps=new Map(),indices=[],rows={};attributes.forEach(name=>rows[name]=[]);
-  const materialForFace=face=>modelFaceMaterialIndex(source,face);let groups=[],lastMaterial=null;
-  for(let face=0;face<Math.floor(position.count/3);face++){
-    const material=materialForFace(face),start=indices.length;
-    for(let corner=0;corner<3;corner++){
-      const i=face*3+corner,x=position.getX(i),y=position.getY(i),z=position.getZ(i),uv=source.attributes.uv;
-      const key=[Math.round(x/tolerance),Math.round(y/tolerance),Math.round(z/tolerance),uv?Math.round(uv.getX(i)/tolerance):0,uv?Math.round(uv.getY(i)/tolerance):0].join(':');
-      let index=maps.get(key);
-      if(index===undefined){index=maps.size;maps.set(key,index);for(const name of attributes){const attr=source.attributes[name];for(let k=0;k<attr.itemSize;k++)rows[name].push(attr.array[i*attr.itemSize+k]);}}
-      indices.push(index);
-    }
-    if(groups.length&&lastMaterial===material)groups[groups.length-1].count+=3;else groups.push({start,count:3,materialIndex:material});lastMaterial=material;
-  }
-  const next=new THREE.BufferGeometry();
-  for(const name of attributes){const attr=source.attributes[name],Ctor=attr.array.constructor;next.setAttribute(name,new THREE.BufferAttribute(new Ctor(rows[name]),attr.itemSize,attr.normalized));}
-  next.setIndex(indices);groups.forEach(g=>next.addGroup(g.start,g.count,g.materialIndex));next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();return true;
-}
-function splitModelFaceAtCentroid(target,faceIndex){
-  const geometry=ensureModelNonIndexed(target),info=modelTriangleInfo(geometry,faceIndex);if(!info)return false;
-  const center=info.vertices.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/3);
-  const [a,b,c]=info.vertices;
-  return rebuildModelMeshGeometry(target,[faceIndex],[[a,b,center],[b,c,center],[c,a,center]].map(vertices=>({vertices,materialIndex:modelFaceMaterialIndex(geometry,faceIndex)})));
-}
-function createModelEdgeFromVertices(target,vertices){
-  if(vertices.length!==2||vertices[0].distanceToSquared(vertices[1])<1e-8)return false;
-  const a=vertices[0].clone(),b=vertices[1].clone(),direction=b.clone().sub(a),length=direction.length();
-  const edge=new THREE.Mesh(new THREE.CylinderGeometry(.018,.018,length,8),new THREE.MeshStandardMaterial({color:0xf0c45c,metalness:.2,roughness:.45}));
-  edge.name='Created Edge';edge.userData.modelComponent=true;edge.position.copy(a).add(b).multiplyScalar(.5);edge.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());target.add(edge);return true;
-}
-function createModelFaceFromVertices(target,vertices){
-  if(vertices.length!==3)return false;
-  const normal=vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0]));if(normal.lengthSq()<1e-9)return false;
-  normal.normalize();return rebuildModelMeshGeometry(target,[],[{vertices:[...vertices],materialIndex:0}]);
-}
-function solidifyModelMesh(target,thickness=.08){
-  const geometry=ensureModelNonIndexed(target),position=geometry?.attributes?.position;if(!position||position.count<3)return false;
-  const inner=[],edgeMap=new Map();
-  for(let face=0;face<position.count/3;face++){
-    const tri=[0,1,2].map(i=>new THREE.Vector3().fromBufferAttribute(position,face*3+i));
-    const normal=tri[1].clone().sub(tri[0]).cross(tri[2].clone().sub(tri[0])).normalize();
-    const back=tri.map(v=>v.clone().addScaledVector(normal,-Math.max(.005,thickness))).reverse();inner.push({vertices:back,materialIndex:modelFaceMaterialIndex(geometry,face)});
-    for(const [a,b] of [[0,1],[1,2],[2,0]]){const ka=modelPointKey(tri[a]),kb=modelPointKey(tri[b]),key=[ka,kb].sort().join('|');const current=edgeMap.get(key);if(current)current.count++;else edgeMap.set(key,{a:tri[a],b:tri[b],ka,kb,count:1,normal});}
-  }
-  const walls=[];for(const edge of edgeMap.values())if(edge.count===1){const ia=edge.a.clone().addScaledVector(edge.normal,-thickness),ib=edge.b.clone().addScaledVector(edge.normal,-thickness);walls.push({vertices:[edge.a,edge.b,ib]},{vertices:[edge.a,ib,ia]});}
-  return rebuildModelMeshGeometry(target,[],[...inner,...walls]);
-}
-function invertModelMeshNormals(target){
-  const geometry=ensureModelNonIndexed(target),position=geometry?.attributes?.position;if(!position)return false;
-  const triangles=[];for(let face=0;face<position.count/3;face++){const vertices=[0,1,2].map(i=>new THREE.Vector3().fromBufferAttribute(position,face*3+i));[vertices[1],vertices[2]]=[vertices[2],vertices[1]];triangles.push({vertices,materialIndex:modelFaceMaterialIndex(geometry,face)});}
-  return rebuildModelMeshGeometry(target,Array.from({length:Math.floor(position.count/3)},(_,i)=>i),triangles);
-}
+const MAX_MODEL_TRIANGLES=50000;
+function countModelTriangles(root){let total=0;root?.traverse?.(node=>{if(node.isMesh&&node.geometry?.attributes?.position)total+=Math.floor(node.geometry.attributes.position.count/3);});return total;}
 function makeModelTriangleMesh(target,triangles,name){
+  if(!Array.isArray(triangles)||!triangles.length)return null;
+  const root=modelStudio.root||target;
+  if(countModelTriangles(root)+triangles.length>MAX_MODEL_TRIANGLES){toast('Слишком много полигонов: операция отменена, чтобы не перегрузить проект','error');return null;}
   const positions=[];triangles.forEach(tri=>tri.forEach(v=>positions.push(v.x,v.y,v.z)));
   const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('uv',new THREE.Float32BufferAttribute(Array.from({length:triangles.length},()=>[0,0,1,0,1,1]).flat(),2));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
   const source=Array.isArray(target.material)?target.material[0]:target.material;
@@ -3333,6 +3450,7 @@ function makeModelRim(target,outer,inner,name){
 function subdivideModelFaces(target,faceIndices){
   const source=target.geometry,position=source?.attributes?.position;if(!position)return false;
   const triangleCount=Math.floor(position.count/3),wanted=new Set(faceIndices.filter(i=>i>=0&&i<triangleCount));if(!wanted.size)return false;
+  if(countModelTriangles(modelStudio.root||target)+wanted.size*3>MAX_MODEL_TRIANGLES){toast('Разрез создаст слишком много полигонов','error');return false;}
   const attributeNames=Object.keys(source.attributes),data={};attributeNames.forEach(name=>data[name]=[]);
   const newGroups=[];let outVertex=0;
   const readVertex=index=>{const row={};attributeNames.forEach(name=>{const attr=source.attributes[name];row[name]=Array.from({length:attr.itemSize},(_,i)=>attr.array[index*attr.itemSize+i]);});return row;};
@@ -3345,7 +3463,7 @@ function subdivideModelFaces(target,faceIndices){
     [[a,ab,ca],[ab,b,bc],[ca,bc,c],[ab,bc,ca]].forEach(tri=>appendTriangle(tri,materialIndex));
   }
   const next=new THREE.BufferGeometry();attributeNames.forEach(name=>{const attr=source.attributes[name],Typed=attr.array.constructor;next.setAttribute(name,new THREE.BufferAttribute(new Typed(data[name]),attr.itemSize,attr.normalized));});
-  newGroups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();weldModelGeometry(target);return true;
+  newGroups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();return true;
 }
 function extractModelBoundaryLoop(geometry,faceIndices){
   const p=geometry?.attributes?.position;if(!p)return [];
@@ -3380,13 +3498,14 @@ function removeModelTriangles(target,faceIndices){
   }
   for(const name of attributeNames){const attribute=source.attributes[name],Typed=attribute.array.constructor;next.setAttribute(name,new THREE.BufferAttribute(new Typed(data[name]),attribute.itemSize,attribute.normalized));}
   groups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));
-  next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();weldModelGeometry(target);return true;
+  next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();target.geometry=next;source.dispose();return true;
 }
 
 function applyModelComponentTool(tool){
-  const r=modelStudio,selection=r.componentSelection;if(!selection){toast('Сначала выбери компонент модели','error');return false;}
-  const target=selection.target,geometry=ensureModelNonIndexed(target),pos=geometry?.attributes?.position;if(!pos)return false;
-  const indices=selection.indices,vertices=uniqueComponentVertices(target,indices);if(!vertices.length)return false;
+  const r=modelStudio,now=performance.now();if(r.lastToolAction===tool&&now-r.lastToolActionAt<180)return false;r.lastToolAction=tool;r.lastToolActionAt=now;
+  const selection=r.componentSelection;if(!selection){toast('Сначала выбери точку, ребро или грань на модели','error');return false;}
+  const target=selection.target,geometry=target.geometry,pos=geometry?.attributes?.position;if(!pos)return false;
+  const indices=selection.indices,vertices=componentVertices(target,indices);if(!vertices.length)return false;
   const center=vertices.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/vertices.length);
   if(tool==='joint'){
     const marker=new THREE.Mesh(new THREE.SphereGeometry(.075,14,10),new THREE.MeshStandardMaterial({color:0xffc45c,metalness:.35,roughness:.35}));marker.name=`Joint_${target.name||'Object'}`;marker.position.copy(center);target.add(marker);
@@ -3398,103 +3517,81 @@ function applyModelComponentTool(tool){
   }else if(tool==='duplicate'){
     if(selection.mode!=='face'){toast('Дублирование компонента доступно для грани','error');return false;}
     const faceIndices=selection.faceIndices||[selection.face],triangles=faceIndices.map(face=>[0,1,2].map(offset=>new THREE.Vector3().fromBufferAttribute(pos,face*3+offset)));
-    const normal=triangles[0][1].clone().sub(triangles[0][0]).cross(triangles[0][2].clone().sub(triangles[0][0])).normalize();
-    const extras=triangles.map(vertices=>({vertices:vertices.map(v=>v.addScaledVector(normal,.12))}));rebuildModelMeshGeometry(target,[],extras);
+    const normal=vertices[1]?.clone().sub(vertices[0]).cross(vertices[2]?.clone().sub(vertices[0])).normalize()||new THREE.Vector3(0,1,0);
+    triangles.forEach(tri=>tri.forEach(v=>v.addScaledVector(normal,.12)));makeModelTriangleMesh(target,triangles,`${target.name||'Face'} Copy`);
   }else if(tool==='cut'){
     if(selection.mode!=='face'){toast('Для разреза выбери грань','error');return false;}
     if(!subdivideModelFaces(target,selection.faceIndices||[selection.face])){toast('Не удалось разделить грань','error');return false;}
-  }else if(['extrude','inset','bevel'].includes(tool)){
+  }else if(['extrude','inset','bevel','sharpen'].includes(tool)){
     if(selection.mode!=='face'){toast('Для этой операции выбери грань','error');return false;}
     const faceIndices=selection.faceIndices||[selection.face],boundary=extractModelBoundaryLoop(geometry,faceIndices);
-    if(boundary.length<3){toast('Не удалось определить границу грани','error');return false;}
-    const normal=new THREE.Vector3();faceIndices.forEach(face=>{const info=modelTriangleInfo(geometry,face);if(info)normal.add(info.normal);});normal.normalize();
-    const loopNormal=new THREE.Vector3();for(let i=0;i<boundary.length;i++){const a=boundary[i],b=boundary[(i+1)%boundary.length];loopNormal.x+=(a.y-b.y)*(a.z+b.z);loopNormal.y+=(a.z-b.z)*(a.x+b.x);loopNormal.z+=(a.x-b.x)*(a.y+b.y);}
-    if(loopNormal.dot(normal)<0)boundary.reverse();
-    const inward=tool==='inset'?0.22:tool==='bevel'?.10:0;
-    const depth=tool==='extrude'?.25:tool==='inset'?.09:.025;
-    const mapPoint=v=>{const next=v.clone();if(inward)next.lerp(center,inward);next.addScaledVector(normal,tool==='inset'?-depth:depth);return next;};
-    const moved=boundary.map(mapPoint),extras=[];
-    for(let i=0;i<boundary.length;i++){const j=(i+1)%boundary.length;extras.push({vertices:[boundary[i],boundary[j],moved[j]]},{vertices:[boundary[i],moved[j],moved[i]]});}
-    for(const face of faceIndices){const info=modelTriangleInfo(geometry,face);if(info)extras.push({vertices:info.vertices.map(mapPoint),materialIndex:modelFaceMaterialIndex(geometry,face)});}
-    if(!rebuildModelMeshGeometry(target,faceIndices,extras)){toast('Не удалось изменить поверхность','error');return false;}
-  }else if(tool==='sharpen'){
-    const keys=new Set(vertices.map(modelPointKey)),attr=geometry.attributes.position;
-    for(let i=0;i<attr.count;i++){const point=new THREE.Vector3().fromBufferAttribute(attr,i);if(!keys.has(modelPointKey(point)))continue;const next=center.clone().add(point.sub(center).multiplyScalar(1.18));attr.setXYZ(i,next.x,next.y,next.z);}
-    attr.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
-  }else if(tool==='solidify'){
-    if(!solidifyModelMesh(target,.08)){toast('Не удалось добавить толщину','error');return false;}
-  }else if(tool==='invert'){
-    if(!invertModelMeshNormals(target))return false;
-  }else if(tool==='weld'){
-    const before=target.geometry;ensureModelNonIndexed(target);if(!weldModelGeometry(target)){toast('Не удалось сшить вершины','error');return false;}before?.dispose?.();
+    if(tool==='extrude'||tool==='inset'||tool==='bevel'){
+      if(boundary.length<3){toast('Не удалось определить границу грани','error');return false;}
+      const firstFace=modelTriangleInfo(geometry,faceIndices[0]);
+      const normal=firstFace?.normal||new THREE.Vector3(0,1,0);
+      const mapPoint=v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(center,tool==='inset'?.22:.14).addScaledVector(normal,tool==='inset'?-0.09:-0.025);
+      const moved=boundary.map(mapPoint);
+      const movedTriangles=faceIndices.map(face=>[0,1,2].map(corner=>mapPoint(new THREE.Vector3().fromBufferAttribute(pos,face*3+corner))));
+      const rimTriangles=boundary.length*2;
+      const addedTriangles=rimTriangles+movedTriangles.length;
+      if(countModelTriangles(modelStudio.root||target)+addedTriangles>MAX_MODEL_TRIANGLES){toast('Операция создаст слишком много полигонов','error');return false;}
+      const rim=makeModelPolygonRim(target,boundary,moved,`${target.name||'Object'}_${tool}_Sides`);
+      const cap=makeModelTriangleMesh(target,movedTriangles,`${target.name||'Object'}_${tool}_Cap`);
+      if(!rim||!cap){if(rim){target.remove(rim);disposeModelNode(rim);}if(cap){target.remove(cap);disposeModelNode(cap);}return false;}
+      // Replace the old polygon with the new cap and side walls; do not keep a duplicate face inside the extrusion.
+      if(!removeModelTriangles(target,faceIndices)){target.remove(rim);target.remove(cap);disposeModelNode(rim);disposeModelNode(cap);toast('Не удалось обновить исходную грань','error');return false;}
+    }else{
+      indices.forEach(index=>{const v=new THREE.Vector3().fromBufferAttribute(pos,index),next=center.clone().add(v.sub(center).multiplyScalar(1.18));pos.setXYZ(index,next.x,next.y,next.z);});
+      pos.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+    }
   }
   if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
-  r.componentSelection=null;r.componentTarget=null;r.componentStart=null;r.transform.detach();
-  pushModelHistory();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent=`Инструмент: ${tool}`;return true;
+  r.componentSelection=null;r.componentTarget=null;r.componentStart=null;r.activeTool=null;r.creationPoints=[];r.transform.detach();$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.remove('active'));
+  pushModelHistory();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent=tool==='joint'?'Шарнир создан':`Инструмент: ${tool}`;return true;
 }
-function createModelComponent(kind){
-  const r=modelStudio,selection=r.componentSelection;if(!selection){toast('Сначала выбери точки или грань','error');return;}
-  const target=selection.target,geometry=ensureModelNonIndexed(target);
-  if(kind==='point'){
-    const face=selection.face;if(!Number.isInteger(face)||!splitModelFaceAtCentroid(target,face)){toast('Выбери грань для создания точки','error');return;}
-    toast('Точка добавлена в сетку','success');
-  }else if(kind==='edge'){
-    const points=uniqueComponentVertices(target,selection.indices);
-    if(selection.mode!=='vertex'||points.length!==2){toast('Выбери две точки: удерживай Shift при выборе второй','error');return;}
-    if(!createModelEdgeFromVertices(target,points)){toast('Не удалось создать ребро','error');return;}
-    toast('Ребро создано между выбранными точками','success');
-  }else if(kind==='face'){
-    const points=uniqueComponentVertices(target,selection.indices);
-    if(selection.mode!=='vertex'||points.length!==3){toast('Выбери три точки: удерживай Shift при выборе второй и третьей','error');return;}
-    if(!createModelFaceFromVertices(target,points)){toast('Не удалось создать грань','error');return;}
-    toast('Грань создана','success');
-  }
-  if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}r.componentSelection=null;r.transform.detach();pushModelHistory();renderModelObjectList();renderModelFields();
-}
-function syncModelTransformToolButtons(tool){
-  const r=modelStudio;if(tool)r.transformTool=tool;
-  const active=r.transformTool||'move';
-  $$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale','move-plane','scale-uniform'].includes(button.dataset.modelTool)&&button.dataset.modelTool===active));
-  try{localStorage.setItem('zeroengine-model-transform-tool',active);}catch{}
-}
+function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale','move-plane','scale-uniform'].includes(tool)&&button.dataset.modelTool===tool));}
 function setModelTool(tool){
   const r=modelStudio,mesh=r.selected;if(!mesh){toast('Сначала выбери объект','error');return;}
+  clearModelCreationPreview();
+  const clickTools=['extrude','inset','cut','bevel','sharpen','joint','create-vertex','create-edge','create-face'];
+  if(clickTools.includes(tool)||(['delete','duplicate'].includes(tool)&&r.mode!=='object')){
+    r.activeTool=tool;r.creationPoints=[];r.creationTarget=null;
+    if(['extrude','inset','cut','bevel','sharpen'].includes(tool))r.mode='face';
+    if(tool==='joint'&&r.mode==='object')r.mode='vertex';
+    r.transform.detach();r.transform.enabled=false;clearModelComponentHelper();
+    $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===r.mode));
+    $$('[data-model-tool]').forEach(button=>button.classList.toggle('active',button.dataset.modelTool===tool));
+    $('#model-canvas').classList.add('model-tool-cursor');
+    const labels={extrude:'Нажми на грань для выдавливания',inset:'Нажми на грань для вдавливания',cut:'Нажми на грань для разреза',bevel:'Нажми на грань для скругления',sharpen:'Нажми на грань для заострения',joint:'Нажми на точку для создания сгиба', 'create-vertex':'Нажми на поверхность для новой точки','create-edge':'Нажми две точки на поверхности для нового ребра','create-face':'Нажми три точки на поверхности для новой грани',delete:'Нажми на компонент для удаления',duplicate:'Нажми на грань для дублирования'};
+    $('#model-selection-info').textContent=labels[tool]||tool;
+    if(window.matchMedia?.('(pointer: coarse)').matches)setModelMobilePanel('viewport');
+    return;
+  }
+  r.activeTool=null;r.creationPoints=[];r.creationTarget=null;$('#model-canvas').classList.remove('model-tool-cursor');
   if(['move','rotate','scale','move-plane','scale-uniform'].includes(tool)){
     const baseTool=tool==='move-plane'?'move':tool==='scale-uniform'?'scale':tool;
-    syncModelTransformToolButtons(tool);try{localStorage.setItem('zeroengine-model-transform-tool',tool);}catch{}
+    syncModelTransformToolButtons(tool);
     if(r.mode!=='object'&&!r.componentSelection){toast('Сначала выбери точку, ребро или грань','error');return;}
     r.transform.enabled=true;r.transform.attach(r.mode==='object'?mesh:r.componentPivot);
-    r.transform.setSpace('world');
-    r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[baseTool]);
+    r.transform.setSpace('world');r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[baseTool]);
     r.transform.showX=r.transform.showY=r.transform.showZ=true;
-    if(r.mode==='object')$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));
     if(tool==='move-plane')toast('Перетаскивай плоские ручки XY, YZ или XZ для движения сразу по двум осям');
     if(tool==='scale-uniform')toast('Потяни центральную ручку XYZ для равномерного масштаба');
     return;
   }
-  if(r.mode==='object'&&['solidify','invert','weld'].includes(tool)){
-    const targets=modelMeshesWithin(mesh).filter(item=>item.geometry?.attributes?.position);let changed=0;
-    for(const target of targets){if(tool==='solidify'){if(solidifyModelMesh(target,.08))changed++;}else if(tool==='invert'){if(invertModelMeshNormals(target))changed++;}else{const old=target.geometry;ensureModelNonIndexed(target);if(weldModelGeometry(target)){old?.dispose?.();changed++;}}}
-    if(changed){pushModelHistory();renderModelFields();toast(tool==='solidify'?'Добавлена внутренняя толщина':tool==='invert'?'Нормали перевёрнуты':'Совпадающие вершины сшиты','success');}else toast('Операция не изменила геометрию','error');return;
-  }
-  if(['extrude','inset','cut','bevel','sharpen','joint','solidify','invert','weld'].includes(tool)||(['delete','duplicate'].includes(tool)&&r.mode!=='object')){applyModelComponentTool(tool);return;}
-  syncModelTransformToolButtons('');
-  r.transform.enabled=false;
+  syncModelTransformToolButtons('');r.transform.enabled=false;
   if(tool==='duplicate'){const copy=cloneModelObjectDeep(mesh);copy.name=`${mesh.name||'Object'} Copy`;copy.position.x+=1;(mesh.parent||r.root).add(copy);selectModelMesh(copy);pushModelHistory();return;}
   if(tool==='delete'){deleteModelObject(mesh);return;}
-  if(tool==='merge'){
-    const objects=r.root.children.filter(object=>!object.userData.reference);
-    if(objects.length<2){toast('Для объединения нужны минимум два объекта','error');return;}
-    const group=new THREE.Group();group.name='Merged Model';objects.forEach(item=>{r.root.remove(item);group.add(item);});r.root.add(group);selectModelMesh(group);pushModelHistory();return;
-  }
+  if(tool==='merge'){joinSelectedModelObjects();return;}
 }
+
 function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}setModelTool(tool);}
 function copyModelObject(){if(modelStudio.selected)modelStudio.clipboard=cloneModelObjectDeep(modelStudio.selected);}
 function pasteModelObject(){if(!modelStudio.clipboard)return;const copy=cloneModelObjectDeep(modelStudio.clipboard);copy.position.x+=1;copy.name=`${copy.name||'Object'} Copy`;modelStudio.root.add(copy);selectModelMesh(copy);pushModelHistory();}
 function cloneModelObjectDeep(object){const copy=object.clone(true);copy.traverse(child=>{if(child.isMesh){child.geometry=child.geometry?.clone?.()||child.geometry;if(Array.isArray(child.material))child.material=child.material.map(material=>material?.clone?.()||material);else child.material=child.material?.clone?.()||child.material;}});return copy;}
-function pushModelHistory(){try{const snapshot=modelStudio.root.children.filter(object=>!object.userData.reference).map(object=>({object:cloneModelObjectDeep(object)}));modelStudio.history.push(snapshot);modelStudio.future=[];if(modelStudio.history.length>30)modelStudio.history.shift();}catch(error){console.warn('Model history snapshot failed',error);}}
+function pushModelHistory(){try{const total=countModelTriangles(modelStudio.root);if(total>40000){modelStudio.history=[];modelStudio.future=[];if(!modelStudio.historyLimited){toast('Для тяжёлой модели история отмены отключена ради стабильности','info');modelStudio.historyLimited=true;}return;}modelStudio.historyLimited=false;const snapshot=modelStudio.root.children.filter(object=>!object.userData.reference).map(object=>({object:cloneModelObjectDeep(object)}));modelStudio.history.push(snapshot);modelStudio.future=[];if(modelStudio.history.length>10)modelStudio.history.shift();}catch(error){console.warn('Model history snapshot failed',error);}}
 function restoreModelHistorySnapshot(snapshot){
-  modelStudio.transform.detach();clearModelComponentHelper();
+  clearModelCreationPreview();modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;$('#model-canvas')?.classList.remove('model-tool-cursor');modelStudio.transform.detach();clearModelComponentHelper();clearModelTopologyOverlay();modelStudio.selectedObjects.clear();
   for(const child of [...modelStudio.root.children]){if(child.userData.reference)continue;modelStudio.root.remove(child);disposeModelNode(child);}
   snapshot.forEach(item=>modelStudio.root.add(cloneModelObjectDeep(item.object)));
   modelStudio.selected=null;renderModelObjectList();renderModelFields();
@@ -3507,63 +3604,30 @@ function redoModelStudio(){
   if(!modelStudio.future.length){toast('Нет действия для повтора');return;}
   const next=modelStudio.future.pop();modelStudio.history.push(next);restoreModelHistorySnapshot(next);
 }
-async function saveModelStudioAsset(){if(!currentProject||!modelStudio.root.children.length){toast('Добавь хотя бы один объект модели','error');return;}const exporter=new GLTFExporter();const root=new THREE.Group();modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(o.clone(true)));try{const result=await exporter.parseAsync(root,{binary:true,onlyVisible:true});const blob=new Blob([result],{type:'model/gltf-binary'});const name=($('#model-name').value.trim()||'New Model').replace(/\.(glb|gltf)$/i,'');const asset={id:uid(),name:`${name}.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${safeName(name)}.glb`,blob};currentProject.assets.push(asset);await saveProject(false);renderAssetPanel();toast('3D-модель сохранена в Assets / Models','success');$('#model-studio-status').textContent=`Сохранено: ${name}.glb`;}catch(err){console.error(err);toast('Не удалось экспортировать модель GLB','error');}}
-function convertSceneObjectToPlayer(entity){
-  if(!entity||!currentProject)return;
-  if(entity.type==='model'){entity.modelAssetId=entity.assetId;delete entity.assetId;}
-  else if(entity.type==='primitive')entity.playerPrimitive=entity.primitive||'cube';
-  entity.type='player';entity.cameraMount=entity.cameraMount||{mode:'back',offset:[0,1.6,0],fov:70};
-  entity.collision={...(entity.collision||{}),enabled:true,shape:'capsule',size:[.7,1.8,.7],offset:[0,.9,0],isTrigger:false};
-  entity.physics={...(entity.physics||{}),enabled:true,useGravity:true,mass:Math.max(.1,Number(entity.physics?.mass)||1),velocity:[0,0,0],linearDamping:.08};
-  const old=sceneObjects.get(entity.id);if(old){scene.remove(old);sceneObjects.delete(entity.id);}
-  createRuntimeObject(entity).then(()=>{selectObject(entity.id);renderHierarchy();renderInspector();scheduleSave();toast('Объект теперь Player','success');}).catch(error=>{console.error(error);toast('Не удалось преобразовать объект в Player','error');});
+async function saveModelStudioAsset(){
+  if(!currentProject||!modelStudio.root?.children.some(o=>!o.userData.reference)){toast('Добавь хотя бы один объект модели','error');return;}
+  const exporter=new GLTFExporter(),root=new THREE.Group();modelStudio.root.updateMatrixWorld(true);
+  modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(cloneModelObjectDeep(o)));
+  try{
+    const result=await exporter.parseAsync(root,{binary:true,onlyVisible:true});
+    const blob=new Blob([result],{type:'model/gltf-binary'});
+    const name=($('#model-name').value.trim()||'New Model').replace(/\.(glb|gltf)$/i,'');
+    const path=`Assets/Models/${safeName(name)}.glb`;currentProject.assetFolders||=[];
+    if(!currentProject.assetFolders.includes('Models'))currentProject.assetFolders.push('Models');
+    const existing=currentProject.assets.find(item=>item.type==='model'&&item.path===path);
+    const old=existing?{...existing}:null;
+    const asset={id:existing?.id||uid(),name:`${name}.glb`,type:'model',size:blob.size,folder:'Models',path,blob};
+    if(existing)Object.assign(existing,asset);else currentProject.assets.push(asset);
+    const saved=await saveProject(false);
+    if(!saved){if(existing&&old)Object.assign(existing,old);else currentProject.assets=currentProject.assets.filter(item=>item.id!==asset.id);throw new Error('Локальное хранилище не подтвердило сохранение');}
+    renderAssetPanel();toast(existing?'Модель обновлена в Assets / Models':'3D-модель сохранена в Assets / Models','success');
+    $('#model-studio-status').textContent=`Сохранено: ${name}.glb`;
+  }catch(err){console.error(err);toast(`Не удалось сохранить модель: ${err.message||'ошибка GLB'}`,'error');}
 }
 function convertModelToPlayer(){const o=modelStudio.selected;if(!o||!currentProject)return;const exporter=new GLTFExporter();const group=o.clone(true);exporter.parseAsync(group,{binary:true}).then(async result=>{const blob=new Blob([result],{type:'model/gltf-binary'}),asset={id:uid(),name:`${safeName(o.name)}_Player.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${uid()}.glb`,blob};currentProject.assets.push(asset);const entity={id:uid(),name:`${o.name} Player`,type:'player',modelAssetId:asset.id,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],visible:true,collision:{enabled:true,shape:'capsule',size:[.8,1.8,.8]},cameraMount:{mode:'back',offset:[0,1.6,0],fov:70},material:{}};activeSceneData().objects.push(entity);await loadSceneIntoViewport();renderHierarchy();renderInspector();scheduleSave();toast('Импортированная модель создана как Player','success');}).catch(err=>toast('Не удалось создать Player','error'));}
 function loadModelReference(file){if(!file)return;const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'References',path:`Assets/References/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);const plane=new THREE.Mesh(new THREE.PlaneGeometry(3,2),new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:.7,side:THREE.DoubleSide,depthWrite:false}));plane.name='Reference Image';plane.userData.reference=true;plane.position.set(0,1,0);modelStudio.root.add(plane);},undefined,()=>URL.revokeObjectURL(url));}
 function removeModelReference(){modelStudio.root.children.filter(object=>object.userData.reference).forEach(object=>{modelStudio.root.remove(object);disposeModelNode(object);});}
 function loadModelTexture(file){if(!file||!modelStudio.selected)return;const targets=[];modelStudio.selected.traverse?.(child=>{if(child.isMesh&&child.material)targets.push(child);});if(!targets.length&&modelStudio.selected.isMesh)targets.push(modelStudio.selected);if(!targets.length){toast('В выбранном объекте нет материала для текстуры','error');return;}const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'Textures',path:`Assets/Textures/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;targets.forEach(child=>{const materials=Array.isArray(child.material)?child.material:[child.material];materials.forEach(material=>{material.map=tex;material.needsUpdate=true;});});},undefined,()=>URL.revokeObjectURL(url));}
-function modelSelectedMaterials(){
-  const object=modelStudio.selected;if(!object)return [];
-  return modelMeshesWithin(object).flatMap(mesh=>Array.isArray(mesh.material)?mesh.material:[mesh.material]).filter(Boolean);
-}
-function toggleModelDoubleSided(){
-  const materials=modelSelectedMaterials();if(!materials.length){toast('Выбери модель','error');return;}
-  const makeDouble=!materials.some(material=>material.side===THREE.DoubleSide);
-  materials.forEach(material=>{material.side=makeDouble?THREE.DoubleSide:THREE.FrontSide;material.needsUpdate=true;});
-  toast(makeDouble?'Показываются обе стороны поверхности':'Включена обычная лицевая сторона','success');pushModelHistory();
-}
-function resetModelSurface(){
-  const materials=modelSelectedMaterials();if(!materials.length){toast('Выбери модель','error');return;}
-  materials.forEach(material=>{material.color?.set(0xffffff);material.side=THREE.FrontSide;material.transparent=false;material.opacity=1;material.needsUpdate=true;});
-  renderModelFields();pushModelHistory();toast('Цвет сброшен на белый, нормали отображаются с лицевой стороны','success');
-}
-function openModelUVEditor(){
-  const materials=modelSelectedMaterials(),material=materials.find(item=>item.map?.image);
-  if(!material){toast('Сначала наложи текстуру на модель','error');return;}
-  const texture=material.map,image=texture.image;
-  showModal(`<div class="modal-header"><div><span class="panel-kicker">UV WORKSPACE</span><h2 id="modal-title">UV-редактор текстуры</h2><p>Выбери участок изображения, который будет повторяться на поверхности.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body model-uv-editor"><div class="model-uv-preview-wrap"><canvas id="model-uv-preview" width="900" height="600"></canvas><div class="modal-note">Потяни мышью или пальцем по изображению, чтобы выбрать участок; размер и положение также можно задать числами.</div></div><div class="field-row two"><label class="field-label">U — начало<input class="field-input" id="uv-u" type="number" min="0" max=".99" step=".01" value="${Math.max(0,Math.min(.99,-texture.offset.x/(texture.repeat.x||1))).toFixed(2)}"></label><label class="field-label">V — начало<input class="field-input" id="uv-v" type="number" min="0" max=".99" step=".01" value="${Math.max(0,Math.min(.99,-texture.offset.y/(texture.repeat.y||1))).toFixed(2)}"></label><label class="field-label">Ширина участка<input class="field-input" id="uv-w" type="number" min=".01" max="1" step=".01" value="${Math.min(1,1/(texture.repeat.x||1)).toFixed(2)}"></label><label class="field-label">Высота участка<input class="field-input" id="uv-h" type="number" min=".01" max="1" step=".01" value="${Math.min(1,1/(texture.repeat.y||1)).toFixed(2)}"></label></div><div class="modal-note">Изменения применяются сразу ко всем материалам модели с этой текстурой.</div></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Закрыть</button><button class="button button-primary" id="uv-reset">Сбросить UV</button></div>`);
-  const canvas=$('#model-uv-preview'),ctx=canvas.getContext('2d');
-  const draw=()=>{
-    const w=image.videoWidth||image.naturalWidth||image.width||1,h=image.videoHeight||image.naturalHeight||image.height||1;
-    ctx.clearRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#1b2226';ctx.fillRect(0,0,canvas.width,canvas.height);
-    try{ctx.drawImage(image,0,0,canvas.width,canvas.height);}catch{}
-    const u=Number($('#uv-u').value)||0,v=Number($('#uv-v').value)||0,uw=Math.max(.01,Math.min(1,Number($('#uv-w').value)||1)),vh=Math.max(.01,Math.min(1,Number($('#uv-h').value)||1));
-    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.clearRect(u*canvas.width,v*canvas.height,uw*canvas.width,vh*canvas.height);
-    try{ctx.drawImage(image,u*w,v*h,uw*w,vh*h,u*canvas.width,v*canvas.height,uw*canvas.width,vh*canvas.height);}catch{}
-    ctx.strokeStyle='#b7f66b';ctx.lineWidth=3;ctx.strokeRect(u*canvas.width,v*canvas.height,uw*canvas.width,vh*canvas.height);
-  };
-  const apply=()=>{
-    const u=THREE.MathUtils.clamp(Number($('#uv-u').value)||0,0,.99),v=THREE.MathUtils.clamp(Number($('#uv-v').value)||0,0,.99),w=THREE.MathUtils.clamp(Number($('#uv-w').value)||1,.01,1),h=THREE.MathUtils.clamp(Number($('#uv-h').value)||1,.01,1);
-    materials.filter(item=>item.map===texture).forEach(item=>{texture.wrapS=texture.wrapT=THREE.RepeatWrapping;texture.repeat.set(1/w,1/h);texture.offset.set(-u/w,-v/h);texture.needsUpdate=true;item.needsUpdate=true;});draw();
-  };
-  ['uv-u','uv-v','uv-w','uv-h'].forEach(id=>$('#'+id).addEventListener('input',()=>{apply();}));
-  let selecting=false,anchor=null;
-  const updateRect=(e)=>{const rect=canvas.getBoundingClientRect(),x=THREE.MathUtils.clamp((e.clientX-rect.left)/rect.width,0,1),y=THREE.MathUtils.clamp((e.clientY-rect.top)/rect.height,0,1);if(!anchor)anchor={x,y};const u=Math.min(anchor.x,x),v=Math.min(anchor.y,y),w=Math.max(.01,Math.abs(x-anchor.x)),h=Math.max(.01,Math.abs(y-anchor.y));$('#uv-u').value=u.toFixed(2);$('#uv-v').value=v.toFixed(2);$('#uv-w').value=Math.min(1-u,w).toFixed(2);$('#uv-h').value=Math.min(1-v,h).toFixed(2);apply();};
-  canvas.style.touchAction='none';canvas.addEventListener('pointerdown',e=>{selecting=true;anchor=null;canvas.setPointerCapture?.(e.pointerId);updateRect(e);});canvas.addEventListener('pointermove',e=>{if(selecting)updateRect(e);});const finish=()=>{selecting=false;anchor=null;};canvas.addEventListener('pointerup',finish);canvas.addEventListener('pointercancel',finish);
-  $('#uv-reset').addEventListener('click',()=>{['uv-u','uv-v'].forEach(id=>$('#'+id).value='0');['uv-w','uv-h'].forEach(id=>$('#'+id).value='1');apply();});
-  draw();
-}
 function cropModelTexture(){const object=modelStudio.selected;if(!object)return;let applied=0;object.traverse?.(child=>{if(!child.isMesh||!child.material)return;for(const material of (Array.isArray(child.material)?child.material:[child.material]))if(material.map){material.map.repeat.set(.8,.8);material.map.offset.set(.1,.1);material.map.needsUpdate=true;applied++;}});if(!applied&&object.isMesh&&object.material?.map){object.material.map.repeat.set(.8,.8);object.material.map.offset.set(.1,.1);object.material.map.needsUpdate=true;applied++;}toast(applied?'Применена обрезка текстуры 10% по краям':'На выбранном объекте пока нет текстуры',applied?'success':'error');}
 let modelPainting=false;function startModelPaint(e){e.preventDefault();modelPainting=true;e.currentTarget.setPointerCapture?.(e.pointerId);modelPaintAt(e);}function moveModelPaint(e){if(modelPainting)modelPaintAt(e);}function endModelPaint(e){modelPainting=false;if(e?.currentTarget?.hasPointerCapture?.(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}function modelPaintAt(e){const c=$('#model-paint-canvas'),r=c.getBoundingClientRect(),ctx=c.getContext('2d');ctx.fillStyle=$('#model-brush-color').value;ctx.beginPath();ctx.arc((e.clientX-r.left)/r.width*c.width,(e.clientY-r.top)/r.height*c.height,Number($('#model-brush-size').value),0,Math.PI*2);ctx.fill();}function applyModelPaint(){const object=modelStudio.selected;if(!object)return;const c=$('#model-paint-canvas'),tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;let applied=0;object.traverse?.(child=>{if(child.isMesh&&child.material){for(const material of (Array.isArray(child.material)?child.material:[child.material])){material.map=tex;material.needsUpdate=true;applied++;}}});if(!applied&&object.isMesh&&object.material){object.material.map=tex;object.material.needsUpdate=true;applied++;}if(!applied){toast('В выбранном объекте нет материала для рисования','error');return;}c.toBlob(blob=>{if(blob){currentProject.assets.push({id:uid(),name:'Painted_Texture.png',type:'texture',size:blob.size,folder:'Textures',path:`Assets/Textures/${uid()}_Painted_Texture.png`,blob});scheduleSave();}},'image/png');toast('Текстура нанесена на объект и сохранена в ресурсах проекта');}
 
