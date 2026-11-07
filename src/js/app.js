@@ -2839,11 +2839,18 @@ async function openModelStudioProjectPicker(){
   let projects=[];
   try{projects=(await getAllProjects()).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));}
   catch(error){console.error(error);toast('Не удалось прочитать список проектов','error');return;}
-  const projectButtons=projects.map(project=>`<button type="button" class="model-project-choice" data-model-project="${escapeAttr(project.id)}"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.description||'Без описания')}</small></button>`).join('');
-  showModal(`<div class="modal-header"><div><span class="panel-kicker">ZERO MODEL STUDIO</span><h2 id="modal-title">3D-моделирование</h2><p>Выбери проект, в который будет сохранена готовая модель.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><div class="model-project-choices">${projectButtons||'<div class="modal-note">Пока нет проектов. Создай проект прямо здесь, чтобы начать моделирование.</div>'}</div><button type="button" class="button button-primary" id="model-create-project">＋ Создать проект</button></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button></div>`);
+  const projectRows=projects.map(project=>`<div class="model-project-choice-row"><button type="button" class="model-project-choice" data-model-project="${escapeAttr(project.id)}"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.description||'Без описания')}</small></button><button type="button" class="model-project-delete" data-delete-model-project="${escapeAttr(project.id)}" title="Удалить проект" aria-label="Удалить проект ${escapeAttr(project.name)}">×</button></div>`).join('');
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">ZERO MODEL STUDIO</span><h2 id="modal-title">3D-моделирование</h2><p>Выбери проект, в который будет сохранена готовая модель.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><div class="model-project-choices">${projectRows||'<div class="modal-note">Пока нет проектов. Создай проект прямо здесь, чтобы начать моделирование.</div>'}</div><button type="button" class="button button-primary" id="model-create-project">＋ Создать проект</button></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button></div>`);
   $$('#modal-content [data-model-project]').forEach(button=>button.addEventListener('click',async()=>{
     const project=projects.find(item=>item.id===button.dataset.modelProject);if(!project)return;
     closeModal();await enterModelStudio(project);
+  }));
+  $$('#modal-content [data-delete-model-project]').forEach(button=>button.addEventListener('click',async event=>{
+    event.preventDefault();event.stopPropagation();
+    const project=projects.find(item=>item.id===button.dataset.deleteModelProject);if(!project)return;
+    if(!confirm(`Удалить проект «${project.name}» вместе со всеми его сценами и ресурсами?`))return;
+    try{await deleteProjectRecord(project.id);toast(`Проект «${project.name}» удалён`,'success');await openModelStudioProjectPicker();}
+    catch(error){console.error(error);toast('Не удалось удалить проект','error');}
   }));
   $('#model-create-project').addEventListener('click',()=>openModelStudioCreateProjectForm());
 }
@@ -3218,28 +3225,38 @@ function applyModelComponentTool(tool){
     const faceIndices=selection.faceIndices||[selection.face],boundary=extractModelBoundaryLoop(geometry,faceIndices);
     if(tool==='extrude'||tool==='inset'||tool==='bevel'){
       if(boundary.length<3){toast('Не удалось определить границу грани','error');return false;}
-      const normal=vertices[1].clone().sub(vertices[0]).cross(vertices[2].clone().sub(vertices[0])).normalize();
-      const moved=boundary.map(v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(center,tool==='inset'?.22:.14).addScaledVector(normal,tool==='inset'?-0.09:-0.025));
-      makeModelPolygonRim(target,boundary,moved,`${target.name||'Object'}_${tool}`);
-      const moveMap=new Map();boundary.forEach((v,i)=>moveMap.set(modelPointKey(v),moved[i]));
-      indices.forEach(index=>{const old=new THREE.Vector3().fromBufferAttribute(pos,index),next=moveMap.get(modelPointKey(old));if(next)pos.setXYZ(index,next.x,next.y,next.z);});
+      const firstFace=modelTriangleInfo(geometry,faceIndices[0]);
+      const normal=firstFace?.normal||new THREE.Vector3(0,1,0);
+      const mapPoint=v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(center,tool==='inset'?.22:.14).addScaledVector(normal,tool==='inset'?-0.09:-0.025);
+      const moved=boundary.map(mapPoint);
+      const movedTriangles=faceIndices.map(face=>[0,1,2].map(corner=>mapPoint(new THREE.Vector3().fromBufferAttribute(pos,face*3+corner))));
+      // Keep the original cap in place and add a translated cap plus side walls.
+      // This closes the extrusion instead of moving the old face away and leaving a hole.
+      makeModelPolygonRim(target,boundary,moved,`${target.name||'Object'}_${tool}_Sides`);
+      makeModelTriangleMesh(target,movedTriangles,`${target.name||'Object'}_${tool}_Cap`);
     }else{
       indices.forEach(index=>{const v=new THREE.Vector3().fromBufferAttribute(pos,index),next=center.clone().add(v.sub(center).multiplyScalar(1.18));pos.setXYZ(index,next.x,next.y,next.z);});
+      pos.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
     }
-    pos.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
   }
   if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
   r.componentSelection=null;r.componentTarget=null;r.componentStart=null;r.transform.detach();
   pushModelHistory();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent=tool==='joint'?'Шарнир создан':`Инструмент: ${tool}`;return true;
 }
-function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale'].includes(tool)&&button.dataset.modelTool===tool));}
+function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale','move-plane','scale-uniform'].includes(tool)&&button.dataset.modelTool===tool));}
 function setModelTool(tool){
   const r=modelStudio,mesh=r.selected;if(!mesh){toast('Сначала выбери объект','error');return;}
-  if(['move','rotate','scale'].includes(tool)){
+  if(['move','rotate','scale','move-plane','scale-uniform'].includes(tool)){
+    const baseTool=tool==='move-plane'?'move':tool==='scale-uniform'?'scale':tool;
     syncModelTransformToolButtons(tool);
     if(r.mode!=='object'&&!r.componentSelection){toast('Сначала выбери точку, ребро или грань','error');return;}
-    r.transform.enabled=true;r.transform.attach(r.mode==='object'?mesh:r.componentPivot);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[tool]);
+    r.transform.enabled=true;r.transform.attach(r.mode==='object'?mesh:r.componentPivot);
+    r.transform.setSpace('world');
+    r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[baseTool]);
+    r.transform.showX=r.transform.showY=r.transform.showZ=true;
     if(r.mode==='object')$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));
+    if(tool==='move-plane')toast('Перетаскивай плоские ручки XY, YZ или XZ для движения сразу по двум осям');
+    if(tool==='scale-uniform')toast('Потяни центральную ручку XYZ для равномерного масштаба');
     return;
   }
   if(['extrude','inset','cut','bevel','sharpen','joint'].includes(tool)||(['delete','duplicate'].includes(tool)&&r.mode!=='object')){applyModelComponentTool(tool);return;}

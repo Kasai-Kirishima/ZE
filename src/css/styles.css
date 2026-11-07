@@ -377,7 +377,7 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
 }
 
 
-/* ZeroEngine 0.9.5 — model object list and component inspector */
+/* ZeroEngine 0.9.6 — model object list and component inspector */
 .model-object-item{display:flex;align-items:center;gap:5px;margin:4px 0;min-width:0}
 .model-object-item .model-object-row{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;margin:0}
 .model-object-delete{flex:0 0 30px;height:30px;border:1px solid #704747;border-radius:6px;background:#382323;color:#ffd0d0;font-size:18px;line-height:1;cursor:pointer}
@@ -396,3 +396,25 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
 .model-viewport-tools button.active,.model-viewport-tools button:hover{background:var(--accent,#a5ef4c);color:#101510;border-color:var(--accent,#a5ef4c)}
 .model-viewport-transforms button{min-width:34px;font-size:16px}
 @media(max-width:700px){.model-viewport-tools{left:5px;top:5px;max-width:calc(100% - 10px);gap:3px}.model-viewport-tools button{min-height:36px;padding:5px 7px;font-size:9px}.model-viewport-modes,.model-viewport-transforms{padding:3px}}
+
+
+/* ZeroEngine 0.9.6 — model project deletion, reliable mobile panels and free transforms */
+.model-project-choice-row{display:flex;align-items:stretch;gap:7px;min-width:0}
+.model-project-choice-row .model-project-choice{flex:1;min-width:0}
+.model-project-delete{flex:0 0 40px;min-height:40px;border:1px solid #754848;border-radius:7px;background:#382323;color:#ffd0d0;font-size:22px;cursor:pointer}
+.model-project-delete:hover{background:#6b2f2f;border-color:#d77777}
+.model-transform-tools{grid-template-columns:repeat(2,minmax(0,1fr))}
+.model-transform-tools button[data-model-tool="move-plane"],.model-transform-tools button[data-model-tool="scale-uniform"]{border-color:#64849a;background:color-mix(in srgb,#64849a 13%,var(--surface,#292d30))}
+.model-transform-tools button.active{outline:2px solid var(--accent,#a5ef4c);outline-offset:1px}
+@media(max-width:850px){
+  #model-studio{height:100dvh;max-height:100dvh;overflow:hidden}
+  #model-studio .model-studio-layout{position:relative;display:block;min-width:0;min-height:0;height:100%;overflow:hidden}
+  #model-studio .model-tools,#model-studio .model-viewport,#model-studio .model-inspector{position:absolute;inset:0;width:100%;height:100%;max-height:none;min-width:0;min-height:0;box-sizing:border-box;grid-column:auto;grid-row:auto;}
+  #model-studio .model-studio-layout[data-active-panel="viewport"] .model-tools,#model-studio .model-studio-layout[data-active-panel="viewport"] .model-inspector{display:none!important}
+  #model-studio .model-studio-layout[data-active-panel="tools"] .model-viewport,#model-studio .model-studio-layout[data-active-panel="tools"] .model-inspector{display:none!important}
+  #model-studio .model-studio-layout[data-active-panel="inspector"] .model-tools,#model-studio .model-studio-layout[data-active-panel="inspector"] .model-viewport{display:none!important}
+  #model-studio .model-studio-layout[data-active-panel="viewport"] .model-viewport,#model-studio .model-studio-layout[data-active-panel="tools"] .model-tools,#model-studio .model-studio-layout[data-active-panel="inspector"] .model-inspector{display:block!important}
+  #model-studio .model-tools,#model-studio .model-inspector{overflow:auto;overscroll-behavior:contain;background:var(--panel,#202326)}
+  #model-studio .model-viewport{overflow:hidden;background:#202326}
+  #model-studio .model-viewport canvas{width:100%;height:100%;display:block}
+}

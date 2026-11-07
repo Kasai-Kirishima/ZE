@@ -1,4 +1,4 @@
-# ZeroEngine 0.9.5
+# ZeroEngine 0.9.6
 
 ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
 
@@ -19,7 +19,7 @@ The **3D-моделирование** entry is on the home screen. Choose an exi
 - Early face push/inset/bevel/sharpen/cut/joint tools, image reference planes, image texture assignment, basic canvas paint, material controls and UV repeat/offset.
 - GLB export to project `Assets/Models`; saved assets are included in project ZIP export. A selected model can be converted into a `Player` entity.
 
-## Changes in 0.9.5
+## Changes in 0.9.6
 
 - Added a delete control beside every model in the Model Studio object list.
 - Fixed component editing tools and transform gizmo behavior for vertex, edge and face selections; selected components can be translated, rotated and scaled directly in the viewport.
@@ -58,7 +58,7 @@ This remains an early browser modeling workspace, not a Blender replacement. Com
 
 Projects are stored locally in IndexedDB. Export ZIP regularly to back them up or move them to another device.
 
-## ZeroEngine 0.9.5
+## ZeroEngine 0.9.6
 
 - ZeroBox and UI Designer now open as exclusive full-screen workspaces; the scene is blocked until the workspace is closed.
 - Play Mode first persists the project and refuses to start if saving fails or no ZeroBox exists.
@@ -66,3 +66,10 @@ Projects are stored locally in IndexedDB. Export ZIP regularly to back them up o
 - Added a `Joystick` logic block with selectable UI joystick and X/Y data ports. Connect its X/Y outputs to the matching data inputs on `Moving` to drive movement from that joystick.
 - UI Designer supports multiple named interfaces, duplication/deletion, and screen-navigation buttons.
 - Mobile workspaces use a desktop-like tool layout adapted into stacked panels, keeping the canvas and properties accessible.
+
+
+## 0.9.6
+- Project deletion is available directly in the 3D Model Studio project picker.
+- Mobile Model Studio panels now occupy one full-screen layer at a time; the viewport no longer leaves a stray side panel visible.
+- Face extrusion, inset and bevel now create a translated cap and connecting side walls while preserving the original face, preventing the selected face from being pulled away and leaving a hole.
+- Added plane translation and uniform scaling controls alongside axis transforms.
