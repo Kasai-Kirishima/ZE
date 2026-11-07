@@ -521,7 +521,7 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
 #model-studio canvas.model-tool-cursor{cursor:crosshair}
 
 
-/* v0.10.0: direct axis views, touch targets and preview-menu actions. */
+/* v0.10.1: direct axis views, touch targets and preview-menu actions. */
 .play-top-actions{display:flex;align-items:center;gap:8px}
 .model-viewport-views{position:absolute;right:10px;top:10px;z-index:5;display:flex;align-items:center;gap:4px;padding:5px 7px;border:1px solid #ffffff30;border-radius:8px;background:#10171dcc;backdrop-filter:blur(8px)}
 .model-viewport-views span{padding:0 4px;color:#b9c4c7;font-size:10px;text-transform:uppercase;letter-spacing:.06em}

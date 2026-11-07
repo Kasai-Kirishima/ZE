@@ -1,6 +1,13 @@
-# ZeroEngine 0.10.0
+# ZeroEngine 0.10.1
 
 ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
+
+## Changes in 0.10.1 — button hotfix
+
+- Fixed an unclosed `root.innerHTML` template in `renderInspector()`. It caused the ES module parser to reject the entire `app.js` file, so none of the editor's click handlers were installed.
+- Closed the inspector template before the event-binding code. The inspector controls and the rest of the app now remain executable JavaScript.
+- Verified the complete app script in ES-module syntax mode and ran the startup/binding path against a DOM test double: startup completed and 66 event listeners were registered, including the home, project, editor and Model Studio controls.
+- This is a targeted stability hotfix; it does not claim that every modeling operation has been exhaustively tested in a real browser.
 
 ## Run
 
@@ -99,7 +106,7 @@ Projects are stored locally in IndexedDB. Export ZIP regularly to back them up o
 - Перерасчёт размера canvas привязан к реальной видимой области 3D-сцены и изменению размеров visual viewport.
 
 
-## 0.10.0
+## 0.10.1
 
 - Expanded the scene primitive menu to 20 basic shapes, matching Model Studio.
 - Kept right-button drag marquee selection in the scene viewport; every object whose projected bounds intersect the selection frame is selected.

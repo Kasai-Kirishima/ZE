@@ -1536,7 +1536,7 @@ function renderInspector() {
       <label class="check-line"><input type="checkbox" id="texture-seamless" ${material.seamless===true?'checked':''}/> Сглаживать стыки текстуры</label>
       <label class="field-label">Ширина сглаживания <span id="texture-seam-value">${Math.round(Number(material.seamWidth??.12)*100)}%</span><input class="field-input" id="texture-seam-width" type="range" min="0.03" max="0.24" step="0.01" value="${Number(material.seamWidth??.12)}" /></label>
       <div class="modal-note">Обрабатываются противоположные края текстуры. Оригинальный файл не изменяется.</div>
-    </div></section>` : ''}
+    </div></section>` : ''}`;
   $('#ins-name')?.addEventListener('change', event => { entity.name = event.target.value.trim() || 'Object'; const obj = sceneObjects.get(entity.id); if (obj) obj.name = entity.name; renderHierarchy(); updateSelectedStatus(); scheduleSave(); });
   $('#ins-visible')?.addEventListener('change', event => { entity.visible = event.target.checked; const obj = sceneObjects.get(entity.id); if (obj) obj.visible = entity.visible; setAllEditorMaterials(); scheduleSave(); });
   if (entity.type === 'player') {
