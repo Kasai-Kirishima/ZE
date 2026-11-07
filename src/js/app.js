@@ -91,8 +91,11 @@ let heldKeys = new Set();
 let heldButtonIds = new Set();
 let heldZeroTimers = new Map();
 let previewYaw = 0, previewPitch = -0.18;
+let workbenchMobilePanel = 'canvas';
+const viewportTouchPointers = new Map();
+let viewportTouchGesture = null;
 let editorCameraMode = 'perspective';
-let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false };
+let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false, sculptSettings:{radius:.55,strength:.08,shape:'circle',action:'raise'}, sculptStroke:null, sculptRaf:0, cutStroke:null, cutSettings:{count:3,spacing:.28,angle:90,offset:0} };
 let deviceSettings = { profile:'auto', width:window.innerWidth||1280, height:window.innerHeight||720 };
 const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey','Circle','Ring','Pyramid','Hexagonal Prism','Octahedron','Dodecahedron','Tetrahedron','Tube','Spring','Wedge'];
 let currentLanguage = 'ru';
@@ -651,13 +654,14 @@ function init3DEditor() {
   axesHelper = new THREE.AxesHelper(2.3); scene.add(axesHelper);
   transform = new TransformControls(editorCamera, canvas);
   transform.setMode('translate');
-  transform.setSize(window.matchMedia?.('(pointer: coarse)').matches?1.3:0.85);
+  transform.setSize(window.matchMedia?.('(pointer: coarse)').matches?1.9:0.95);
   transform.addEventListener('dragging-changed', event => { if (event.value) snapshotHistory(); orbit.enabled = !event.value && !isPlaying; });
   transform.addEventListener('objectChange', () => { syncSelectedTransform(); updateInspectorTransformValues(); });
   transform.addEventListener('mouseUp', () => { scheduleSave(); });
   scene.add(transform.getHelper());
   raycaster = new THREE.Raycaster(); pointer = new THREE.Vector2();
   canvas.addEventListener('pointerdown', onViewportPointerDown, true);
+  bindViewportTouchTransform();
   canvas.addEventListener('wheel', event => { event.preventDefault(); }, { passive: false });
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('dragenter', event => { event.preventDefault(); $('#viewport-drop-overlay').classList.add('visible'); });
@@ -830,7 +834,145 @@ function startSceneBoxSelection(event){
   const cancel=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',finish);selection.remove();if(orbit)orbit.enabled=oldOrbit!==false&&!isPlaying;};
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',finish);document.addEventListener('pointercancel',cancel);
 }
+function viewportPointerNDC(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  return new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+}
+function getEntityAtViewportPoint(clientX, clientY) {
+  const ndc = viewportPointerNDC(clientX, clientY);
+  if (!ndc) return null;
+  raycaster.setFromCamera(ndc, editorCamera);
+  const candidates = [];
+  for (const object of sceneObjects.values()) object.traverse(child => { if (child.isMesh && child.visible) candidates.push(child); });
+  const hit = raycaster.intersectObjects(candidates, false)[0];
+  let target = hit?.object || null;
+  while (target && !target.userData.entityId) target = target.parent;
+  return target?.userData.entityId ? { entityId: target.userData.entityId, point: hit.point.clone() } : null;
+}
+function setTouchGestureOrbit(enabled) {
+  if (orbit) orbit.enabled = !!enabled && !isPlaying && !viewportTouchGesture;
+}
+function updateViewportTouchGesture(event) {
+  if (!viewportTouchGesture || !renderer || isPlaying) return;
+  const gesture = viewportTouchGesture;
+  if (gesture.type === 'pinch') {
+    const a = viewportTouchPointers.get(gesture.pointerIds[0]);
+    const b = viewportTouchPointers.get(gesture.pointerIds[1]);
+    if (!a || !b) return;
+    const distance = Math.max(8, Math.hypot(a.x - b.x, a.y - b.y));
+    const factor = THREE.MathUtils.clamp(distance / gesture.startDistance, .05, 20);
+    gesture.object.scale.set(
+      THREE.MathUtils.clamp(gesture.startScale[0] * factor, .01, 100),
+      THREE.MathUtils.clamp(gesture.startScale[1] * factor, .01, 100),
+      THREE.MathUtils.clamp(gesture.startScale[2] * factor, .01, 100)
+    );
+  } else if (gesture.type === 'scale-drag') {
+    const start = gesture.startPointer;
+    const factor = Math.exp(THREE.MathUtils.clamp((start.y - event.clientY) * .008, -4, 4));
+    gesture.object.scale.set(
+      THREE.MathUtils.clamp(gesture.startScale[0] * factor, .01, 100),
+      THREE.MathUtils.clamp(gesture.startScale[1] * factor, .01, 100),
+      THREE.MathUtils.clamp(gesture.startScale[2] * factor, .01, 100)
+    );
+  } else if (gesture.type === 'move') {
+    const ndc = viewportPointerNDC(event.clientX, event.clientY);
+    if (!ndc) return;
+    raycaster.setFromCamera(ndc, editorCamera);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(gesture.plane, hit)) {
+      gesture.object.position.copy(hit.add(gesture.offset));
+    }
+  }
+  const entity = findEntity(gesture.entityId);
+  if (entity) {
+    entity.position = gesture.object.position.toArray();
+    entity.scale = gesture.object.scale.toArray();
+    entity.rotation = [gesture.object.rotation.x, gesture.object.rotation.y, gesture.object.rotation.z].map(v => THREE.MathUtils.radToDeg(v));
+    updateSelectedStatus();
+    updateInspectorTransformValues();
+    updateSelectionHelpers();
+  }
+}
+function finishViewportTouchPointer(event) {
+  if (!viewportTouchPointers.has(event.pointerId)) return;
+  viewportTouchPointers.delete(event.pointerId);
+  if (viewportTouchGesture && viewportTouchGesture.pointerIds.includes(event.pointerId)) {
+    const entity = findEntity(viewportTouchGesture.entityId);
+    if (entity) {
+      entity.position = sceneObjects.get(entity.id)?.position.toArray() || entity.position;
+      entity.scale = sceneObjects.get(entity.id)?.scale.toArray() || entity.scale;
+      syncSelectedTransform();
+      renderInspector(); renderHierarchy(); scheduleSave();
+    }
+    viewportTouchGesture = null;
+    if (orbit) orbit.enabled = !isPlaying;
+  }
+}
+function handleViewportTouchPointerDown(event) {
+  if (event.pointerType !== 'touch' || isPlaying || !renderer || event.target !== renderer.domElement) return false;
+  viewportTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  const capture = () => { try { renderer.domElement.setPointerCapture(event.pointerId); } catch {} };
+  if (viewportTouchPointers.size >= 2) {
+    const object = selectedId ? sceneObjects.get(selectedId) : null;
+    if (!object) return false;
+    const pointerIds = [...viewportTouchPointers.keys()].slice(0, 2);
+    const a = viewportTouchPointers.get(pointerIds[0]), b = viewportTouchPointers.get(pointerIds[1]);
+    viewportTouchGesture = {
+      type: 'pinch', pointerIds, entityId: selectedId, object,
+      startDistance: Math.max(8, Math.hypot(a.x - b.x, a.y - b.y)),
+      startScale: object.scale.toArray()
+    };
+    snapshotHistory(); capture(); event.preventDefault(); event.stopImmediatePropagation();
+    if (orbit) orbit.enabled = false;
+    return true;
+  }
+  const hit = getEntityAtViewportPoint(event.clientX, event.clientY);
+  if (!hit) { viewportTouchPointers.delete(event.pointerId); return false; }
+  if (selectedId !== hit.entityId) selectObject(hit.entityId);
+  const entity = findEntity(hit.entityId), object = sceneObjects.get(hit.entityId);
+  if (!entity || !object || !transform) return false;
+  const mode = transform.getMode();
+  if (!['translate', 'scale'].includes(mode)) { viewportTouchPointers.delete(event.pointerId); return false; }
+  snapshotHistory();
+  viewportTouchGesture = {
+    type: mode === 'scale' ? 'scale-drag' : 'move',
+    pointerIds: [event.pointerId], entityId: hit.entityId, object,
+    startPointer: { x: event.clientX, y: event.clientY }, startScale: object.scale.toArray()
+  };
+  if (mode === 'translate') {
+    const normal = editorCamera.getWorldDirection(new THREE.Vector3()).normalize();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, object.position);
+    const ndc = viewportPointerNDC(event.clientX, event.clientY);
+    raycaster.setFromCamera(ndc, editorCamera);
+    const point = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    if (!point) { viewportTouchGesture = null; viewportTouchPointers.delete(event.pointerId); return false; }
+    viewportTouchGesture.plane = plane;
+    viewportTouchGesture.offset = object.position.clone().sub(point);
+  }
+  capture(); event.preventDefault(); event.stopImmediatePropagation();
+  if (orbit) orbit.enabled = false;
+  return true;
+}
+function bindViewportTouchTransform() {
+  const canvas = renderer?.domElement;
+  if (!canvas || canvas.dataset.touchTransformBound) return;
+  canvas.dataset.touchTransformBound = '1';
+  canvas.addEventListener('pointermove', event => {
+    if (!viewportTouchPointers.has(event.pointerId)) return;
+    viewportTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (viewportTouchGesture && viewportTouchGesture.pointerIds.includes(event.pointerId)) {
+      updateViewportTouchGesture(event);
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener('pointerup', finishViewportTouchPointer);
+  canvas.addEventListener('pointercancel', finishViewportTouchPointer);
+  canvas.addEventListener('lostpointercapture', finishViewportTouchPointer);
+}
+
 function onViewportPointerDown(event) {
+  if (handleViewportTouchPointerDown(event)) return;
   if(isPlaying||transform?.dragging)return;
   if(event.button===2){event.preventDefault();event.stopImmediatePropagation();startSceneBoxSelection(event);return;}
   if(event.button!==0)return;
@@ -866,7 +1008,7 @@ function onKeyDown(event) {
     if (key==='e') { setModelTool('rotate'); return; }
     if (key==='r') { setModelTool('scale'); return; }
     if (event.key==='Delete'||event.key==='Backspace') { setModelTool('delete'); return; }
-    if (event.key==='Escape') { if(modelStudio.activeTool){modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;clearModelCreationPreview();modelStudio.mode='object';$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.remove('active'));modelStudio.transform.enabled=true;if(modelStudio.selected)modelStudio.transform.attach(modelStudio.selected);$('#model-selection-info').textContent='Инструмент отменён';return;} closeModelStudio(); return; }
+    if (event.key==='Escape') { if(modelStudio.activeTool){modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;clearModelCreationPreview();modelStudio.mode='object';$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===modelStudio.mode));$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.remove('active'));modelStudio.transform.enabled=true;if(modelStudio.selected)modelStudio.transform.attach(modelStudio.selected);$('#model-selection-info').textContent='Инструмент отменён';return;} closeModelStudio(); return; }
     return;
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); exportProjectZip(); return; }
@@ -980,7 +1122,7 @@ function addObjectToScene(type = 'primitive', options = {}) {
     cameraMount: type === 'player' ? { mode: 'back', offset: [0,1.6,0], fov: 70 } : undefined,
     collision: type === 'player' ? { enabled: true, shape: 'capsule', size: [.6,1.8,.6], offset: [0,.9,0], isTrigger: false } : type === 'primitive' ? { enabled: true, shape: 'box', size: ({plane:[4,.05,4],sphere:[1.4,1.4,1.4],cylinder:[1.1,1.2,1.1],cone:[1.4,1.35,1.4],capsule:[.84,1.54,.84]})[options.primitive] || [1.2,1.2,1.2], offset: [0,0,0], isTrigger: false } : type === 'model' ? { enabled: true, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false, autoFit: true } : { enabled: false, shape: 'box', size: [1,1,1], offset: [0,0,0], isTrigger: false },
     physics: type === 'player' ? { enabled: true, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 } : { enabled: false, useGravity: true, mass: 1, velocity: [0,0,0], linearDamping: .05 },
-    material: { color: '#a5ef4c', roughness: .72, tileX: 1, tileY: 1, seamless:false, seamWidth:.12 },
+    material: { color: '#ffffff', roughness: .72, tileX: 1, tileY: 1, seamless:false, seamWidth:.12 },
     light: type === 'light' ? { kind: 'point', color: '#fff2d6', intensity: 2, distance: 12 } : undefined,
     environment: type === 'environmentLight' ? { shape:'sphere', size:24, color:'#ffffff', groundColor:'#777777', intensity:1 } : undefined,
     skybox: type === 'skybox' ? { shape:'sphere', tileX:1, tileY:1, smoothing:true, rotationY:0, brightness:1 } : undefined
@@ -1004,7 +1146,7 @@ function createPrimitiveMesh(entity) {
     case 'icosphere': geometry = new THREE.IcosahedronGeometry(.78,1); break;
     case 'monkey': {
       const group = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({ color: entity.material?.color || '#a5ef4c', roughness: Number(entity.material?.roughness ?? .72), metalness: Number(entity.material?.metalness ?? 0) });
+      const mat = new THREE.MeshStandardMaterial({ color: entity.material?.color || '#ffffff', roughness: Number(entity.material?.roughness ?? .72), metalness: Number(entity.material?.metalness ?? 0) });
       const head = new THREE.Mesh(new THREE.SphereGeometry(.58,20,14),mat); head.scale.set(1,1.05,.82); group.add(head);
       for (const side of [-1,1]) { const ear = new THREE.Mesh(new THREE.SphereGeometry(.25,14,10),mat); ear.position.set(side*.54,.3,0); group.add(ear); }
       const muzzle = new THREE.Mesh(new THREE.SphereGeometry(.28,14,10),mat); muzzle.position.set(0,-.14,.43); muzzle.scale.set(.9,.65,.65); group.add(muzzle);
@@ -1019,10 +1161,10 @@ function createPrimitiveMesh(entity) {
     case 'tetrahedron': geometry = new THREE.TetrahedronGeometry(.9,0); break;
     case 'tube': { const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0,-.8,0),new THREE.Vector3(-.5,-.2,0),new THREE.Vector3(.45,.2,0),new THREE.Vector3(0,.8,0)]); geometry = new THREE.TubeGeometry(curve,48,.12,10,false); break; }
     case 'spring': geometry = new THREE.TorusKnotGeometry(.48,.11,160,12,2,5); break;
-    case 'wedge': { const g=new THREE.BufferGeometry(); const v=[-.8,-.55,-.65,.8,-.55,-.65,.8,-.55,.65,-.8,-.55,.65,-.8,.45,-.65,.8,.45,-.65]; const ids=[0,2,1,0,3,2,0,1,5,0,5,4,1,2,5,2,3,4,2,4,5,3,0,4]; g.setAttribute('position',new THREE.Float32BufferAttribute(v,3)); g.setIndex(ids); g.computeVertexNormals(); geometry=g; break; }
+    case 'wedge': { const g=new THREE.BufferGeometry(); const v=[-.8,-.65,-.55,.8,-.65,-.55,.8,.65,-.55,-.8,.65,-.55,-.8,-.65,.45,.8,-.65,.45]; const ids=[0,2,1,0,3,2,0,1,5,0,5,4,1,2,5,2,3,4,2,4,5,3,0,4]; g.setAttribute('position',new THREE.Float32BufferAttribute(v,3)); g.setIndex(ids); g.computeVertexNormals(); geometry=g; break; }
     default: geometry = new THREE.BoxGeometry(1.2, 1.2, 1.2);
   }
-  const material = new THREE.MeshStandardMaterial({ color: entity.material?.color || '#a5ef4c', roughness: Number(entity.material?.roughness ?? .72), metalness: Number(entity.material?.metalness ?? 0) });
+  const material = new THREE.MeshStandardMaterial({ color: entity.material?.color || '#ffffff', roughness: Number(entity.material?.roughness ?? .72), metalness: Number(entity.material?.metalness ?? 0) });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.castShadow = false; mesh.receiveShadow = false;
   return mesh;
@@ -1437,7 +1579,7 @@ function applyTextureToSelection(assetId) {
 
 function materialDataFromEntity(entity, name='Material') {
   const m=entity?.material||{};
-  return { id:uid(), name, color:m.color||'#a5ef4c', roughness:Number(m.roughness??.72), metalness:Number(m.metalness??0), opacity:Number(m.opacity??1), textureAssetId:m.textureAssetId||null, tileX:Number(m.tileX||1), tileY:Number(m.tileY||1), seamless:m.seamless===true, seamWidth:Number(m.seamWidth??.12) };
+  return { id:uid(), name, color:m.color||'#ffffff', roughness:Number(m.roughness??.72), metalness:Number(m.metalness??0), opacity:Number(m.opacity??1), textureAssetId:m.textureAssetId||null, tileX:Number(m.tileX||1), tileY:Number(m.tileY||1), seamless:m.seamless===true, seamWidth:Number(m.seamWidth??.12) };
 }
 function saveMaterialToLibrary(entity=findEntity(selectedId)) {
   if(!entity){toast('Сначала выбери объект','error');return;}
@@ -1446,7 +1588,7 @@ function saveMaterialToLibrary(entity=findEntity(selectedId)) {
   $('#save-material-form').addEventListener('submit',event=>{event.preventDefault();draft.name=$('#material-name').value.trim()||'Material';currentProject.materials ||= [];currentProject.materials.push(draft);closeModal();setAssetTab('materials');scheduleSave();toast('Материал сохранён в библиотеку проекта','success');});
 }
 function createMaterial() {
-  const draft={id:uid(),name:`Material_${(currentProject.materials||[]).length+1}`,color:'#b8b8b8',roughness:.72,metalness:0,opacity:1,textureAssetId:null,tileX:1,tileY:1,seamless:false,seamWidth:.12};
+  const draft={id:uid(),name:`Material_${(currentProject.materials||[]).length+1}`,color:'#ffffff',roughness:.72,metalness:0,opacity:1,textureAssetId:null,tileX:1,tileY:1,seamless:false,seamWidth:.12};
   showModal(`<div class="modal-header"><div><span class="panel-kicker">MATERIAL LIBRARY</span><h2 id="modal-title">Новый материал</h2><p>Создай базовый материал, который можно назначать разным объектам.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="new-material-form"><div class="modal-body"><label class="field-label">Название<input class="field-input" id="new-material-name" value="${draft.name}" required maxlength="64" /></label><label class="field-label">Цвет<input class="field-input" id="new-material-color" type="color" value="${draft.color}" /></label><label class="field-label">Шероховатость<input class="field-input" id="new-material-rough" type="number" min="0" max="1" step=".01" value=".72" /></label><label class="field-label">Металличность<input class="field-input" id="new-material-metal" type="number" min="0" max="1" step=".01" value="0" /></label><label class="field-label">Текстура<select class="field-select" id="new-material-texture"><option value="">Без текстуры</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select></label><div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="new-material-tile-x" type="number" min=".01" step=".1" value="1" /></label><label class="field-label">Tiling Y<input class="field-input" id="new-material-tile-y" type="number" min=".01" step=".1" value="1" /></label></div></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary">Создать</button></div></form>`);
   $('#new-material-form').addEventListener('submit',event=>{event.preventDefault();draft.name=$('#new-material-name').value.trim()||draft.name;draft.color=$('#new-material-color').value;draft.roughness=Math.max(0,Math.min(1,Number($('#new-material-rough').value)||0));draft.metalness=Math.max(0,Math.min(1,Number($('#new-material-metal').value)||0));draft.textureAssetId=$('#new-material-texture').value||null;draft.tileX=Math.max(.01,Number($('#new-material-tile-x').value)||1);draft.tileY=Math.max(.01,Number($('#new-material-tile-y').value)||1);currentProject.materials ||= [];currentProject.materials.push(draft);closeModal();renderAssetPanel();scheduleSave();toast('Материал создан','success');});
 }
@@ -1529,7 +1671,7 @@ function renderInspector() {
     ${entity.type === 'model' ? `<section class="inspector-section"><div class="inspector-section-title">Масштаб модели <span>MODEL UNITS</span></div><div class="inspector-section-body"><label class="field-label">Единицы исходной модели<select class="field-select" id="model-unit-mode"><option value="auto" ${(entity.unitMode||'auto')==='auto'?'selected':''}>Автоопределение</option><option value="meters" ${entity.unitMode==='meters'?'selected':''}>Метры (×1)</option><option value="centimeters" ${entity.unitMode==='centimeters'?'selected':''}>Сантиметры (×0.01)</option><option value="millimeters" ${entity.unitMode==='millimeters'?'selected':''}>Миллиметры (×0.001)</option></select></label><button class="button" id="apply-model-units">Применить единицы</button><div class="modal-note">Автоопределение исправляет типичные FBX/Blender расхождения. Для точного размера можно выбрать единицы вручную; окончательный масштаб также регулируется выше в Transform.</div></div></section><section class="inspector-section"><div class="inspector-section-title">Анимации и скелет <span>ANIMATION</span></div><div class="inspector-section-body"><label class="field-label">Клип GLTF/FBX<select class="field-select" id="model-animation-select"><option value="">Выбери анимацию</option>${(entity.availableAnimations||[]).map(name=>`<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join('')}</select></label><div class="inspector-actions"><button class="button" id="play-model-animation">▶ Проиграть</button><button class="button" id="stop-model-animation">■ Стоп</button></div><div class="modal-note" id="skeleton-info">${countSkinnedBones(sceneObjects.get(entity.id))} костей в импортированном скелете · клипы GLTF/FBX доступны выше.</div><button class="button" id="create-basic-rig">＋ Создать базовый скелет</button><div class="modal-note">${entity.rig?.bones?.map(b=>escapeHtml(b.name)).join(' · ')||'Собственный скелет ещё не создан.'}</div></div></section>` : ''}
     ${!['camera','spawn','light','skybox'].includes(entity.type) ? `<section class="inspector-section"><div class="inspector-section-title">Анимация объекта <span>KEYFRAMES</span></div><div class="inspector-section-body"><div class="inspector-actions"><button class="button" id="add-transform-key">＋ Записать ключ</button><button class="button" id="play-custom-animation">▶ Проиграть</button><button class="button" id="stop-custom-animation">■ Стоп</button></div><div id="custom-animation-list" class="modal-note">${(entity.animations||[]).map(a=>`${escapeHtml(a.name)} — ${a.keys?.length||0} ключей`).join('<br>') || 'Пользовательских анимаций пока нет.'}</div></div></section>` : ''}
     ${entity.type!=='skybox' ? `<section class="inspector-section"><div class="inspector-section-title">Материал <span>MATERIAL</span></div><div class="inspector-section-body">
-      <label class="field-label">Основной цвет<input class="field-input" id="ins-color" type="color" value="${escapeAttr(material.color || '#a5ef4c')}" /></label>
+      <label class="field-label">Основной цвет<input class="field-input" id="ins-color" type="color" value="${escapeAttr(material.color || '#ffffff')}" /></label>
       <label class="field-label">Шероховатость <span id="roughness-value">${Number(material.roughness ?? .72).toFixed(2)}</span><input class="field-input" id="ins-roughness" type="range" min="0" max="1" step=".01" value="${Number(material.roughness ?? .72)}" /></label>
       <label class="field-label">Текстура ${textureAsset ? `<span>${escapeHtml(textureAsset.name)}</span>` : ''}<button class="button button-quiet" id="choose-texture-button">${textureAsset ? 'Заменить текстуру' : 'Назначить из файлов'}</button></label><label class="field-label">Библиотека материалов<select class="field-select" id="ins-material-select"><option value="">Выбери сохранённый материал</option>${(currentProject.materials||[]).map(m=>`<option value="${m.id}" ${material.materialId===m.id?'selected':''}>${escapeHtml(m.name)}</option>`).join('')}</select></label><button class="button" id="apply-library-material">Применить материал</button><button class="button button-quiet" id="save-material-to-library">＋ Сохранить материал в библиотеку</button>
       <div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="tile-x" type="number" min="0.01" max="100" step="0.1" value="${Number(material.tileX || 1)}" /></label><label class="field-label">Tiling Y<input class="field-input" id="tile-y" type="number" min="0.01" max="100" step="0.1" value="${Number(material.tileY || 1)}" /></label></div>
@@ -1611,10 +1753,25 @@ function renderInspector() {
   $('#save-material-to-library')?.addEventListener('click',()=>saveMaterialToLibrary(entity));
   $('#apply-library-material')?.addEventListener('click',()=>{const saved=currentProject.materials?.find(m=>m.id===$('#ins-material-select')?.value);if(saved)applyMaterialToEntity(entity,saved);else toast('Выбери материал из библиотеки','error');});
   bindVectorInputs();
+  $$('[data-vector-step]').forEach(button => button.addEventListener('click', () => {
+    const entity = findEntity(selectedId), object = sceneObjects.get(selectedId); if (!entity || !object) return;
+    const prefix = button.dataset.vectorPrefix, axis = Number(button.dataset.vectorAxis), delta = Number(button.dataset.vectorStep) || 0;
+    const key = prefix === 'pos' ? 'position' : prefix === 'rot' ? 'rotation' : 'scale';
+    entity[key] ||= prefix === 'scale' ? [1,1,1] : [0,0,0];
+    snapshotHistory();
+    let next = Number(entity[key][axis] ?? (prefix === 'scale' ? 1 : 0)) + delta;
+    if (prefix === 'scale') next = Math.max(.01, Math.min(100, next));
+    next = Number(next.toFixed(3)); entity[key][axis] = next;
+    if (prefix === 'pos') object.position.setComponent(axis, next);
+    else if (prefix === 'rot') object.rotation.setComponent(axis, THREE.MathUtils.degToRad(next));
+    else object.scale.setComponent(axis, next);
+    updateInspectorTransformValues(); updateSelectionHelpers(); updateSelectedStatus(); scheduleSave();
+  }));
 }
 function vectorFields(label, prefix, values) {
   const axes = ['x','y','z'];
-  return `<div class="field-label">${label}<div class="field-row">${axes.map((axis,index) => `<label class="axis-field"><span class="axis-label ${axis}">${axis.toUpperCase()}</span><input class="field-input" type="number" step="0.1" data-vector="${prefix}" data-axis="${index}" value="${Number(values[index] ?? (prefix === 'scale' ? 1 : 0)).toFixed(2)}" /></label>`).join('')}</div></div>`;
+  const step = prefix === 'rot' ? 1 : .1;
+  return `<div class="field-label vector-group">${label}<div class="field-row">${axes.map((axis,index) => `<div class="axis-field"><span class="axis-label ${axis}">${axis.toUpperCase()}</span><div class="axis-stepper"><button type="button" data-vector-step="-${step}" data-vector-prefix="${prefix}" data-vector-axis="${index}" aria-label="Уменьшить ${axis.toUpperCase()}">−</button><input class="field-input" type="number" step="${step}" data-vector="${prefix}" data-axis="${index}" value="${Number(values[index] ?? (prefix === 'scale' ? 1 : 0)).toFixed(2)}" /><button type="button" data-vector-step="${step}" data-vector-prefix="${prefix}" data-vector-axis="${index}" aria-label="Увеличить ${axis.toUpperCase()}">＋</button></div></div>`).join('')}</div></div>`;
 }
 function bindVectorInputs() {
   $$('[data-vector]:not([data-vector^="col"])').forEach(input => input.addEventListener('change', () => {
@@ -1664,7 +1821,7 @@ async function addAssetsFromFiles(files) {
           currentProject.assets.push({id:textureId,name:textureName,type:'texture',size:blob.size,folder:'Textures',path:`Assets/${textureId}_${safeName(textureName)}`,blob});
           textureAssetId=textureId;
         }
-        const material={id:uid(),name:String(source.name||file.name.replace(/\.zemat$/i,'')),color:source.color||'#b8b8b8',roughness:Number(source.roughness??.72),metalness:Number(source.metalness??0),opacity:Number(source.opacity??1),textureAssetId,tileX:Number(source.tileX||1),tileY:Number(source.tileY||1)};
+        const material={id:uid(),name:String(source.name||file.name.replace(/\.zemat$/i,'')),color:source.color||'#ffffff',roughness:Number(source.roughness??.72),metalness:Number(source.metalness??0),opacity:Number(source.opacity??1),textureAssetId,tileX:Number(source.tileX||1),tileY:Number(source.tileY||1)};
         currentProject.materials ||= [];currentProject.materials.push(material);added++;continue;
       } catch(error) { console.warn('Material import failed',error);errors.push(`${file.name}: некорректный файл материала`);continue; }
     }
@@ -1710,7 +1867,7 @@ function renderAssetPanel() {
     const dictionary=I18N[currentLanguage]||{};
     const roughLabel=dictionary['Шероховатость']||'Шероховатость';
     const metalLabel=dictionary['Металличность']||'Металличность';
-    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#b8b8b8')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
+    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#ffffff')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
     $('#new-material-card').addEventListener('click',createMaterial);
     $$('[data-remove-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();deleteMaterial(button.dataset.removeMaterial);}));
     $$('[data-export-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();exportMaterial(button.dataset.exportMaterial).catch(error=>{console.error(error);toast('Не удалось экспортировать материал','error');});}));
@@ -1725,6 +1882,7 @@ function renderAssetPanel() {
     content.innerHTML = folderBar + (visibleAssets.length ? visibleAssets.map(asset => `
       <div class="asset-card ${selectedAssetId === asset.id ? 'selected' : ''}" data-asset-id="${asset.id}" draggable="${asset.type === 'model'}" title="${escapeAttr(asset.folder ? `${asset.folder}/${asset.name}` : asset.name)}">
         <button class="asset-remove" data-remove-asset="${asset.id}" title="Удалить ресурс">×</button>
+        <button class="asset-rename" data-rename-asset="${asset.id}" title="Переименовать ресурс">✎</button>
         <div class="asset-thumb">${asset.type === 'texture' ? `<img src="${getAssetUrl(asset)}" alt="" />` : iconFor(asset.type)}</div>
         <div class="asset-name">${escapeHtml(asset.name)}</div><div class="asset-meta">${asset.type.toUpperCase()} · ${fmtSize(asset.size || 0)}</div>
         ${asset.type === 'model' ? '<button class="asset-add" title="Добавить на сцену">＋</button>' : ''}
@@ -1732,11 +1890,12 @@ function renderAssetPanel() {
     $$('[data-folder-filter]', content).forEach(button => button.addEventListener('click', () => { assetFolderFilter = button.dataset.folderFilter; renderAssetPanel(); }));
     $$('[data-delete-folder]', content).forEach(button => button.addEventListener('click',event=>{event.stopPropagation();deleteAssetFolder(button.dataset.deleteFolder);}));
     $$('[data-remove-asset]', content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();deleteAsset(button.dataset.removeAsset);}));
+    $$('[data-rename-asset]', content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();renameImportedAsset(button.dataset.renameAsset);}));
     $$('[data-asset-id]', content).forEach(card => {
       const asset = assets.find(item => item.id === card.dataset.assetId);
       if(asset?.type==='model')card.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-model',asset.id);event.dataTransfer.effectAllowed='copy';});
       card.addEventListener('click', event => {
-        if (event.target.closest('.asset-remove')) return;
+        if (event.target.closest('.asset-remove,.asset-rename')) return;
         if (event.target.closest('.asset-add')) { addObjectToScene('model', { assetId: asset.id, name: asset.name.replace(/\.[^.]+$/, '') }); return; }
         selectedAssetId = asset.id;
         if (asset.type === 'model') addObjectToScene('model', { assetId: asset.id, name: asset.name.replace(/\.[^.]+$/, '') });
@@ -1864,6 +2023,24 @@ function getPlayerCameraLocalPosition(mount) {
   if (mount.mode === 'top') return new THREE.Vector3(0, 5, 0);
   return new THREE.Vector3(...(mount.offset || [0,1.6,0]));
 }
+function getHorizontalMovementBasis(targetEntity = null, orientation = 'camera') {
+  const up = new THREE.Vector3(0, 1, 0);
+  let forward;
+  if (orientation === 'world') forward = new THREE.Vector3(0, 0, -1);
+  else if (orientation === 'object' && targetEntity) {
+    forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(up, THREE.MathUtils.degToRad(Number(targetEntity.rotation?.[1]) || 0));
+  } else if (previewCamera) {
+    forward = previewCamera.getWorldDirection(new THREE.Vector3());
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-8) forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(up, previewYaw);
+    else forward.normalize();
+  } else {
+    forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(up, previewYaw);
+  }
+  forward.y = 0; forward.normalize();
+  const right = forward.clone().cross(up).normalize();
+  return { forward, right };
+}
 function syncPreviewCameraToPlayer() {
   if(!previewCamera||!isPlaying)return;
   const player=(activeSceneData()?.objects||[]).find(item=>item.type==='player');
@@ -1921,6 +2098,35 @@ function bindPreviewCameraInput() {
 
 
 // ---------- Play mode ----------
+async function togglePlayFullscreen() {
+  const wrap = $('#viewport-wrap');
+  const button = $('#play-fullscreen-button');
+  if (!wrap) return;
+  try {
+    if (document.fullscreenElement === wrap || wrap.classList.contains('play-fullscreen-fallback')) {
+      if (document.fullscreenElement) await document.exitFullscreen?.();
+      wrap.classList.remove('play-fullscreen-fallback');
+      if (button) button.textContent = '⛶ На весь экран';
+    } else if (wrap.requestFullscreen) {
+      await wrap.requestFullscreen({ navigationUI: 'hide' });
+      if (button) button.textContent = '⛶ Свернуть';
+    } else {
+      wrap.classList.add('play-fullscreen-fallback');
+      if (button) button.textContent = '⛶ Свернуть';
+    }
+    requestAnimationFrame(resizeRenderer);
+  } catch (error) {
+    wrap.classList.add('play-fullscreen-fallback');
+    if (button) button.textContent = '⛶ Свернуть';
+    requestAnimationFrame(resizeRenderer);
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  const active = document.fullscreenElement === $('#viewport-wrap');
+  const button = $('#play-fullscreen-button');
+  if (button && !active && !$('#viewport-wrap')?.classList.contains('play-fullscreen-fallback')) button.textContent = '⛶ На весь экран';
+  requestAnimationFrame(resizeRenderer);
+});
 async function startPlayMode() {
   if (isPlaying) return;
   if (workbenchMode || !$('#workbench-overlay').classList.contains('hidden')) { toast('Сначала закрой ZeroBox или UI Designer', 'error'); return; }
@@ -1972,6 +2178,9 @@ async function startPlayMode() {
 async function stopPlayMode() {
   if(!isPlaying)return;
   if(document.pointerLockElement===renderer?.domElement)document.exitPointerLock?.();
+  const previewWrap=$('#viewport-wrap');
+  if(document.fullscreenElement===previewWrap){try{await document.exitFullscreen?.();}catch{}}
+  previewWrap?.classList.remove('play-fullscreen-fallback');
   $('#viewport-wrap')?.classList.remove('preview-camera-active');
   isPlaying=false;previewCamera=null;orbit.enabled=true;heldKeys.clear();heldButtonIds.clear();gameSpeedMultiplier=1;
   gridHelper.visible=axesHelper.visible=activeSceneData()?.grid!==false;
@@ -2209,7 +2418,16 @@ function bindUI() {
   $('#model-paint-canvas').addEventListener('pointercancel',endModelPaint);
   $$('#model-studio [data-model-mode]').forEach(b=>b.addEventListener('click',()=>setModelMode(b.dataset.modelMode)));
   $$('#model-studio [data-model-tool]').forEach(b=>b.addEventListener('click',()=>runModelTool(b.dataset.modelTool)));
+  $$('#model-studio [data-model-panel]').forEach(b=>b.addEventListener('click',()=>setModelMobilePanel(b.dataset.modelPanel)));
+  $('#model-create-face-finish').addEventListener('click',finishModelFaceCreation);
+  $('#model-tool-cancel').addEventListener('click',cancelModelActiveTool);
+  $('#model-sculpt-radius').addEventListener('input',e=>{modelStudio.sculptSettings.radius=Number(e.target.value);$('#model-sculpt-radius-value').textContent=Number(e.target.value).toFixed(2);});
+  $('#model-sculpt-strength').addEventListener('input',e=>{modelStudio.sculptSettings.strength=Number(e.target.value);$('#model-sculpt-strength-value').textContent=Number(e.target.value).toFixed(3);});
+  $$('[data-sculpt-shape]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.shape=b.dataset.sculptShape;$$('[data-sculpt-shape]').forEach(x=>x.classList.toggle('active',x===b));}));
+  $$('[data-sculpt-action]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.action=b.dataset.sculptAction;$$('[data-sculpt-action]').forEach(x=>x.classList.toggle('active',x===b));}));
+  $('#model-cut-open-2d').addEventListener('click',openModelCut2DEditor);
   $$('#model-studio [data-model-mirror]').forEach(b=>b.addEventListener('click',()=>mirrorModelObject(Number(b.dataset.modelMirror))));
+  $$('#model-studio [data-model-view]').forEach(b=>b.addEventListener('click',()=>snapModelView(b.dataset.modelView)));
   $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>`<button type="button" data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇','♟','○','◌','⌂','⬡','◇','⬟','△','∿','⟲','◩'][i]} ${n}</button>`).join('');
   $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
   $('#close-workbench').addEventListener('click', closeWorkbench);
@@ -2217,7 +2435,7 @@ function bindUI() {
   $('#workbench-save').addEventListener('click', async () => { const ok=await saveProject(false); if(ok)toast('ZeroBox и интерфейсы сохранены','success'); });
   $('#workbench-run').addEventListener('click', () => { const box = currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if (box) runZeroBox(box, 'manual'); else toast('Выбери ZeroBox', 'error'); });
   $('#stop-play-button').addEventListener('click', stopPlayMode);
-  $('#play-home-button')?.addEventListener('click', async()=>{await stopPlayMode();await saveProject(false);showHome();});
+  $('#play-fullscreen-button')?.addEventListener('click', togglePlayFullscreen);
   $('#toggle-hierarchy').addEventListener('click', () => $('#hierarchy-panel').classList.toggle('open'));
   $('#toggle-inspector').addEventListener('click', () => $('#inspector-panel').classList.toggle('open'));
   $('#close-inspector').addEventListener('click', () => $('#inspector-panel').classList.remove('open'));
@@ -2279,6 +2497,28 @@ function deleteAssetFolder(folder) {
   showModal(`<div class="modal-header"><div><span class="panel-kicker">DELETE FOLDER</span><h2 id="modal-title">Удалить папку?</h2><p>Файлы внутри папки останутся в корне проекта.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-danger" id="confirm-delete-folder">Удалить папку</button></div>`);
   $('#confirm-delete-folder').addEventListener('click',()=>{currentProject.assetFolders=(currentProject.assetFolders||[]).filter(f=>f!==folder);currentProject.assets.forEach(a=>{if(a.folder===folder)a.folder='';else if(a.folder?.startsWith(folder+'/'))a.folder=a.folder.slice(folder.length+1);});if(assetFolderFilter===folder)assetFolderFilter='All';closeModal();renderAssetPanel();scheduleSave();});
 }
+function renameImportedAsset(id) {
+  const asset = currentProject?.assets.find(item => item.id === id);
+  if (!asset) return;
+  const dot = asset.name.lastIndexOf('.');
+  const extension = dot > 0 ? asset.name.slice(dot) : '';
+  const baseName = extension ? asset.name.slice(0, dot) : asset.name;
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">ASSET NAME</span><h2 id="modal-title">Переименовать ресурс</h2><p>Файл и его формат останутся прежними.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="rename-asset-form"><div class="modal-body"><label class="field-label">Новое название<input class="field-input" id="rename-asset-name" maxlength="100" required value="${escapeAttr(baseName)}" /></label><div class="modal-note">Расширение ${escapeHtml(extension || 'без расширения')} будет сохранено автоматически.</div></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary">Переименовать</button></div></form>`);
+  $('#rename-asset-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const next = $('#rename-asset-name').value.trim().replace(/[\\/:*?"<>|]+/g, '_');
+    if (!next) return;
+    const previousName = baseName;
+    asset.name = `${next}${extension}`;
+    for (const sceneItem of currentProject.scenes || []) {
+      for (const object of sceneItem.data?.objects || []) {
+        if (object.type === 'model' && object.assetId === id && (!object.name || object.name === previousName)) object.name = next;
+      }
+    }
+    closeModal(); renderAssetPanel(); renderHierarchy(); renderInspector(); scheduleSave();
+    toast('Ресурс переименован', 'success');
+  });
+}
 function deleteAsset(assetId) {
   const asset=currentProject.assets.find(a=>a.id===assetId);if(!asset)return;
   showModal(`<div class="modal-header"><div><span class="panel-kicker">DELETE RESOURCE</span><h2 id="modal-title">Удалить ресурс?</h2><p>${escapeHtml(asset.name)} будет удалён из проекта. Размещённые модели, использующие этот файл, тоже будут удалены.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-danger" id="confirm-delete-asset">Удалить</button></div>`);
@@ -2313,10 +2553,10 @@ const ZEROBOX_CATEGORIES = [
 ];
 const ZEROBOX_DEFAULTS = {
   targetObjectId:'', variable:'Value', value:1, amount:1, side:'Forward', speed:3,
-  x:0, y:0, z:0, color:'#a5ef4c', enabled:true, key:'', buttonId:'', distance:25,
+  x:0, y:0, z:0, color:'#ffffff', enabled:true, key:'', buttonId:'', distance:25,
   repeat:3, condition:'true', assetId:'', animation:'', text:'Hello from ZeroBox',
   sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableY:'JoystickY', variableZ:'JoystickY',
-  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', orientation:'object', deadZone:0.08
+  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', orientation:'camera', deadZone:0.08
 };
 function createZeroBox() {
   const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[]};
@@ -2474,7 +2714,7 @@ function addZeroBoxBlock(type, dropX=null, dropY=null) {
   const block = {id:uid(), type, x:Math.max(0,Number.isFinite(dropX)?dropX:viewX), y:Math.max(0,Number.isFinite(dropY)?dropY:viewY), config:{...ZEROBOX_DEFAULTS}};
   if(type==='Text')block.config.value='Введите текст';
   if(type==='Asset')block.config.assetId='';
-  if(type==='JoystickMovement')Object.assign(block.config,{speed:4,orientation:'object',deadZone:0.08,joystickId:'',targetObjectId:''});
+  if(type==='JoystickMovement')Object.assign(block.config,{speed:4,orientation:'camera',deadZone:0.08,joystickId:'',targetObjectId:''});
   if (type==='Size') Object.assign(block.config,{x:1,y:1,z:1});
   if (['Number','NumericArray','Yesorno','Transparency','Color'].includes(type)) {
     const dataType = type === 'NumericArray' ? 'NumericArray' : type === 'Number' ? 'Number' : type === 'Yesorno' ? 'Yesorno' : type;
@@ -2549,6 +2789,18 @@ function beginZeroWire(nodeId,side,type,port,valueType=''){
   const node=$(`[data-node-id="${nodeId}"]`);node?.querySelector(`[data-port-side="out"][data-port-type="${type}"][data-port-name="${port}"]`)?.classList.add('pending');
   toast('Теперь нажми на совместимый вход другого блока','success');
 }
+function bindWorkbenchMobileTabs() {
+  const body = $('#workbench-body');
+  if (!body) return;
+  const buttons = $$('[data-workbench-panel]', body);
+  if (!buttons.length) return;
+  const apply = () => {
+    body.dataset.mobilePanel = workbenchMobilePanel;
+    buttons.forEach(button => button.classList.toggle('active', button.dataset.workbenchPanel === workbenchMobilePanel));
+  };
+  buttons.forEach(button => button.addEventListener('click', () => { workbenchMobilePanel = button.dataset.workbenchPanel; apply(); }));
+  apply();
+}
 function renderWorkbench() {
   if (!currentProject || !workbenchMode) return;
   const previousCanvas = $('#zero-node-canvas');
@@ -2566,11 +2818,12 @@ function renderWorkbench() {
       const dataOutputs=zeroDataOutputs(block).map(port=>`<button class="zero-port output-port data-port" style="top:${zeroNodePortTop(block,'out',port.name)}px" data-port-side="out" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Выход ${escapeAttr(port.label)}"><span>${escapeHtml(port.label)}</span><i></i></button>`).join('');
       return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(zeroBlockLabel(block.type))}</strong><span class="node-kind">${block.type==='Moving'?escapeHtml(({Forward:'Вперёд',Backward:'Назад',Left:'Влево',Right:'Вправо',Up:'Вверх',Down:'Вниз'})[block.config?.side||'Forward']||'Вперёд'):ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}${dataOutputs}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
     }).join('');
-    body.innerHTML = `<div class="workbench-grid zero-workbench-grid">
-      <aside class="workbench-sidebar"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||zeroBlockLabel(type).toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(zeroBlockLabel(type))}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
-      <main class="node-canvas zero-node-canvas" id="zero-node-canvas"><div class="zero-node-surface" id="zero-node-surface" style="width:26000px;height:18000px"><svg id="zero-wires" class="zero-wires" width="26000" height="18000" viewBox="0 0 26000 18000" aria-label="Связи ZeroBox"></svg>${nodes||'<div class="zero-empty zero-canvas-empty">Добавь блоки из библиотеки слева, затем размести их на большом поле.</div>'}</div></main>
-      <aside class="workbench-properties"><div class="panel-resize-handle resize-zero-right-handle" data-resize="zero-right" title="Изменить ширину свойств"></div><div class="workbench-section-title">СВОЙСТВА ZEROBOX</div><label class="field-label">Название<input class="field-input" id="zerobox-name" value="${escapeAttr(box.name)}" /></label><label class="field-label">Назначить ZeroBox объекту<select class="field-select" id="zerobox-target"><option value="">Не назначен</option>${(activeSceneData().objects||[]).map(e=>`<option value="${e.id}" ${box.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}</select></label><button class="button button-danger button-small" id="delete-zero-selection">Удалить выбранные блоки</button><div class="zero-box-stats">Блоков: ${box.blocks.length}<br>Соединений: ${box.connections.length}</div><div class="modal-note">Порядок выполнения задаётся проводами, а не расположением блоков. Для старых ZeroBox без проводов сохранён запуск сверху вниз.</div><button class="button button-quiet" id="export-zerobox">↓ Экспорт .zbox</button></aside>
+    body.innerHTML = `<nav class="workbench-mobile-tabs" aria-label="Панели ZeroBox"><button type="button" data-workbench-panel="palette">Блоки</button><button type="button" data-workbench-panel="canvas">Поле</button><button type="button" data-workbench-panel="properties">Свойства</button></nav><div class="workbench-grid zero-workbench-grid">
+      <aside class="workbench-sidebar" data-workbench-role="palette"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||zeroBlockLabel(type).toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(zeroBlockLabel(type))}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
+      <main class="node-canvas zero-node-canvas" id="zero-node-canvas" data-workbench-role="canvas"><div class="zero-node-surface" id="zero-node-surface" style="width:26000px;height:18000px"><svg id="zero-wires" class="zero-wires" width="26000" height="18000" viewBox="0 0 26000 18000" aria-label="Связи ZeroBox"></svg>${nodes||'<div class="zero-empty zero-canvas-empty">Добавь блоки из библиотеки слева, затем размести их на большом поле.</div>'}</div></main>
+      <aside class="workbench-properties" data-workbench-role="properties"><div class="panel-resize-handle resize-zero-right-handle" data-resize="zero-right" title="Изменить ширину свойств"></div><div class="workbench-section-title">СВОЙСТВА ZEROBOX</div><label class="field-label">Название<input class="field-input" id="zerobox-name" value="${escapeAttr(box.name)}" /></label><label class="field-label">Назначить ZeroBox объекту<select class="field-select" id="zerobox-target"><option value="">Не назначен</option>${(activeSceneData().objects||[]).map(e=>`<option value="${e.id}" ${box.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}</select></label><button class="button button-danger button-small" id="delete-zero-selection">Удалить выбранные блоки</button><div class="zero-box-stats">Блоков: ${box.blocks.length}<br>Соединений: ${box.connections.length}</div><div class="modal-note">Порядок выполнения задаётся проводами, а не расположением блоков. Для старых ZeroBox без проводов сохранён запуск сверху вниз.</div><button class="button button-quiet" id="export-zerobox">↓ Экспорт .zbox</button></aside>
     </div>`;
+    bindWorkbenchMobileTabs();
     activeZeroBoxCanvas=$('#zero-node-canvas');
     const surface=$('#zero-node-surface');if(surface)surface.style.zoom=String(zeroZoom);
     $('#zero-zoom-out')?.addEventListener('click',()=>setZeroZoom(zeroZoom*.85));$('#zero-zoom-in')?.addEventListener('click',()=>setZeroZoom(zeroZoom*1.18));$('#zero-zoom-reset')?.addEventListener('click',()=>setZeroZoom(1));
@@ -2621,7 +2874,8 @@ function renderWorkbench() {
     $('#zerobox-help').addEventListener('click',renderZeroBoxHelp);
     renderZeroWires(box);
   } else {
-    body.innerHTML = `<div class="ui-designer-grid"><aside class="ui-palette"><div class="workbench-section-title">ИНТЕРФЕЙСЫ</div><select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select><div class="ui-screen-actions"><button id="ui-screen-new">＋</button><button id="ui-screen-duplicate">▢</button><button id="ui-screen-rename">✎</button><button id="ui-screen-delete">×</button></div><div class="workbench-section-title">ЭЛЕМЕНТЫ UI</div>${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай элементы на макете. Размеры и координаты задаются справа.</div></aside><div class="ui-stage-wrap"><div class="ui-design-stage" id="ui-design-stage"></div></div><aside class="ui-property-panel" id="ui-property-panel"></aside></div>`;
+    body.innerHTML = `<nav class="workbench-mobile-tabs" aria-label="Панели UI Designer"><button type="button" data-workbench-panel="palette">Элементы</button><button type="button" data-workbench-panel="canvas">Экран</button><button type="button" data-workbench-panel="properties">Свойства</button></nav><div class="ui-designer-grid"><aside class="ui-palette" data-workbench-role="palette"><div class="workbench-section-title">ИНТЕРФЕЙСЫ</div><select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select><div class="ui-screen-actions"><button id="ui-screen-new">＋</button><button id="ui-screen-duplicate">▢</button><button id="ui-screen-rename">✎</button><button id="ui-screen-delete">×</button></div><div class="workbench-section-title">ЭЛЕМЕНТЫ UI</div>${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай элементы на макете. Размеры и координаты задаются справа.</div></aside><div class="ui-stage-wrap" data-workbench-role="canvas"><div class="ui-design-stage" id="ui-design-stage"></div></div><aside class="ui-property-panel" id="ui-property-panel" data-workbench-role="properties"></aside></div>`;
+    bindWorkbenchMobileTabs();
     const stage=$('#ui-design-stage'); renderUIStage(stage,true);
     $('#ui-screen-select').addEventListener('change',e=>switchUIScreen(e.target.value));
     $('#ui-screen-new').addEventListener('click',createUIScreen);$('#ui-screen-duplicate').addEventListener('click',duplicateUIScreen);$('#ui-screen-rename').addEventListener('click',renameUIScreen);$('#ui-screen-delete').addEventListener('click',deleteUIScreen);
@@ -2636,12 +2890,12 @@ function createCustomVariable() {
   $('#variable-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#variable-name').value.trim();const type=$('#variable-type').value;if(!name)return;if(currentProject.variables.some(v=>v.name===name)){toast('Переменная с таким именем уже существует','error');return;}let value=$('#variable-value').value;if(type==='Number'||type==='NumericArray'||type==='Transparency')value=Number(value)||0;else if(type==='Yesorno')value=value==='true'||value==='1';box.variables||=[];box.variables.push({id:uid(),name,type,value});currentProject.variables||=[];currentProject.variables.push({id:uid(),name,type,value});closeModal();renderWorkbench();scheduleSave();});
 }
 function defaultUIElement(type) {
-  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':'',value:60,max:100,color:type==='Background'?'#182b35':'#2b462f',opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:''};
+  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':'',value:60,max:100,color:'#ffffff',opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:''};
   if(type==='Scale')Object.assign(base,{x:8,y:82,w:28,h:6});
   if(type==='Slider')Object.assign(base,{x:62,y:82,w:28,h:7});
   if(type==='Background')Object.assign(base,{x:25,y:25,w:50,h:50});
   if(type==='CameraControlArea')Object.assign(base,{x:48,y:8,w:48,h:82,color:'#ffffff'});
-  if(type==='Joystick')Object.assign(base,{x:4,y:66,w:22,h:30,xVariable:'JoystickX',yVariable:'JoystickY'});
+  if(type==='Joystick')Object.assign(base,{x:4,y:66,w:24,h:24,xVariable:'JoystickX',yVariable:'JoystickY'});
   if(type==='ScreenButton')base.targetScreenId=currentProject.uiScreens.find(screen=>screen.id!==currentProject.activeUIScreenId)?.id||'';
   return base;
 }
@@ -2652,15 +2906,15 @@ function addUIElement(type) {
 }
 function renderUIStage(host, design=false) {
   if(!host)return;host.innerHTML='';
-  if(design){host.style.aspectRatio='var(--ui-device-aspect, 16 / 9)';}
+  if(design){host.style.aspectRatio=window.matchMedia?.('(pointer: coarse)').matches?(window.innerWidth>window.innerHeight?'16 / 9':'9 / 16'):'var(--ui-device-aspect, 16 / 9)';}
   (currentProject.uiElements||[]).forEach(el=>{
     const node=document.createElement('div');node.className=`ui-element ${el.type==='Text'?'text-element':''} ${el.type==='Background'?'background-element':''} ${design&&selectedUIElementId===el.id?'selected':''}`;
     node.dataset.uiId=el.id;node.style.left=`${el.x}%`;node.style.top=`${el.y}%`;node.style.width=`${el.w}%`;node.style.height=`${el.h}%`;node.style.zIndex=el.type==='Background'?'0':'2';node.style.opacity=String(el.opacity??1);
-    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');if(el.color)b.style.background=el.color;if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
+    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');if(el.color)b.style.background=el.color;b.style.color='#171717';if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
     else if(el.type==='Text'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);node.textContent=String(el.text||'Text').replaceAll('{value}',String(v?.value??''));node.style.fontSize=`${el.fontSize||22}px`;node.style.color=el.color||'#ffffff';}
-    else if(el.type==='Scale'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);const current=v?Number(v.value):Number(el.value)||0;const track=document.createElement('div');track.className='ui-scale-track';const fill=document.createElement('div');fill.className='ui-scale-fill';fill.style.width=`${Math.max(0,Math.min(100,current/(Number(el.max)||100)*100))}%`;fill.style.background=el.color||'#a5ef4c';track.appendChild(fill);node.appendChild(track);}
-    else if(el.type==='Slider'){const input=document.createElement('input');input.type='range';input.min='0';input.max=String(el.max||100);input.style.accentColor=el.color||'#a5ef4c';const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);input.value=String(v? v.value : el.value||0);if(!design)input.addEventListener('input',()=>{el.value=Number(input.value);if(v)v.value=el.value;scheduleSave();});node.appendChild(input);}
-    else if(el.type==='Background'){node.style.background=el.color||'#182b35';node.style.borderRadius='5px';}
+    else if(el.type==='Scale'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);const current=v?Number(v.value):Number(el.value)||0;const track=document.createElement('div');track.className='ui-scale-track';const fill=document.createElement('div');fill.className='ui-scale-fill';fill.style.width=`${Math.max(0,Math.min(100,current/(Number(el.max)||100)*100))}%`;fill.style.background=el.color||'#ffffff';track.appendChild(fill);node.appendChild(track);}
+    else if(el.type==='Slider'){const input=document.createElement('input');input.type='range';input.min='0';input.max=String(el.max||100);input.style.accentColor=el.color||'#ffffff';const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);input.value=String(v? v.value : el.value||0);if(!design)input.addEventListener('input',()=>{el.value=Number(input.value);if(v)v.value=el.value;scheduleSave();});node.appendChild(input);}
+    else if(el.type==='Background'){node.style.background=el.color||'#ffffff';node.style.borderRadius='5px';}
     else if(el.type==='CameraControlArea'){node.classList.add('camera-control-area');node.textContent=design?'◉ ОБЛАСТЬ УПРАВЛЕНИЯ КАМЕРОЙ':'';}
     else if(el.type==='Joystick'){node.classList.add('joystick-widget');const base=document.createElement('div');base.className='joystick-base';const knob=document.createElement('div');knob.className='joystick-knob';base.appendChild(knob);node.appendChild(base);if(!design){let pointerId=null;const setAxes=(x,y)=>{const xv=(currentProject.variables||[]).find(v=>v.name===(el.xVariable||'JoystickX'));const yv=(currentProject.variables||[]).find(v=>v.name===(el.yVariable||'JoystickY'));if(xv)xv.value=x;if(yv)yv.value=y;};const update=e=>{const r=base.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,travel=Math.max(1,Math.min(r.width,r.height)*.29);let dx=e.clientX-cx,dy=e.clientY-cy;const len=Math.hypot(dx,dy);if(len>travel){const k=travel/len;dx*=k;dy*=k;}knob.style.transform=`translate3d(${dx}px,${dy}px,0)`;setAxes(THREE.MathUtils.clamp(dx/travel,-1,1),THREE.MathUtils.clamp(-dy/travel,-1,1));};const end=()=>{if(pointerId===null)return;pointerId=null;knob.style.transform='translate3d(0,0,0)';setAxes(0,0);base.classList.remove('active');};base.addEventListener('pointerdown',e=>{if(pointerId!==null)return;pointerId=e.pointerId;base.classList.add('active');base.setPointerCapture?.(e.pointerId);update(e);e.preventDefault();});base.addEventListener('pointermove',e=>{if(pointerId===e.pointerId)update(e);});base.addEventListener('pointerup',end);base.addEventListener('pointercancel',end);base.addEventListener('lostpointercapture',end);}}
     if(design){
@@ -2726,6 +2980,8 @@ function renderUIProperties() {
   $('#ui-target-screen')?.addEventListener('change',e=>{el.targetScreenId=e.target.value;scheduleSave();});
   $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
 }
+let gameUIRenderQueued=false;
+function queueGameUIRender(){if(!isPlaying||gameUIRenderQueued)return;gameUIRenderQueued=true;requestAnimationFrame(()=>{gameUIRenderQueued=false;if(isPlaying)renderGameUI();});}
 function renderGameUI() { const layer=$('#game-ui-layer');if(layer)renderUIStage(layer,false); }
 function triggerUIKey(event) {
   const key=event.key.toLowerCase();
@@ -2808,9 +3064,10 @@ function processHeldZeroBoxes(deltaSeconds) {
     const x=Number((currentProject.variables||[]).find(v=>v.name===xName)?.value)||0,y=Number((currentProject.variables||[]).find(v=>v.name===yName)?.value)||0;
     if(Math.hypot(x,y)<=Math.max(0,Math.min(.5,Number(cfg.deadZone??.08)||0)))continue;
     const objects=activeSceneData()?.objects||[];const target=objects.find(entity=>entity.id===cfg.targetObjectId)||objects.find(entity=>entity.type==='player')||objects[0];if(!target)continue;
-    const yaw=cfg.orientation==='world'?0:cfg.orientation==='camera'?previewYaw:target.type==='player'?THREE.MathUtils.degToRad(Number(target.rotation?.[1])||0):THREE.MathUtils.degToRad(Number(target.rotation?.[1])||0);
+    const orientation=cfg.orientation==='world'?'world':(cfg.orientation==='object' && target.type!=='player'?'object':'camera');
+    const basis=getHorizontalMovementBasis(target,orientation);
     const object=sceneObjects.get(target.id);if(!object)continue;
-    const moved=joystickMovementStep({entity:target,x,y,speed:Math.max(0,Number(cfg.speed)||4),deltaSeconds:dt,yawRadians:yaw,deadZone:Math.max(0,Math.min(.5,Number(cfg.deadZone??.08)||0)),moveEntityWithCollisions});
+    const moved=joystickMovementStep({entity:target,x,y,speed:Math.max(0,Number(cfg.speed)||4),deltaSeconds:dt,forwardVector:basis.forward.toArray(),rightVector:basis.right.toArray(),deadZone:Math.max(0,Math.min(.5,Number(cfg.deadZone??.08)||0)),moveEntityWithCollisions});
     if((Math.abs(moved[0])+Math.abs(moved[2]))>.000001&&target.type==='player'&&previewCamera)syncPreviewCameraToPlayer();
   }
 }
@@ -2846,40 +3103,70 @@ function resolveZeroDataOutput(source,portName,box,seen=new Set()){
 }
 function zeroDataInputsForBlock(box,block,seen=new Set()){
   const result={};
-  for(const connection of box.connections||[]){
-    if(connection.type!=='data'||connection.to?.nodeId!==block.id)continue;
-    const source=box.blocks.find(item=>item.id===connection.from?.nodeId);if(!source)continue;
+  const blocks=box.blocks||[],connections=box.connections||[],index=getZeroBoxExecutionIndex(box,blocks,connections);
+  for(const connection of index.incomingData.get(block.id)||[]){
+    const sourceIndex=index.blockIndexesById.get(connection.from?.nodeId);const source=sourceIndex===undefined?null:blocks[sourceIndex];if(!source)continue;
     result[connection.to.port]=resolveZeroDataOutput(source,connection.from?.port,box,new Set(seen));
   }
   return result;
 }
+const zeroBoxExecutionIndexes = new WeakMap();
+function getZeroBoxExecutionIndex(box, blocks, connections) {
+  // Rebuild only when the node/connection topology changes; configs remain live.
+  const blockSignature = blocks.map(block => `${block.id}:${block.type}`).join('|');
+  const connectionSignature = connections.map(link => `${link.type||'exec'}:${link.from?.nodeId||''}:${link.from?.port||'execOut'}>${link.to?.nodeId||''}:${link.to?.port||'execIn'}`).join('|');
+  const cached = zeroBoxExecutionIndexes.get(box);
+  if (cached && cached.blockSignature === blockSignature && cached.connectionSignature === connectionSignature) return cached;
+  const byId = new Map(blocks.map((block, index) => [block.id, { index }]));
+  const blockIndexesById = new Map(blocks.map((block, index) => [block.id, index]));
+  const joystickSourceIds = new Set(blocks.filter(block => block.type === 'Joystick').map(block => block.id));
+  const outgoing = new Map();
+  const incomingExec = new Set();
+  const incomingData = new Map();
+  for (const link of connections) {
+    const from = link.from?.nodeId, to = link.to?.nodeId;
+    if (!from || !to) continue;
+    if ((link.type || 'exec') === 'exec') {
+      const key = `${from}:${link.from?.port || 'execOut'}`;
+      if (!outgoing.has(key)) outgoing.set(key, link.to?.nodeId || null);
+      incomingExec.add(to);
+    } else {
+      if (!incomingData.has(to)) incomingData.set(to, []);
+      incomingData.get(to).push(link);
+    }
+  }
+  const index = { blockSignature, connectionSignature, byId, blockIndexesById, joystickSourceIds, outgoing, incomingExec, incomingData };
+  zeroBoxExecutionIndexes.set(box, index);
+  return index;
+}
 function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBlockId=null) {
   if(!box)return 0;
   const blocks=box.blocks||[], connections=box.connections||[];
+  const runtimeIndex = getZeroBoxExecutionIndex(box, blocks, connections);
   const eventTypes=['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'];
   const isGraph=connections.some(connection=>(connection.type||'exec')==='exec');
   const vars=currentProject.variables||[];const getVar=name=>vars.find(v=>v.name===name);
-  let movingSide='Forward',movingSideSet=false,movingSpeed=1,movingSpeedSet=false,executed=0;
-  const byId=new Map(blocks.map((b,i)=>[b.id,{b,i}]));
-  const outgoing=(id,port='execOut')=>connections.find(c=>c.from?.nodeId===id&&(c.from?.port||'execOut')===port)?.to?.nodeId||null;
+  let movingSide='Forward',movingSideSet=false,movingSpeed=1,movingSpeedSet=false,executed=0,uiDirty=false;
+  const byId=runtimeIndex.byId;
+  const outgoing=(id,port='execOut')=>runtimeIndex.outgoing.get(`${id}:${port}`)||null;
   let current=null;
   if(eventName!=='manual'){
     const eventNode=eventBlockId?blocks.find(b=>b.id===eventBlockId):blocks.find(b=>b.type===eventName&&(!b.config?.buttonId||b.config.buttonId===uiElementId));if(!eventNode||eventNode.type!==eventName)return 0;
-    current=isGraph?outgoing(eventNode.id,'execOut'):(blocks[byId.get(eventNode.id).i+1]?.id||null);
+    current=isGraph?outgoing(eventNode.id,'execOut'):(blocks[byId.get(eventNode.id).index+1]?.id||null);
   } else if(eventBlockId&&byId.has(eventBlockId)) {
     current=eventBlockId;
   } else if(isGraph) {
-    const incoming=new Set(connections.filter(c=>(c.type||'exec')==='exec').map(c=>c.to?.nodeId));
+    const incoming=runtimeIndex.incomingExec;
     const dataSources=new Set(['Joystick','JoystickMovement','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset']);
     current=blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type)&&!dataSources.has(b.type))?.id||blocks.find(b=>!incoming.has(b.id)&&!eventTypes.includes(b.type))?.id||null;
   } else { const first=blocks.find(b=>!['Joystick','JoystickMovement','Number','NumericArray','Side','Speed','Yesorno','Color','Transparency','Text','Asset'].includes(b.type));current=first?.id||blocks[0]?.id||null; }
   const visited=new Map();
   while(current&&byId.has(current)&&executed<250){
-    const {b,i}=byId.get(current),c={...(b.config||{})},dataInputs=zeroDataInputsForBlock(box,b),entity=targetEntityForBlock(b),obj=entity&&sceneObjects.get(entity.id);
+    const i=byId.get(current).index,b=blocks[i],c={...(b.config||{})},dataInputs=zeroDataInputsForBlock(box,b),entity=targetEntityForBlock(b),obj=entity&&sceneObjects.get(entity.id);
     for(const [port,value] of Object.entries(dataInputs)){if(port==='direction')c.side=value;else if(port==='speed')c.dataSpeed=value;else if(port==='amount')c.amount=value;else if(port==='value')c.value=value;else if(port==='gameSpeed')c.gameSpeed=value;else if(port==='color')c.color=value;else if(port==='text')c.text=value;else if(port==='name')c.spawnName=String(value??'SpawnedObject');else if(port==='assetId')c.assetId=value;else if(['x','y','z'].includes(port))c[`data${port.toUpperCase()}`]=Number(value)||0;else c[port]=value;}
     if(b.type==='Moving'){
-      const incomingData=connections.filter(link=>link.type==='data'&&link.to?.nodeId===b.id);
-      const hasJoystick=incomingData.some(link=>blocks.some(source=>source.id===link.from?.nodeId&&source.type==='Joystick'&&['x','y'].includes(link.from?.port)));
+      const incomingData=runtimeIndex.incomingData.get(b.id)||[];
+      const hasJoystick=incomingData.some(link=>runtimeIndex.joystickSourceIds.has(link.from?.nodeId)&&['x','y'].includes(link.from?.port));
       if(hasJoystick)c.movementMode='variables';else if(['x','y','z'].some(key=>dataInputs[key]!==undefined))c.movementMode='offset';
     }
     const visits=(visited.get(current)||0)+1;visited.set(current,visits);if(visits>Math.max(1,Math.min(30,Number(c.repeat)||1)))break;
@@ -2888,9 +3175,9 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     if(eventTypes.includes(b.type)){if(eventName==='manual'){current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}break;}
     if(b.type==='Spawn'){executeSpawnBlock({...b,config:c});current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
     if(b.type==='Delete'){executeDeleteBlock(b);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
-    if(b.type==='Writes'){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui&&ui.type==='Text'){ui.text=String(c.text||'');renderGameUI();}else toast(String(c.text||'ZeroBox'),'success');}
+    if(b.type==='Writes'){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui&&ui.type==='Text'){ui.text=String(c.text||'');uiDirty=true;}else if(!isPlaying)toast(String(c.text||'ZeroBox'),'success');}
     else if(b.type==='Side'){movingSide=c.side||'Forward';movingSideSet=true;}
-    else if(['ChangeColor','ChangeTransparency'].includes(b.type)&&c.targetUIId){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui){if(b.type==='ChangeColor')ui.color=c.color||'#ffffff';else ui.opacity=Math.max(0,Math.min(1,Number(c.value)||0));renderGameUI();}}
+    else if(['ChangeColor','ChangeTransparency'].includes(b.type)&&c.targetUIId){const ui=(currentProject.uiElements||[]).find(el=>el.id===c.targetUIId);if(ui){if(b.type==='ChangeColor')ui.color=c.color||'#ffffff';else ui.opacity=Math.max(0,Math.min(1,Number(c.value)||0));uiDirty=true;}}
     else if(b.type==='Physics'&&c.targetObjectId==='__all__'){for(const item of activeSceneData().objects)item.physics={enabled:c.enabled===true||c.enabled==='true'};}
     else if(b.type==='Speed'){movingSpeed=Math.max(0,Number(c.amount??c.speed)||1);movingSpeedSet=true;}
     else if(b.type==='Gamespeed')gameSpeedMultiplier=Math.max(.1,Math.min(4,Number(c.gameSpeed??c.amount)||1));
@@ -2898,7 +3185,7 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     else if(['Plus','Minus','Multiply','Divide'].includes(b.type)){let v=getVar(c.variable||'Value');if(v){const n=Number(c.value??v.value)||0,a=Number(c.amount)||0;v.value=b.type==='Plus'?n+a:b.type==='Minus'?n-a:b.type==='Multiply'?n*a:(a===0?n:n/a);}}
     else if(b.type==='Loop'){
       // Loop repeats the next connected action, bounded to protect the browser from infinite execution.
-      const nextId=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null),next=byId.get(nextId)?.b;
+      const nextId=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null),next=byId.has(nextId)?blocks[byId.get(nextId).index]:null;
       if(next)for(let n=1;n<Math.min(20,Math.max(1,Number(c.repeat)||1));n++)executeZeroBoxAction(next);
     }
     else if(['ForkYesorno','Branching'].includes(b.type)){
@@ -2909,8 +3196,8 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     else if(entity&&obj)executeZeroBoxAction(b,entity,obj);
     current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);
   }
-  if(isPlaying)renderGameUI();
-  scheduleSave();
+  if(isPlaying&&uiDirty)queueGameUIRender();
+  if(!isPlaying)scheduleSave();
   return executed;
 }
 
@@ -2939,15 +3226,15 @@ function executeZeroBoxAction(block,entity=null,obj=null) {
     if(movementMode==='variables'){
       const vx=c.dataX!==undefined?Number(c.dataX):(Number((currentProject.variables||[]).find(x=>x.name===c.variableX)?.value)||0);
       const vz=c.dataY!==undefined?Number(c.dataY):(Number((currentProject.variables||[]).find(x=>x.name===(c.variableY||c.variableZ))?.value)||0);
-      const dir=new THREE.Vector3(vx,0,-vz).clampLength(0,1);
-      if(entity.type==='player')dir.applyAxisAngle(new THREE.Vector3(0,1,0),previewYaw);
+      const {forward,right}=entity.type==='player'?getHorizontalMovementBasis(entity,'camera'):getHorizontalMovementBasis(entity,'object');
+      const dir=right.multiplyScalar(vx).add(forward.multiplyScalar(vz)).clampLength(0,1);
       v=dir.toArray().map(n=>n*speed*dt);
     }else if(movementMode==='offset'){
       v=[Number(c.dataX??c.x)||0,Number(c.dataY??c.y)||0,Number(c.dataZ??c.z)||0].map(n=>n*speed*dt);
     }else{
-      const dir=new THREE.Vector3(...sideVector);
-      if(entity.type==='player')dir.applyAxisAngle(new THREE.Vector3(0,1,0),previewYaw);
-      else dir.applyAxisAngle(new THREE.Vector3(0,1,0),THREE.MathUtils.degToRad(Number(entity.rotation?.[1])||0));
+      let dir=new THREE.Vector3(...sideVector);
+      if(entity.type==='player'&&Math.abs(dir.y)<.5){const basis=getHorizontalMovementBasis(entity,'camera');dir=basis.right.multiplyScalar(dir.x).add(basis.forward.multiplyScalar(-dir.z));}
+      else if(entity.type!=='player')dir.applyAxisAngle(new THREE.Vector3(0,1,0),THREE.MathUtils.degToRad(Number(entity.rotation?.[1])||0));
       v=dir.toArray().map(n=>n*speed*dt);
     }
     moveEntityWithCollisions(entity,v);
@@ -3046,12 +3333,14 @@ function openModelStudio(){
   if(!r.renderer){
     r.renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});r.renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
     r.scene=new THREE.Scene();r.scene.background=new THREE.Color('#202326');
-    r.camera=new THREE.PerspectiveCamera(50,1,.01,3000);r.camera.position.set(5,4,6);r.camera.lookAt(0,0,0);
-    r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;r.orbit.enablePan=true;r.orbit.minDistance=.2;r.orbit.maxDistance=2000;r.orbit.minPolarAngle=.0001;r.orbit.maxPolarAngle=Math.PI-.0001;r.orbit.target.set(0,0,0);
+    r.camera=new THREE.PerspectiveCamera(50,1,.01,3000);r.camera.up.set(0,0,1);r.camera.position.set(6,-8,6);r.camera.lookAt(0,0,0);
+    // Modeling strokes/click tools must take precedence over OrbitControls' left-button drag.
+    canvas.addEventListener('pointerdown',event=>{if(modelStudio.activeTool&&(event.pointerType!=='mouse'||event.button===0)){event.stopImmediatePropagation();selectModelObject(event);}},true);
+    r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;r.orbit.enablePan=true;r.orbit.minDistance=.2;r.orbit.maxDistance=2000;r.orbit.minAzimuthAngle=-Infinity;r.orbit.maxAzimuthAngle=Infinity;r.orbit.minPolarAngle=.0001;r.orbit.maxPolarAngle=Math.PI-.0001;r.orbit.target.set(0,0,0);
     if(r.orbit.touches&&THREE.TOUCH){r.orbit.touches.ONE=THREE.TOUCH.ROTATE;r.orbit.touches.TWO=THREE.TOUCH.DOLLY_PAN;}
     r.orbit.rotateSpeed=1.05;r.orbit.zoomSpeed=1.1;r.orbit.panSpeed=0.9;
     r.scene.add(new THREE.HemisphereLight(0xffffff,0x555b65,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,5);r.scene.add(key);
-    r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);r.scene.add(new THREE.GridHelper(200,200,0x555b5b,0x343a3d));
+    r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);const modelGrid=new THREE.GridHelper(200,200,0x555b5b,0x343a3d);modelGrid.rotation.x=Math.PI/2;modelGrid.position.z=0;r.scene.add(modelGrid);
     r.transform=new TransformControls(r.camera,canvas);r.transform.setSize((window.matchMedia?.('(max-width: 850px)').matches||window.matchMedia?.('(pointer: coarse)').matches)?0.82:1.15);
     r.componentPivot=new THREE.Object3D();r.scene.add(r.componentPivot);
     r.transform.addEventListener('dragging-changed',event=>{
@@ -3070,7 +3359,7 @@ function openModelStudio(){
     r.transformHelper=r.transform.getHelper?r.transform.getHelper():r.transform;
     if(r.transformHelper?.isObject3D)r.scene.add(r.transformHelper);
     r.raycaster=new THREE.Raycaster();r.pointer=new THREE.Vector2();
-    canvas.addEventListener('pointerdown',selectModelObject);
+    canvas.addEventListener('pointerdown',selectModelObject);canvas.addEventListener('pointermove',handleModelToolPointerMove);canvas.addEventListener('pointerup',finishModelToolPointer);canvas.addEventListener('pointercancel',finishModelToolPointer);
     const resize=()=>{const box=$('#model-studio').querySelector('.model-viewport').getBoundingClientRect();if(!box.width||!box.height)return;r.renderer.setSize(Math.max(1,Math.floor(box.width)),Math.max(1,Math.floor(box.height)),false);r.camera.aspect=box.width/box.height;r.camera.updateProjectionMatrix();r.transform?.setSize((window.matchMedia?.('(max-width: 850px)').matches||window.matchMedia?.('(pointer: coarse)').matches)?0.82:1.15);};
     r.resize=resize;window.addEventListener('resize',resize);window.visualViewport?.addEventListener('resize',resize);
     if(typeof ResizeObserver!=='undefined'){r.resizeObserver=new ResizeObserver(()=>resize());r.resizeObserver.observe($('#model-studio').querySelector('.model-studio-layout'));r.resizeObserver.observe(canvas);}
@@ -3079,7 +3368,7 @@ function openModelStudio(){
   if(r.projectId!==currentProject.id){
     clearModelCreationPreview();r.historyLimited=false;r.transform.detach();if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
     for(const child of [...r.root.children]){r.root.remove(child);disposeModelNode(child);}
-    r.selected=null;r.selectedObjects.clear();clearModelTopologyOverlay();r.componentTarget=null;r.activeTool=null;r.creationPoints=[];r.creationTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
+    r.selected=null;r.selectedObjects.clear();clearModelTopologyOverlay();r.componentTarget=null;r.activeTool=null;r.mode='object';r.creationPoints=[];$$('[data-model-mode]').forEach(b=>b.classList.toggle('active',b.dataset.modelMode==='object'));$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));$('#model-sculpt-settings').classList.remove('active');$('#model-cut-settings').classList.remove('active');r.creationTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
     $('#model-name').value='New Model';$('#model-paint-panel').classList.add('hidden');
     $('#model-selection-info').textContent='Объект не выбран';
   }
@@ -3093,7 +3382,7 @@ async function closeModelStudio(){
   currentProject=null;releaseObjectUrls();renderProjectList();
 }
 function setModelMobilePanel(panel){
-  const allowed=['tools','viewport','inspector'];if(!allowed.includes(panel))panel='viewport';
+  const allowed=['add','tools','viewport','inspector'];if(!allowed.includes(panel))panel='viewport';
   const layout=$('#model-studio .model-studio-layout');if(!layout)return;
   layout.dataset.activePanel=panel;
   $$('#model-studio [data-model-panel]').forEach(button=>button.classList.toggle('active',button.dataset.modelPanel===panel));
@@ -3110,30 +3399,30 @@ function focusModelObject(object){
 function modelGeometry(index){
   switch(index){
     case 1:return new THREE.SphereGeometry(.75,32,24);
-    case 2:{const g=new THREE.PlaneGeometry(2,2,1,1);g.rotateX(-Math.PI/2);return g;}
-    case 3:return new THREE.CylinderGeometry(.65,.65,1.4,32);
-    case 4:return new THREE.ConeGeometry(.75,1.5,32);
-    case 5:return new THREE.CapsuleGeometry(.45,.8,6,16);
+    case 2:return new THREE.PlaneGeometry(2,2,24,24);
+    case 3:{const g=new THREE.CylinderGeometry(.65,.65,1.4,32,8);g.rotateX(Math.PI/2);return g;}
+    case 4:{const g=new THREE.ConeGeometry(.75,1.5,32,8);g.rotateX(Math.PI/2);return g;}
+    case 5:{const g=new THREE.CapsuleGeometry(.45,.8,6,16);g.rotateX(Math.PI/2);return g;}
     case 6:return new THREE.TorusGeometry(.7,.22,16,48);
     case 7:return new THREE.TorusKnotGeometry(.55,.17,100,16);
     case 8:return new THREE.IcosahedronGeometry(.8,1);
-    case 10:{const g=new THREE.CircleGeometry(.8,48);g.rotateX(-Math.PI/2);return g;}
-    case 11:{const g=new THREE.RingGeometry(.42,.8,48);g.rotateX(-Math.PI/2);return g;}
-    case 12:return new THREE.ConeGeometry(.8,1.4,4,1);
-    case 13:return new THREE.CylinderGeometry(.75,.75,1.3,6,1);
+    case 10:return new THREE.CircleGeometry(.8,48);
+    case 11:return new THREE.RingGeometry(.42,.8,48);
+    case 12:{const g=new THREE.ConeGeometry(.8,1.4,4,1);g.rotateX(Math.PI/2);return g;}
+    case 13:{const g=new THREE.CylinderGeometry(.75,.75,1.3,6,8);g.rotateX(Math.PI/2);return g;}
     case 14:return new THREE.OctahedronGeometry(.85,0);
     case 15:return new THREE.DodecahedronGeometry(.82,0);
     case 16:return new THREE.TetrahedronGeometry(.9,0);
-    case 17:{const curve=new THREE.CatmullRomCurve3([new THREE.Vector3(0,-.8,0),new THREE.Vector3(-.5,-.2,0),new THREE.Vector3(.45,.2,0),new THREE.Vector3(0,.8,0)]);return new THREE.TubeGeometry(curve,48,.12,10,false);}
+    case 17:{const curve=new THREE.CatmullRomCurve3([new THREE.Vector3(0,0,-.8),new THREE.Vector3(-.5,0,-.2),new THREE.Vector3(.45,0,.2),new THREE.Vector3(0,0,.8)]);return new THREE.TubeGeometry(curve,48,.12,10,false);}
     case 18:return new THREE.TorusKnotGeometry(.48,.11,160,12,2,5);
-    case 19:{const g=new THREE.BufferGeometry();const v=[-.8,-.55,-.65,.8,-.55,-.65,.8,-.55,.65,-.8,-.55,.65,-.8,.45,-.65,.8,.45,-.65];const ids=[0,2,1,0,3,2,0,1,5,0,5,4,1,2,5,2,3,4,2,4,5,3,0,4];g.setAttribute('position',new THREE.Float32BufferAttribute(v,3));g.setIndex(ids);g.computeVertexNormals();return g;}
+    case 19:{const g=new THREE.BufferGeometry();const v=[-.8,-.65,-.55,.8,-.65,-.55,.8,.65,-.55,-.8,.65,-.55,-.8,-.65,.45,.8,-.65,.45];const ids=[0,2,1,0,3,2,0,1,5,0,5,4,1,2,5,2,3,4,2,4,5,3,0,4];g.setAttribute('position',new THREE.Float32BufferAttribute(v,3));g.setIndex(ids);g.computeVertexNormals();return g;}
     default:return new THREE.BoxGeometry(1.4,1.4,1.4);
   }
 }
 function addModelPrimitive(index){
   const names=MODEL_PRIMITIVES;let mesh;
-  if(index===9){mesh=new THREE.Group();const mat=new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72});const head=new THREE.Mesh(new THREE.SphereGeometry(.62,24,18),mat);head.scale.set(1,1.05,.8);mesh.add(head);for(const side of [-1,1]){const ear=new THREE.Mesh(new THREE.SphereGeometry(.27,16,12),mat);ear.position.set(side*.55,.35,0);mesh.add(ear);}const muzzle=new THREE.Mesh(new THREE.SphereGeometry(.3,16,12),mat);muzzle.position.set(0,-.15,.48);muzzle.scale.set(.8,.65,.6);mesh.add(muzzle);}
-  else mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.72,metalness:0}));
+  if(index===9){mesh=new THREE.Group();const mat=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.72});const head=new THREE.Mesh(new THREE.SphereGeometry(.62,24,18),mat);head.scale.set(1,.8,1.05);mesh.add(head);for(const side of [-1,1]){const ear=new THREE.Mesh(new THREE.SphereGeometry(.27,16,12),mat);ear.position.set(side*.55,0,.35);mesh.add(ear);}const muzzle=new THREE.Mesh(new THREE.SphereGeometry(.3,16,12),mat);muzzle.position.set(0,.48,-.15);muzzle.scale.set(.8,.6,.65);mesh.add(muzzle);}
+  else mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.72,metalness:0}));
   mesh.name=names[index];mesh.userData.modelName=mesh.name;mesh.position.x=modelStudio.root.children.filter(child=>!child.userData.reference).length*1.65;mesh.traverse?.(n=>{n.castShadow=true;n.receiveShadow=true;});modelStudio.root.add(mesh);selectModelMesh(mesh);focusModelObject(mesh);pushModelHistory();renderModelObjectList();
 }
 function clearModelComponentHelper(){
@@ -3182,7 +3471,7 @@ function finishModelComponentTransform(){
 function clearModelCreationPreview(){
   const preview=modelStudio.creationPreview;
   if(preview){preview.parent?.remove(preview);disposeModelNode(preview);}
-  modelStudio.creationPreview=null;modelStudio.creationWorldPoints=[];
+  modelStudio.creationPreview=null;modelStudio.creationWorldPoints=[];const faceFinish=$('#model-create-face-finish'),toolCancel=$('#model-tool-cancel');if(faceFinish)faceFinish.hidden=true;if(toolCancel)toolCancel.hidden=!modelStudio.activeTool;
 }
 function updateModelCreationPreview(worldPoint){
   const r=modelStudio;
@@ -3242,7 +3531,7 @@ function collectModelIndicesAtPoints(geometry,points){
   return out;
 }
 function selectModelComponent(hit){
-  const r=modelStudio,target=hit.object;
+  const r=modelStudio,target=hit.modelTarget||hit.object;
   if(target.geometry?.index){const old=target.geometry;target.geometry=old.toNonIndexed();old.dispose();}
   const geometry=target.geometry,positions=geometry?.attributes?.position;if(!positions)return;
   const face=Math.max(0,hit.faceIndex??0),info=modelTriangleInfo(geometry,face);if(!info)return;
@@ -3252,11 +3541,12 @@ function selectModelComponent(hit){
     const nearest=info.vertices.reduce((best,v,i)=>v.distanceTo(localHit)<info.vertices[best].distanceTo(localHit)?i:best,0);
     indices=collectModelIndicesAtPoints(geometry,[info.vertices[nearest]]);
   }else if(r.mode==='edge'){
-    const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
+    if(hit.modelEdgePoints?.length===2){indices=collectModelIndicesAtPoints(geometry,hit.modelEdgePoints);}
+    else {const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
     const segmentDistance=(point,a,b)=>{const ab=b.clone().sub(a),lengthSq=ab.lengthSq();const t=lengthSq?THREE.MathUtils.clamp(point.clone().sub(a).dot(ab)/lengthSq,0,1):0;return point.distanceTo(a.addScaledVector(ab,t));};
     const edges=[[0,1],[1,2],[2,0]].map(pair=>({pair,distance:segmentDistance(localHit,info.vertices[pair[0]],info.vertices[pair[1]])}));
     edges.sort((a,b)=>a.distance-b.distance);
-    indices=collectModelIndicesAtPoints(geometry,edges[0].pair.map(i=>info.vertices[i]));
+    indices=collectModelIndicesAtPoints(geometry,edges[0].pair.map(i=>info.vertices[i]));}
   }else if(r.mode==='face'){
     faceIndices=connectedCoplanarModelFaces(geometry,face);
     indices=[...new Set(faceIndices.flatMap(faceId=>[faceId*3,faceId*3+1,faceId*3+2]))];
@@ -3264,7 +3554,7 @@ function selectModelComponent(hit){
   if(!indices.length)return;
   clearModelComponentHelper();r.selected=target;r.componentTarget=target;r.componentSelection={target,indices,face,faceIndices,mode:r.mode};
   r.componentHelper=new THREE.Group();r.scene.add(r.componentHelper);renderModelComponentMarker();
-  syncModelComponentPivot();r.transform.enabled=true;r.transform.attach(r.componentPivot);r.transform.setMode('translate');
+  syncModelComponentPivot();r.transform.enabled=!r.activeTool;r.transform.attach(r.componentPivot);r.transform.setMode('translate');
   const label=r.mode==='face'?`грань ${faceIndices.length>1?`(${faceIndices.length} треугольника)`:`${face}`}`:r.mode==='vertex'?`вершина ${indices[0]}`:`ребро ${face}`;
   $('#model-selection-info').textContent=`${r.mode}: ${label}`;
   renderModelFields();renderModelObjectList();
@@ -3273,40 +3563,243 @@ function createModelElementAtHit(hit,kind){
   const r=modelStudio,target=hit.object;target.updateMatrixWorld(true);
   const local=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
   if(kind==='create-vertex'){
-    if(countModelTriangles(modelStudio.root||target)+192>MAX_MODEL_TRIANGLES){toast('Слишком много полигонов: точка не создана','error');return;}
-    const source=Array.isArray(target.material)?target.material[0]:target.material;
-    const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,12,8),source?.clone?.()||new THREE.MeshStandardMaterial({color:0xffd166}));dot.name='New Vertex';dot.position.copy(local);dot.userData.createdComponent='vertex';target.add(dot);clearModelCreationPreview();pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новая точка создана';return;
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,12,8),new THREE.MeshStandardMaterial({color:0xffd166}));dot.name='New Vertex';dot.position.copy(local);dot.userData.createdComponent='vertex';target.add(dot);pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новая точка создана';return;
   }
   if(r.creationTarget!==target){clearModelCreationPreview();r.creationTarget=target;r.creationPoints=[];}
+  if(r.creationPoints.some(p=>p.distanceTo(local)<.015)){toast('Эта точка уже добавлена');return;}
   r.creationPoints.push(local);updateModelCreationPreview(hit.point);
-  const required=kind==='create-edge'?2:3;
-  if(r.creationPoints.length<required){$('#model-selection-info').textContent=`${kind==='create-edge'?'Ребро':'Грань'}: точка ${r.creationPoints.length} из ${required}`;toast(`Выбери ещё ${required-r.creationPoints.length} точку на той же модели`);return;}
-  const points=r.creationPoints.slice(0,required);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();
-  const source=Array.isArray(target.material)?target.material[0]:target.material;
-  if(kind==='create-edge'){
-    if(countModelTriangles(modelStudio.root||target)+32>MAX_MODEL_TRIANGLES){toast('Слишком много полигонов: ребро не создано','error');return;}
-    const a=points[0],b=points[1],direction=b.clone().sub(a),length=direction.length();
+  if(kind==='create-edge'&&r.creationPoints.length>=2){
+    const [a,b]=r.creationPoints.slice(0,2),direction=b.clone().sub(a),length=direction.length();
     if(length<.0001){toast('Точки ребра слишком близко друг к другу','error');return;}
-    const edge=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,length,8),source?.clone?.()||new THREE.MeshStandardMaterial({color:0xffd166}));edge.name='New Edge';edge.position.copy(a).add(b).multiplyScalar(.5);edge.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());edge.userData.createdComponent='edge';target.add(edge);
-  }else{
-    const area=points[1].clone().sub(points[0]).cross(points[2].clone().sub(points[0])).length();if(area<.0001){toast('Три точки лежат почти на одной линии','error');return;}
-    if(!makeModelTriangleMesh(target,[points],'New Face'))return;
+    const edge=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,length,8),new THREE.MeshStandardMaterial({color:0x52d9ff}));edge.name='New Edge';edge.position.copy(a).add(b).multiplyScalar(.5);edge.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());edge.userData.createdComponent='edge';target.add(edge);
+    r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новое ребро создано';return;
   }
-  pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent=kind==='create-edge'?'Новое ребро создано':'Новая грань создана';
+  if(kind==='create-face'){
+    const count=r.creationPoints.length;$('#model-create-face-finish').hidden=count<3;$('#model-tool-cancel').hidden=false;
+    $('#model-selection-info').textContent=`Грань: ${count} точек. Добавь ещё или нажми «Завершить грань»`;
+    if(count>=3)toast(`Добавлено точек: ${count}. Нажми «Завершить грань», когда закончишь`);
+    return;
+  }
+  $('#model-selection-info').textContent=`Ребро: точка ${r.creationPoints.length} из 2`;
 }
+
+function modelCanvasPointer(clientX,clientY){
+  const canvas=$('#model-canvas'),rect=canvas.getBoundingClientRect();
+  modelStudio.pointer.set((clientX-rect.left)/rect.width*2-1,-((clientY-rect.top)/rect.height)*2+1);
+  modelStudio.raycaster.setFromCamera(modelStudio.pointer,modelStudio.camera);
+  return {canvas,rect};
+}
+function selectedModelMeshes(){
+  const selected=modelStudio.selected;if(!selected)return [];
+  return modelMeshesWithin(selected).filter(mesh=>mesh.visible&&!mesh.userData.editorOnly&&!mesh.userData.reference);
+}
+function getModelHitAt(clientX,clientY,targets=selectedModelMeshes()){
+  if(!targets.length)return null;modelCanvasPointer(clientX,clientY);
+  let best=null;for(const target of targets){target.updateMatrixWorld(true);const hits=modelStudio.raycaster.intersectObject(target,false);if(hits.length&&(!best||hits[0].distance<best.distance))best=hits[0];}
+  return best;
+}
+function modelBrushContains(u,v,radius,shape){
+  if(shape==='square')return Math.max(Math.abs(u),Math.abs(v))<=radius;
+  if(shape==='triangle'){
+    const x=u/radius,y=v/radius,ax=-1,ay=-.58,bx=1,by=-.58,cx=0,cy=1.16;
+    const d=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);
+    const a=((by-cy)*(x-cx)+(cx-bx)*(y-cy))/d,b=((cy-ay)*(x-cx)+(ax-cx)*(y-cy))/d,c=1-a-b;
+    return a>=0&&b>=0&&c>=0;
+  }
+  return u*u+v*v<=radius*radius;
+}
+function ensureModelSculptResolution(target){
+  if(target.userData.sculptPrepared)return;
+  if(target.geometry?.index){const old=target.geometry;target.geometry=old.toNonIndexed();old.dispose();}
+  const initial=Math.floor((target.geometry?.attributes?.position?.count||0)/3),levels=initial<80?2:initial<700?1:0;
+  for(let level=0;level<levels;level++){
+    const count=Math.floor(target.geometry.attributes.position.count/3);if(count*4+countModelTriangles(modelStudio.root)>MAX_MODEL_TRIANGLES)break;
+    if(!subdivideModelFaces(target,Array.from({length:count},(_,i)=>i)))break;
+  }
+  target.userData.sculptPrepared=true;
+}
+function applyModelSculptAt(clientX,clientY){
+  const r=modelStudio,hit=getModelHitAt(clientX,clientY);if(!hit?.object?.geometry?.attributes?.position)return false;
+  const target=hit.object;ensureModelSculptResolution(target);const geometry=target.geometry,position=geometry.attributes.position;
+  const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
+  const normal=hit.face?.normal?.clone?.()||new THREE.Vector3(0,0,1);normal.normalize();
+  let tangent=new THREE.Vector3(0,0,1);if(Math.abs(normal.dot(tangent))>.92)tangent.set(0,1,0);
+  const axisU=tangent.cross(normal).normalize(),axisV=normal.clone().cross(axisU).normalize();
+  const cfg=r.sculptSettings,radius=Math.max(.01,Number(cfg.radius)||.55),sign=cfg.action==='dent'?-1:1,amount=(Number(cfg.strength)||.08)*.06*sign;
+  let changed=false;
+  for(let i=0;i<position.count;i++){
+    const vertex=new THREE.Vector3().fromBufferAttribute(position,i),delta=vertex.clone().sub(localHit);
+    const u=delta.dot(axisU),v=delta.dot(axisV),normalDistance=Math.abs(delta.dot(normal));
+    if(normalDistance>radius*.8||!modelBrushContains(u,v,radius,cfg.shape))continue;
+    const radial=cfg.shape==='square'?Math.max(Math.abs(u),Math.abs(v))/radius:Math.sqrt(u*u+v*v)/radius;
+    const falloff=Math.pow(Math.max(0,1-radial),2);if(falloff<=0)continue;
+    vertex.addScaledVector(normal,amount*falloff);position.setXYZ(i,vertex.x,vertex.y,vertex.z);changed=true;
+  }
+  if(changed){position.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();}
+  return changed;
+}
+function startModelSculptStroke(event){
+  const r=modelStudio;if(!r.selected){toast('Сначала выбери объект для скульптинга','error');return;}
+  if(event.button!==0&&event.pointerType==='mouse')return;
+  event.preventDefault();event.currentTarget.setPointerCapture?.(event.pointerId);
+  r.sculptStroke={pointerId:event.pointerId,x:event.clientX,y:event.clientY,lastStamp:0,changed:false};
+  r.sculptStroke.changed=applyModelSculptAt(event.clientX,event.clientY);
+  cancelAnimationFrame(r.sculptRaf);
+  const tick=time=>{if(!r.sculptStroke||r.activeTool!=='sculpt')return;r.sculptRaf=requestAnimationFrame(tick);if(time-r.sculptStroke.lastStamp>=55){if(applyModelSculptAt(r.sculptStroke.x,r.sculptStroke.y))r.sculptStroke.changed=true;r.sculptStroke.lastStamp=time;}};
+  r.sculptRaf=requestAnimationFrame(tick);
+}
+function startModelCutStroke(event){
+  const r=modelStudio;if(!r.selected){toast('Сначала выбери объект для разреза','error');return;}
+  if(event.button!==0&&event.pointerType==='mouse')return;
+  event.preventDefault();event.currentTarget.setPointerCapture?.(event.pointerId);
+  r.cutStroke={pointerId:event.pointerId,points:[{x:event.clientX,y:event.clientY}]};
+  $('#model-cut-path').setAttribute('d',`M ${event.clientX-event.currentTarget.getBoundingClientRect().left} ${event.clientY-event.currentTarget.getBoundingClientRect().top}`);
+}
+function handleModelToolPointerMove(event){
+  const r=modelStudio;
+  if(r.sculptStroke&&r.sculptStroke.pointerId===event.pointerId){r.sculptStroke.x=event.clientX;r.sculptStroke.y=event.clientY;return;}
+  if(r.cutStroke&&r.cutStroke.pointerId===event.pointerId){
+    const last=r.cutStroke.points.at(-1);if(Math.hypot(event.clientX-last.x,event.clientY-last.y)>=3)r.cutStroke.points.push({x:event.clientX,y:event.clientY});
+    const rect=$('#model-canvas').getBoundingClientRect();$('#model-cut-path').setAttribute('d',r.cutStroke.points.map((p,i)=>`${i?'L':'M'} ${p.x-rect.left} ${p.y-rect.top}`).join(' '));return;
+  }
+}
+function finishModelToolPointer(event){
+  const r=modelStudio;
+  if(r.sculptStroke&&(!event||r.sculptStroke.pointerId===event.pointerId)){
+    const stroke=r.sculptStroke;r.sculptStroke=null;cancelAnimationFrame(r.sculptRaf);r.sculptRaf=0;if(stroke.changed){if(r.topologyOverlay)updateModelTopologyOverlay();pushModelHistory();$('#model-selection-info').textContent='Рельеф изменён';}
+    return;
+  }
+  if(r.cutStroke&&(!event||r.cutStroke.pointerId===event.pointerId)){
+    const stroke=r.cutStroke;r.cutStroke=null;$('#model-cut-path').setAttribute('d','');
+    if(stroke.points.length>=2)cutModelAlongScreenStroke(stroke.points);else toast('Проведи линию по поверхности объекта');
+  }
+}
+function interpolateModelAttribute(a,b,t){const row={};for(const name of Object.keys(a))row[name]=a[name].map((v,i)=>v+(b[name][i]-v)*t);return row;}
+function splitModelMeshByPlane(target,planePointWorld,planeNormalWorld){
+  const original=target.geometry;if(!original?.attributes?.position)return null;
+  const source=original.index?original.toNonIndexed():original.clone();const attrNames=Object.keys(source.attributes),position=source.attributes.position;
+  const sides=[{data:Object.fromEntries(attrNames.map(n=>[n,[]])),groups:[]},{data:Object.fromEntries(attrNames.map(n=>[n,[]])),groups:[]}];
+  let cutLocal=[];const read=i=>Object.fromEntries(attrNames.map(name=>{const a=source.attributes[name];return [name,Array.from({length:a.itemSize},(_,k)=>a.array[i*a.itemSize+k])];}));
+  const rowLocalWorld=row=>new THREE.Vector3(...row.position).applyMatrix4(target.matrixWorld);
+  const dist=row=>rowLocalWorld(row).sub(planePointWorld).dot(planeNormalWorld);
+  const append=(side,tri,materialIndex)=>{const bucket=sides[side],start=bucket.data.position.length/3;tri.forEach(row=>attrNames.forEach(name=>bucket.data[name].push(...row[name])));const prev=bucket.groups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else bucket.groups.push({start,count:3,materialIndex});};
+  const clip=(tri,side)=>{
+    const sign=side===0?1:-1,out=[];
+    for(let i=0;i<tri.length;i++){
+      const a=tri[i],b=tri[(i+1)%tri.length],da=dist(a)*sign,db=dist(b)*sign,insideA=da>=-1e-7,insideB=db>=-1e-7;
+      if(insideA&&insideB)out.push(b);
+      else if(insideA&&!insideB){const t=da/(da-db),v=interpolateModelAttribute(a,b,t);out.push(v);cutLocal.push(new THREE.Vector3(...v.position));}
+      else if(!insideA&&insideB){const t=da/(da-db),v=interpolateModelAttribute(a,b,t);out.push(v,b);cutLocal.push(new THREE.Vector3(...v.position));}
+    }
+    return out;
+  };
+  const total=Math.floor(position.count/3);
+  for(let face=0;face<total;face++){
+    const tri=[read(face*3),read(face*3+1),read(face*3+2)],materialIndex=modelFaceMaterialIndex(source,face);
+    const da=dist(tri[0]),db=dist(tri[1]),dc=dist(tri[2]);
+    for(let side=0;side<2;side++){
+      const poly=clip(tri,side);if(poly.length<3)continue;
+      for(let i=1;i<poly.length-1;i++)append(side,[poly[0],poly[i],poly[i+1]],materialIndex);
+    }
+  }
+  source.dispose();
+  const unique=new Map();cutLocal.forEach(p=>unique.set(modelPointKey(p),p));const ring=[...unique.values()];
+  if(sides.some(side=>side.data.position.length===0)||ring.length<3){return null;}
+  const parent=target.parent||modelStudio.root,meshes=[];
+  for(let side=0;side<2;side++){
+    const bucket=sides[side],geometry=new THREE.BufferGeometry();
+    attrNames.forEach(name=>{const old=original.attributes[name],Typed=old.array.constructor;geometry.setAttribute(name,new THREE.BufferAttribute(new Typed(bucket.data[name]),old.itemSize,old.normalized));});
+    bucket.groups.forEach(g=>geometry.addGroup(g.start,g.count,g.materialIndex));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+    const materials=Array.isArray(target.material)?target.material.map(m=>m.clone()):target.material.clone();
+    const mesh=new THREE.Mesh(geometry,materials);mesh.name=`${target.name||'Object'}_${side===0?'A':'B'}`;mesh.position.copy(target.position);mesh.quaternion.copy(target.quaternion);mesh.scale.copy(target.scale);mesh.castShadow=target.castShadow;mesh.receiveShadow=target.receiveShadow;mesh.userData={...target.userData};parent.add(mesh);meshes.push(mesh);
+  }
+  // Close the cut for solid primitives with a simple planar fan cap.
+  target.updateMatrixWorld(true);const worldRing=ring.map(p=>p.clone().applyMatrix4(target.matrixWorld));const center=worldRing.reduce((a,b)=>a.add(b),new THREE.Vector3()).multiplyScalar(1/worldRing.length);
+  let u=new THREE.Vector3(1,0,0);if(Math.abs(u.dot(planeNormalWorld))>.9)u.set(0,1,0);u.addScaledVector(planeNormalWorld,-u.dot(planeNormalWorld)).normalize();const v=planeNormalWorld.clone().cross(u).normalize();
+  const ordered=ring.map((p,i)=>({p,w:worldRing[i],angle:Math.atan2(worldRing[i].clone().sub(center).dot(v),worldRing[i].clone().sub(center).dot(u))})).sort((a,b)=>a.angle-b.angle).map(item=>item.p);
+  const localCenter=ordered.reduce((a,b)=>a.add(b),new THREE.Vector3()).multiplyScalar(1/ordered.length);
+  const capTris=[];for(let i=0;i<ordered.length;i++){const j=(i+1)%ordered.length;capTris.push(side=>side===0?[localCenter,ordered[j],ordered[i]]:[localCenter,ordered[i],ordered[j]]);}
+  capTris.forEach(factory=>{makeModelTriangleMesh(meshes[0],[factory(0)],'Cut_Cap');makeModelTriangleMesh(meshes[1],[factory(1)],'Cut_Cap');});
+  parent.updateMatrixWorld(true);parent.remove(target);
+  // Expose cut fragments as independent workspace objects even when the source mesh was nested in an imported model group.
+  if(parent!==modelStudio.root){modelStudio.root.updateMatrixWorld(true);meshes.forEach(piece=>modelStudio.root.attach(piece));}
+  original.dispose();for(const material of Array.isArray(target.material)?target.material:[target.material])material?.dispose?.();
+  return meshes;
+}
+function cutModelAlongScreenStroke(screenPoints){
+  const r=modelStudio,targets=selectedModelMeshes();if(!targets.length){toast('Выбери модель перед разрезом','error');return;}
+  const fragments=[];let cuts=0;
+  for(const target of targets){
+    const hits=[];for(const point of screenPoints){const hit=getModelHitAt(point.x,point.y,[target]);if(hit)hits.push(hit.point.clone());}
+    if(hits.length<2)continue;
+    let pair=[hits[0],hits.at(-1)],best=pair[0].distanceTo(pair[1]);
+    for(let i=0;i<hits.length;i++)for(let j=i+1;j<hits.length;j++){const d=hits[i].distanceTo(hits[j]);if(d>best){best=d;pair=[hits[i],hits[j]];}}
+    const line=pair[1].clone().sub(pair[0]);if(line.length()<.015)continue;
+    const view=r.camera.getWorldDirection(new THREE.Vector3()),normal=line.cross(view).normalize();if(normal.lengthSq()<.0001)continue;
+    const result=splitModelMeshByPlane(target,pair[0],normal);if(result){fragments.push(...result);cuts++;}
+  }
+  if(cuts){r.selected=firstCutFragment||fragments[0]||null;r.transform.detach();r.transform.enabled=false;if(r.mode!=='object')updateModelTopologyOverlay();$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='cut'));renderModelObjectList();renderModelFields();pushModelHistory();toast(`Разрез выполнен: ${cuts} сеток разделено, создано частей: ${fragments.length}`,'success');}
+  else toast('Не удалось провести разрез: проведи линию через всю видимую часть модели','error');
+}
+function openModelCut2DEditor(){
+  const cfg=modelStudio.cutSettings;
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">CUT PLANE · 2D</span><h2 id="modal-title">Настройка плоскости разреза</h2><p>Настрой параллельные линии на отдельной 2D-плоскости. Они будут продолжены через всю модель.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><div class="model-cut-2d-frame" id="model-cut-2d-frame"><div id="model-cut-2d-lines"></div></div><label class="field-label">Количество линий <output id="model-cut-count-value">${cfg.count}</output><input class="field-input" id="model-cut-count" type="range" min="1" max="9" step="1" value="${cfg.count}"></label><label class="field-label">Расстояние между линиями <output id="model-cut-spacing-value">${Math.round(cfg.spacing*100)}%</output><input class="field-input" id="model-cut-spacing" type="range" min="0.08" max="0.55" step="0.01" value="${cfg.spacing}"></label><label class="field-label">Угол <output id="model-cut-angle-value">${cfg.angle}°</output><input class="field-input" id="model-cut-angle" type="range" min="0" max="180" step="1" value="${cfg.angle}"></label></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button type="button" class="button button-primary" id="model-cut-apply-preset">Разрезать по шаблону</button></div>`);
+  ['model-cut-count','model-cut-spacing','model-cut-angle'].forEach(id=>$('#'+id).addEventListener('input',updateModelCut2DPreview));updateModelCut2DPreview();$('#model-cut-apply-preset').addEventListener('click',()=>{closeModal();setModelMobilePanel('viewport');requestAnimationFrame(()=>applyModelCutPreset());});
+}
+function updateModelCut2DPreview(){
+  const count=Number($('#model-cut-count')?.value??modelStudio.cutSettings.count),spacing=Number($('#model-cut-spacing')?.value??modelStudio.cutSettings.spacing),angle=Number($('#model-cut-angle')?.value??modelStudio.cutSettings.angle);
+  modelStudio.cutSettings={count,spacing,angle};const countOut=$('#model-cut-count-value'),spacingOut=$('#model-cut-spacing-value'),angleOut=$('#model-cut-angle-value');if(countOut)countOut.textContent=String(count);if(spacingOut)spacingOut.textContent=`${Math.round(spacing*100)}%`;if(angleOut)angleOut.textContent=`${angle}°`;
+  const host=$('#model-cut-2d-lines');if(host)host.innerHTML=Array.from({length:count},(_,i)=>{const offset=(i-(count-1)/2)*spacing*100;return `<i style="top:calc(50% + ${offset.toFixed(2)}%);transform:translate(-50%,-50%) rotate(${angle}deg)"></i>`;}).join('');
+}
+function applyModelCutPreset(){
+  const r=modelStudio,targets=selectedModelMeshes();if(!targets.length){toast('Сначала выбери модель для разреза','error');return;}
+  const viewport=$('#model-canvas').getBoundingClientRect(),cfg=r.cutSettings,lines=[];const ndc=[];let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const target of targets){const attr=target.geometry?.attributes?.position;if(!attr)continue;target.updateMatrixWorld(true);for(let i=0;i<attr.count;i++){const point=new THREE.Vector3().fromBufferAttribute(attr,i).applyMatrix4(target.matrixWorld).project(r.camera);minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);minY=Math.min(minY,point.y);maxY=Math.max(maxY,point.y);}}
+  if(!Number.isFinite(minX)||maxX-minX<.01||maxY-minY<.01){toast('Не удалось определить область модели','error');return;}
+  const direction=new THREE.Vector2(Math.cos(THREE.MathUtils.degToRad(cfg.angle)),Math.sin(THREE.MathUtils.degToRad(cfg.angle))),perp=new THREE.Vector2(-direction.y,direction.x),corners=[new THREE.Vector2(minX,minY),new THREE.Vector2(minX,maxY),new THREE.Vector2(maxX,minY),new THREE.Vector2(maxX,maxY)],along=corners.map(p=>p.dot(direction)),across=corners.map(p=>p.dot(perp)),lo=Math.min(...along),hi=Math.max(...along),mid=(Math.min(...across)+Math.max(...across))/2,span=Math.max(.01,Math.max(...across)-Math.min(...across));
+  for(let i=0;i<cfg.count;i++){const spacing=Math.min(cfg.spacing,.82/Math.max(1,cfg.count-1));const acrossAt=mid+(i-(cfg.count-1)/2)*spacing*span;const a=direction.clone().multiplyScalar(lo-.05).addScaledVector(perp,acrossAt),b=direction.clone().multiplyScalar(hi+.05).addScaledVector(perp,acrossAt);lines.push([a,b]);}
+  let fragments=[...targets],cuts=0,firstCutFragment=null;
+  for(const [a,b] of lines){const next=[];for(const mesh of fragments){const points=[];for(let step=0;step<=72;step++){const t=step/72,ndcPoint=a.clone().lerp(b,t),clientX=viewport.left+(ndcPoint.x+1)*.5*viewport.width,clientY=viewport.top+(1-ndcPoint.y)*.5*viewport.height,hit=getModelHitAt(clientX,clientY,[mesh]);if(hit)points.push(hit.point.clone());}
+      if(points.length<2){next.push(mesh);continue;}const first=points[0],last=points.at(-1),line=last.clone().sub(first),normal=line.cross(r.camera.getWorldDirection(new THREE.Vector3())).normalize();const result=normal.lengthSq()>.0001?splitModelMeshByPlane(mesh,first,normal):null;if(result){next.push(...result);firstCutFragment ||= result[0];cuts++;}else next.push(mesh);}
+    fragments=next;
+  }
+  if(cuts){r.selected=firstCutFragment||fragments[0]||null;r.transform.detach();r.transform.enabled=false;if(r.mode!=='object')updateModelTopologyOverlay();$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='cut'));renderModelObjectList();renderModelFields();pushModelHistory();toast(`Выполнено разрезов: ${cuts}. Частей: ${fragments.length}`,'success');}else toast('Линии не пересекли модель. Измени угол или расположение','error');
+}
+function finishModelFaceCreation(){
+  const r=modelStudio,target=r.creationTarget,points=r.creationPoints;if(!target||points.length<3){toast('Для грани нужно минимум три точки','error');return false;}
+  const origin=points[0],normal=points[1].clone().sub(origin).cross(points[2].clone().sub(origin)).normalize();if(normal.lengthSq()<1e-8){toast('Точки грани лежат на одной линии','error');return false;}
+  const axisU=points[1].clone().sub(origin).normalize(),axisV=normal.clone().cross(axisU).normalize(),contour=points.map(p=>{const delta=p.clone().sub(origin);return new THREE.Vector2(delta.dot(axisU),delta.dot(axisV));});
+  const triangles=THREE.ShapeUtils.triangulateShape(contour,[]).map(indices=>indices.map(index=>points[index]));if(!triangles.length){toast('Не удалось построить полигон из этих точек','error');return false;}
+  if(!makeModelTriangleMesh(target,triangles,'New Face'))return false;
+  r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=false;$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='create-face'));pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent=`Создана грань из ${points.length} точек. Можно создать следующую`;return true;
+}
+function cancelModelActiveTool(){
+  const r=modelStudio;r.activeTool=null;r.sculptStroke=null;r.cutStroke=null;cancelAnimationFrame(r.sculptRaf);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-cut-path').setAttribute('d','');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=true;$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));r.transform.enabled=true;if(r.mode==='object'&&r.selected)r.transform.attach(r.selected);else r.transform.detach();$('#model-selection-info').textContent='Инструмент отключён';
+}
+
 function selectModelObject(e){
   const r=modelStudio;if((e.pointerType==='mouse'&&e.button!==0)||r.transform?.dragging||!e.isPrimary)return;
+  if(r.activeTool==='sculpt'){startModelSculptStroke(e);return;}
+  if(r.activeTool==='cut'){startModelCutStroke(e);return;}
   const rect=e.currentTarget.getBoundingClientRect();if(!rect.width||!rect.height)return;
-  r.pointer.set((e.clientX-rect.left)/rect.width*2-1,-((e.clientY-rect.top)/rect.height)*2+1);
-  r.root.updateMatrixWorld(true);r.raycaster.setFromCamera(r.pointer,r.camera);
+  r.pointer.set((e.clientX-rect.left)/rect.width*2-1,-((e.clientY-rect.top)/rect.height)*2+1);r.root.updateMatrixWorld(true);r.raycaster.setFromCamera(r.pointer,r.camera);
+  if(r.mode==='edge'&&r.topologyOverlay&&!r.activeTool){
+    const coarsePointer=window.matchMedia?window.matchMedia('(pointer: coarse)').matches:false;
+    r.raycaster.params.Line.threshold=Math.max(coarsePointer?0.035:0.018,r.camera.position.distanceTo(r.orbit.target)*(coarsePointer?0.022:0.012));
+    const edgeHits=r.raycaster.intersectObject(r.topologyOverlay,true).filter(hit=>hit.object?.isLineSegments&&hit.object.userData.modelSourceMesh);
+    if(edgeHits.length){const edgeHit=edgeHits[0],line=edgeHit.object,positions=line.geometry.attributes.position;let closest=null,best=Infinity;line.updateMatrixWorld(true);
+      for(let i=0;i+1<positions.count;i+=2){const a=new THREE.Vector3().fromBufferAttribute(positions,i).applyMatrix4(line.matrixWorld),b=new THREE.Vector3().fromBufferAttribute(positions,i+1).applyMatrix4(line.matrixWorld),ab=b.clone().sub(a),t=THREE.MathUtils.clamp(edgeHit.point.clone().sub(a).dot(ab)/(ab.lengthSq()||1),0,1),point=a.addScaledVector(ab,t),distance=point.distanceTo(edgeHit.point);if(distance<best){best=distance;closest=[i,i+1];}}
+      if(closest){const inverse=line.matrixWorld.clone().invert(),points=closest.map(i=>new THREE.Vector3().fromBufferAttribute(positions,i).applyMatrix4(inverse));selectModelComponent({object:line,modelTarget:line.userData.modelSourceMesh,modelEdgePoints:points,faceIndex:0,point:edgeHit.point});return;}
+    }
+  }
   const hits=r.raycaster.intersectObjects(r.root.children,true).filter(hit=>hit.object.isMesh&&!hit.object.userData.reference&&!hit.object.userData.editorOnly&&hit.object.visible);
-  if(!hits.length){if(!r.activeTool){clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();r.selected=null;r.mode='object';r.transform.detach();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent='Объект не выбран';}return;}
+  if(!hits.length){if(!r.activeTool){clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();r.selected=null;r.transform.detach();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent='Объект не выбран';}return;}
   const hit=hits[0];
   if(r.activeTool){
     const tool=r.activeTool;
     if(tool==='create-vertex'||tool==='create-edge'||tool==='create-face'){createModelElementAtHit(hit,tool);return;}
-    if(['extrude','inset','cut','bevel','sharpen'].includes(tool))r.mode='face';
-    else if(['joint'].includes(tool)&&r.mode==='object')r.mode='vertex';
+    if(['bevel','sharpen'].includes(tool)&&r.mode!=='face'){toast('Для этой операции переключись в режим «Грани»','error');return;}
+    if(tool==='joint'&&r.mode!=='vertex'){toast('Для сгиба переключись в режим «Точки»','error');return;}
     selectModelComponent(hit);applyModelComponentTool(tool);return;
   }
   if(r.mode!=='object'){let componentObject=hit.object;while(componentObject.parent&&componentObject.parent!==r.root)componentObject=componentObject.parent;if(componentObject!==r.selected){r.selected=componentObject;updateModelTopologyOverlay();}selectModelComponent(hit);return;}
@@ -3314,10 +3807,10 @@ function selectModelObject(e){
 }
 
 function selectModelMesh(mesh){
-  clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;modelStudio.selected=mesh;modelStudio.selectedObjects.clear();modelStudio.mode='object';
-  syncModelTransformToolButtons('move');
-  $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode==='object'));
-  modelStudio.transform.enabled=true;modelStudio.transform.attach(mesh);modelStudio.transform.setMode('translate');
+  clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();modelStudio.creationPoints=[];modelStudio.creationTarget=null;modelStudio.selected=mesh;modelStudio.selectedObjects.clear();
+  $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===modelStudio.mode));
+  if(modelStudio.mode==='object'&&!modelStudio.activeTool){syncModelTransformToolButtons('move');modelStudio.transform.enabled=true;modelStudio.transform.attach(mesh);modelStudio.transform.setMode('translate');}
+  else{modelStudio.transform.detach();modelStudio.transform.enabled=!modelStudio.activeTool;updateModelTopologyOverlay();}
   $('#model-selection-info').textContent=mesh.name||'Объект';renderModelFields();renderModelObjectList();
 }
 function deleteModelObject(object){
@@ -3348,7 +3841,7 @@ function renderModelFields(){
   if(!object){transformHost.innerHTML='<div class="modal-note">Выбери объект в 3D-окне или в списке.</div>';materialHost.innerHTML='<div class="modal-note">Материал не выбран.</div>';return;}
   const vector=(kind,label,values)=>`<div class="model-vector-row"><b>${label}</b>${values.map((value,axis)=>`<label>${['X','Y','Z'][axis]}<input type="number" step="0.01" data-model-vector="${kind}" data-model-axis="${axis}" value="${Number(value).toFixed(3)}"></label>`).join('')}</div>`;
   transformHost.innerHTML=`<label class="field-label">Имя объекта<input class="field-input" id="model-object-name" maxlength="80" value="${escapeAttr(object.name||'Object')}"></label>${vector('position','Позиция',object.position.toArray())}${vector('rotation','Вращение °',[object.rotation.x,object.rotation.y,object.rotation.z].map(v=>THREE.MathUtils.radToDeg(v)))}${vector('scale','Масштаб',object.scale.toArray())}<div class="modal-note">Трансформации можно менять здесь или манипулятором прямо в 3D-окне.</div>`;
-  const materials=modelMaterialList(object),first=materials[0],color=first?.color?`#${first.color.getHexString()}`:'#b8b8b8';
+  const materials=modelMaterialList(object),first=materials[0],color=first?.color?`#${first.color.getHexString()}`:'#ffffff';
   if(!first){materialHost.innerHTML='<div class="modal-note">У объекта пока нет редактируемого материала.</div>';return;}
   const repeat=first.map?.repeat||{x:1,y:1},offset=first.map?.offset||{x:0,y:0};
   materialHost.innerHTML=`<label class="field-label">Цвет<input class="field-input" type="color" data-model-material="color" value="${color}"></label><div class="model-vector-row"><b>UV повтор</b><label>U<input type="number" step="0.1" min="0.01" data-model-material="repeatX" value="${Number(repeat.x||1).toFixed(2)}"></label><label>V<input type="number" step="0.1" min="0.01" data-model-material="repeatY" value="${Number(repeat.y||1).toFixed(2)}"></label></div><div class="model-vector-row"><b>UV сдвиг</b><label>U<input type="number" step="0.05" data-model-material="offsetX" value="${Number(offset.x||0).toFixed(2)}"></label><label>V<input type="number" step="0.05" data-model-material="offsetY" value="${Number(offset.y||0).toFixed(2)}"></label></div><label class="field-label">Шероховатость <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="roughness" value="${Number(first.roughness??.7).toFixed(2)}"></label><label class="field-label">Металличность <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="metalness" value="${Number(first.metalness??0).toFixed(2)}"></label><small class="asset-meta">Изменение применяется ко всем материалам выбранной модели.</small>`;
@@ -3386,8 +3879,8 @@ function updateModelTopologyOverlay(){
     const position=mesh.geometry?.attributes?.position;if(!position)return;
     const pointsGeometry=new THREE.BufferGeometry();pointsGeometry.setAttribute('position',position.clone());
     const points=new THREE.Points(pointsGeometry,new THREE.PointsMaterial({color:0xffd166,size:window.matchMedia?.('(pointer: coarse)').matches?9:6,sizeAttenuation:false,depthTest:true}));points.userData.editorOnly=true;points.renderOrder=20;group.add(points);
-    const edgesGeometry=new THREE.EdgesGeometry(mesh.geometry,1);
-    const edges=new THREE.LineSegments(edgesGeometry,new THREE.LineBasicMaterial({color:0x52d9ff,transparent:true,opacity:.95,depthTest:true}));edges.userData.editorOnly=true;edges.renderOrder=19;group.add(edges);
+    const edgesGeometry=new THREE.WireframeGeometry(mesh.geometry);
+    const edges=new THREE.LineSegments(edgesGeometry,new THREE.LineBasicMaterial({color:0x52d9ff,transparent:true,opacity:.95,depthTest:true}));edges.userData.editorOnly=true;edges.userData.modelSourceMesh=mesh;edges.renderOrder=19;group.add(edges);
     // Copy the complete world transform: source meshes may be nested inside groups.
     mesh.updateMatrixWorld(true);const localOverlay=new THREE.Group();localOverlay.matrixAutoUpdate=false;localOverlay.matrix.copy(mesh.matrixWorld);localOverlay.matrixWorldNeedsUpdate=true;localOverlay.add(points,edges);group.add(localOverlay);
   });
@@ -3397,8 +3890,9 @@ function snapModelView(spec){
   const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1;const r=modelStudio;if(!r.camera||!r.orbit)return;
   const target=r.orbit.target.clone();const direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
   const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,2,2000);
-  if(axis==='y')r.camera.up.set(0,0,sign>0?-1:1);else r.camera.up.set(0,1,0);
-  r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();
+  // Z is the world-up axis. Side views keep Z vertical; top/bottom views use Y as screen-up.
+  r.camera.up.copy(axis==='z'?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));
+  r.orbit.object.up.copy(r.camera.up);r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();
   $$('#model-studio [data-model-view]').forEach(button=>button.classList.toggle('active',button.dataset.modelView===spec));
 }
 function joinSelectedModelObjects(){
@@ -3418,10 +3912,10 @@ function separateSelectedModelGroup(){
 }
 
 function setModelMode(mode){
-  const r=modelStudio;r.mode=mode;r.activeTool=null;r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-canvas')?.classList.remove('model-tool-cursor');clearModelComponentHelper();syncModelTransformToolButtons('move');
+  const r=modelStudio;r.mode=mode;r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-canvas')?.classList.toggle('model-tool-cursor',!!r.activeTool);clearModelComponentHelper();
   $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===mode));
-  if(mode==='object'){r.transform.enabled=true;if(r.selected)r.transform.attach(r.selected);else r.transform.detach();clearModelTopologyOverlay();}
-  else{r.transform.detach();r.transform.enabled=true;updateModelTopologyOverlay();}
+  if(mode==='object'){clearModelTopologyOverlay();if(r.activeTool){r.transform.enabled=false;r.transform.detach();}else{r.transform.enabled=true;if(r.selected)r.transform.attach(r.selected);else r.transform.detach();}}
+  else{r.transform.detach();r.transform.enabled=!r.activeTool;updateModelTopologyOverlay();}
   $('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — выбери элемент прямо на модели`;
 }
 function mirrorModelObject(axis){
@@ -3517,7 +4011,7 @@ function applyModelComponentTool(tool){
   }else if(tool==='duplicate'){
     if(selection.mode!=='face'){toast('Дублирование компонента доступно для грани','error');return false;}
     const faceIndices=selection.faceIndices||[selection.face],triangles=faceIndices.map(face=>[0,1,2].map(offset=>new THREE.Vector3().fromBufferAttribute(pos,face*3+offset)));
-    const normal=vertices[1]?.clone().sub(vertices[0]).cross(vertices[2]?.clone().sub(vertices[0])).normalize()||new THREE.Vector3(0,1,0);
+    const normal=vertices[1]?.clone().sub(vertices[0]).cross(vertices[2]?.clone().sub(vertices[0])).normalize()||new THREE.Vector3(0,0,1);
     triangles.forEach(tri=>tri.forEach(v=>v.addScaledVector(normal,.12)));makeModelTriangleMesh(target,triangles,`${target.name||'Face'} Copy`);
   }else if(tool==='cut'){
     if(selection.mode!=='face'){toast('Для разреза выбери грань','error');return false;}
@@ -3528,7 +4022,7 @@ function applyModelComponentTool(tool){
     if(tool==='extrude'||tool==='inset'||tool==='bevel'){
       if(boundary.length<3){toast('Не удалось определить границу грани','error');return false;}
       const firstFace=modelTriangleInfo(geometry,faceIndices[0]);
-      const normal=firstFace?.normal||new THREE.Vector3(0,1,0);
+      const normal=firstFace?.normal||new THREE.Vector3(0,0,1);
       const mapPoint=v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(center,tool==='inset'?.22:.14).addScaledVector(normal,tool==='inset'?-0.09:-0.025);
       const moved=boundary.map(mapPoint);
       const movedTriangles=faceIndices.map(face=>[0,1,2].map(corner=>mapPoint(new THREE.Vector3().fromBufferAttribute(pos,face*3+corner))));
@@ -3546,28 +4040,26 @@ function applyModelComponentTool(tool){
     }
   }
   if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
-  r.componentSelection=null;r.componentTarget=null;r.componentStart=null;r.activeTool=null;r.creationPoints=[];r.transform.detach();$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.remove('active'));
-  pushModelHistory();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent=tool==='joint'?'Шарнир создан':`Инструмент: ${tool}`;return true;
+  r.componentSelection=null;r.componentTarget=null;r.componentStart=null;r.creationPoints=[];r.transform.detach();r.transform.enabled=false;$('#model-canvas')?.classList.add('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.toggle('active',button.dataset.modelTool===r.activeTool));
+  pushModelHistory();renderModelFields();renderModelObjectList();$('#model-selection-info').textContent=`${tool}: выбери следующий компонент или смени инструмент`;return true;
 }
 function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale','move-plane','scale-uniform'].includes(tool)&&button.dataset.modelTool===tool));}
 function setModelTool(tool){
-  const r=modelStudio,mesh=r.selected;if(!mesh){toast('Сначала выбери объект','error');return;}
-  clearModelCreationPreview();
-  const clickTools=['extrude','inset','cut','bevel','sharpen','joint','create-vertex','create-edge','create-face'];
+  const r=modelStudio,mesh=r.selected;if(!mesh&&!['cut','sculpt'].includes(tool)){toast('Сначала выбери объект','error');return;}
+  clearModelCreationPreview();r.creationPoints=[];r.creationTarget=null;
+  const clickTools=['sculpt','cut','bevel','sharpen','joint','create-vertex','create-edge','create-face'];
   if(clickTools.includes(tool)||(['delete','duplicate'].includes(tool)&&r.mode!=='object')){
-    r.activeTool=tool;r.creationPoints=[];r.creationTarget=null;
-    if(['extrude','inset','cut','bevel','sharpen'].includes(tool))r.mode='face';
-    if(tool==='joint'&&r.mode==='object')r.mode='vertex';
-    r.transform.detach();r.transform.enabled=false;clearModelComponentHelper();
-    $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===r.mode));
+    r.activeTool=tool;r.transform.detach();r.transform.enabled=false;clearModelComponentHelper();
     $$('[data-model-tool]').forEach(button=>button.classList.toggle('active',button.dataset.modelTool===tool));
+    $('#model-sculpt-settings').classList.toggle('active',tool==='sculpt');$('#model-cut-settings').classList.toggle('active',tool==='cut');
+    $('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=false;
     $('#model-canvas').classList.add('model-tool-cursor');
-    const labels={extrude:'Нажми на грань для выдавливания',inset:'Нажми на грань для вдавливания',cut:'Нажми на грань для разреза',bevel:'Нажми на грань для скругления',sharpen:'Нажми на грань для заострения',joint:'Нажми на точку для создания сгиба', 'create-vertex':'Нажми на поверхность для новой точки','create-edge':'Нажми две точки на поверхности для нового ребра','create-face':'Нажми три точки на поверхности для новой грани',delete:'Нажми на компонент для удаления',duplicate:'Нажми на грань для дублирования'};
+    const labels={sculpt:'Рельеф: удерживай и веди по поверхности',cut:'Разрез: проведи линию через объект',bevel:'Переключись на грани и выбери грань',sharpen:'Переключись на грани и выбери грань',joint:'Переключись на точки и выбери точку','create-vertex':'Нажми на поверхность для новой точки','create-edge':'Нажми две точки на поверхности для ребра','create-face':'Расставь минимум три точки, затем нажми «Завершить грань»',delete:'Нажми на компонент для удаления',duplicate:'Нажми на грань для дублирования'};
     $('#model-selection-info').textContent=labels[tool]||tool;
     if(window.matchMedia?.('(pointer: coarse)').matches)setModelMobilePanel('viewport');
     return;
   }
-  r.activeTool=null;r.creationPoints=[];r.creationTarget=null;$('#model-canvas').classList.remove('model-tool-cursor');
+  r.activeTool=null;$('#model-sculpt-settings').classList.remove('active');$('#model-cut-settings').classList.remove('active');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-tool-cancel').hidden=true;
   if(['move','rotate','scale','move-plane','scale-uniform'].includes(tool)){
     const baseTool=tool==='move-plane'?'move':tool==='scale-uniform'?'scale':tool;
     syncModelTransformToolButtons(tool);
@@ -3575,8 +4067,8 @@ function setModelTool(tool){
     r.transform.enabled=true;r.transform.attach(r.mode==='object'?mesh:r.componentPivot);
     r.transform.setSpace('world');r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[baseTool]);
     r.transform.showX=r.transform.showY=r.transform.showZ=true;
-    if(tool==='move-plane')toast('Перетаскивай плоские ручки XY, YZ или XZ для движения сразу по двум осям');
-    if(tool==='scale-uniform')toast('Потяни центральную ручку XYZ для равномерного масштаба');
+    if(tool==='move-plane')toast('Перемещай по плоскостям XY, XZ или YZ');
+    if(tool==='scale-uniform')toast('Потяни центральную ручку для равномерного масштаба');
     return;
   }
   syncModelTransformToolButtons('');r.transform.enabled=false;
@@ -3606,7 +4098,8 @@ function redoModelStudio(){
 }
 async function saveModelStudioAsset(){
   if(!currentProject||!modelStudio.root?.children.some(o=>!o.userData.reference)){toast('Добавь хотя бы один объект модели','error');return;}
-  const exporter=new GLTFExporter(),root=new THREE.Group();modelStudio.root.updateMatrixWorld(true);
+  const exporter=new GLTFExporter(),root=new THREE.Group();root.rotation.x=-Math.PI/2;modelStudio.root.updateMatrixWorld(true);
+  // Export back to glTF's Y-up convention; the Model Studio wrapper converts it to Z-up on import.
   modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(cloneModelObjectDeep(o)));
   try{
     const result=await exporter.parseAsync(root,{binary:true,onlyVisible:true});
@@ -3624,14 +4117,32 @@ async function saveModelStudioAsset(){
     $('#model-studio-status').textContent=`Сохранено: ${name}.glb`;
   }catch(err){console.error(err);toast(`Не удалось сохранить модель: ${err.message||'ошибка GLB'}`,'error');}
 }
-function convertModelToPlayer(){const o=modelStudio.selected;if(!o||!currentProject)return;const exporter=new GLTFExporter();const group=o.clone(true);exporter.parseAsync(group,{binary:true}).then(async result=>{const blob=new Blob([result],{type:'model/gltf-binary'}),asset={id:uid(),name:`${safeName(o.name)}_Player.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${uid()}.glb`,blob};currentProject.assets.push(asset);const entity={id:uid(),name:`${o.name} Player`,type:'player',modelAssetId:asset.id,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],visible:true,collision:{enabled:true,shape:'capsule',size:[.8,1.8,.8]},cameraMount:{mode:'back',offset:[0,1.6,0],fov:70},material:{}};activeSceneData().objects.push(entity);await loadSceneIntoViewport();renderHierarchy();renderInspector();scheduleSave();toast('Импортированная модель создана как Player','success');}).catch(err=>toast('Не удалось создать Player','error'));}
+function convertModelToPlayer(){const o=modelStudio.selected;if(!o||!currentProject)return;const exporter=new GLTFExporter(),group=new THREE.Group();group.rotation.x=-Math.PI/2;group.add(cloneModelObjectDeep(o));exporter.parseAsync(group,{binary:true}).then(async result=>{const blob=new Blob([result],{type:'model/gltf-binary'}),asset={id:uid(),name:`${safeName(o.name)}_Player.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${uid()}.glb`,blob};currentProject.assets.push(asset);const entity={id:uid(),name:`${o.name} Player`,type:'player',modelAssetId:asset.id,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],visible:true,collision:{enabled:true,shape:'capsule',size:[.8,1.8,.8]},cameraMount:{mode:'back',offset:[0,1.6,0],fov:70},material:{}};activeSceneData().objects.push(entity);await loadSceneIntoViewport();renderHierarchy();renderInspector();scheduleSave();toast('Импортированная модель создана как Player','success');}).catch(err=>toast('Не удалось создать Player','error'));}
 function loadModelReference(file){if(!file)return;const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'References',path:`Assets/References/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);const plane=new THREE.Mesh(new THREE.PlaneGeometry(3,2),new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:.7,side:THREE.DoubleSide,depthWrite:false}));plane.name='Reference Image';plane.userData.reference=true;plane.position.set(0,1,0);modelStudio.root.add(plane);},undefined,()=>URL.revokeObjectURL(url));}
 function removeModelReference(){modelStudio.root.children.filter(object=>object.userData.reference).forEach(object=>{modelStudio.root.remove(object);disposeModelNode(object);});}
 function loadModelTexture(file){if(!file||!modelStudio.selected)return;const targets=[];modelStudio.selected.traverse?.(child=>{if(child.isMesh&&child.material)targets.push(child);});if(!targets.length&&modelStudio.selected.isMesh)targets.push(modelStudio.selected);if(!targets.length){toast('В выбранном объекте нет материала для текстуры','error');return;}const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'Textures',path:`Assets/Textures/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;targets.forEach(child=>{const materials=Array.isArray(child.material)?child.material:[child.material];materials.forEach(material=>{material.map=tex;material.needsUpdate=true;});});},undefined,()=>URL.revokeObjectURL(url));}
 function cropModelTexture(){const object=modelStudio.selected;if(!object)return;let applied=0;object.traverse?.(child=>{if(!child.isMesh||!child.material)return;for(const material of (Array.isArray(child.material)?child.material:[child.material]))if(material.map){material.map.repeat.set(.8,.8);material.map.offset.set(.1,.1);material.map.needsUpdate=true;applied++;}});if(!applied&&object.isMesh&&object.material?.map){object.material.map.repeat.set(.8,.8);object.material.map.offset.set(.1,.1);object.material.map.needsUpdate=true;applied++;}toast(applied?'Применена обрезка текстуры 10% по краям':'На выбранном объекте пока нет текстуры',applied?'success':'error');}
 let modelPainting=false;function startModelPaint(e){e.preventDefault();modelPainting=true;e.currentTarget.setPointerCapture?.(e.pointerId);modelPaintAt(e);}function moveModelPaint(e){if(modelPainting)modelPaintAt(e);}function endModelPaint(e){modelPainting=false;if(e?.currentTarget?.hasPointerCapture?.(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}function modelPaintAt(e){const c=$('#model-paint-canvas'),r=c.getBoundingClientRect(),ctx=c.getContext('2d');ctx.fillStyle=$('#model-brush-color').value;ctx.beginPath();ctx.arc((e.clientX-r.left)/r.width*c.width,(e.clientY-r.top)/r.height*c.height,Number($('#model-brush-size').value),0,Math.PI*2);ctx.fill();}function applyModelPaint(){const object=modelStudio.selected;if(!object)return;const c=$('#model-paint-canvas'),tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;let applied=0;object.traverse?.(child=>{if(child.isMesh&&child.material){for(const material of (Array.isArray(child.material)?child.material:[child.material])){material.map=tex;material.needsUpdate=true;applied++;}}});if(!applied&&object.isMesh&&object.material){object.material.map=tex;object.material.needsUpdate=true;applied++;}if(!applied){toast('В выбранном объекте нет материала для рисования','error');return;}c.toBlob(blob=>{if(blob){currentProject.assets.push({id:uid(),name:'Painted_Texture.png',type:'texture',size:blob.size,folder:'Textures',path:`Assets/Textures/${uid()}_Painted_Texture.png`,blob});scheduleSave();}},'image/png');toast('Текстура нанесена на объект и сохранена в ресурсах проекта');}
 
-async function importModelStudioFile(file){if(!file)return;const ext=extOf(file.name);try{let object;if(ext==='glb'||ext==='gltf'){const url=URL.createObjectURL(file);const gltf=await new GLTFLoader().loadAsync(url);object=gltf.scene;URL.revokeObjectURL(url);}else if(ext==='obj'){object=new OBJLoader().parse(await file.text());}else if(ext==='fbx'){object=new FBXLoader().parse(await file.arrayBuffer(),'');}else if(ext==='stl'){const geometry=new STLLoader().parse(await file.arrayBuffer());object=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:'#b8b8b8',roughness:.75}));}if(!object)throw new Error('Unsupported');object.name=file.name.replace(/\.[^.]+$/,'');object.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;if(!n.material)n.material=new THREE.MeshStandardMaterial({color:'#b8b8b8'});}});modelStudio.root.add(object);object.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(object);if(!bounds.isEmpty()){const center=bounds.getCenter(new THREE.Vector3());object.position.sub(center);}selectModelMesh(object);focusModelObject(object);pushModelHistory();renderModelObjectList();$('#model-name').value=object.name;toast(`Импортировано: ${file.name}`,'success');}catch(err){console.error(err);toast('Не удалось импортировать модель. Для GLTF с внешними файлами используй GLB.','error');}}
+async function importModelStudioFile(file){
+  if(!file)return;const ext=extOf(file.name);let object;
+  try{
+    if(ext==='glb'||ext==='gltf'){const url=URL.createObjectURL(file);try{const gltf=await new GLTFLoader().loadAsync(url);object=gltf.scene;}finally{URL.revokeObjectURL(url);}}
+    else if(ext==='obj')object=new OBJLoader().parse(await file.text());
+    else if(ext==='fbx')object=new FBXLoader().parse(await file.arrayBuffer(),'');
+    else if(ext==='stl'){const geometry=new STLLoader().parse(await file.arrayBuffer());object=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.75}));}
+    if(!object)throw new Error('Unsupported');
+    const name=file.name.replace(/\.[^.]+$/,'');
+    object.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;if(!n.material)n.material=new THREE.MeshStandardMaterial({color:'#ffffff'});}});
+    // Model Studio is Z-up. GLTF/FBX/most OBJ files use Y-up; STL is left as supplied because it is commonly Z-up.
+    const wrapper=new THREE.Group();wrapper.name=name;wrapper.userData.modelName=name;wrapper.add(object);
+    if(['glb','gltf','fbx','obj'].includes(ext))wrapper.rotation.x=Math.PI/2;
+    modelStudio.root.add(wrapper);wrapper.updateMatrixWorld(true);
+    const bounds=new THREE.Box3().setFromObject(wrapper);if(!bounds.isEmpty()){const center=bounds.getCenter(new THREE.Vector3());wrapper.position.sub(center);}
+    selectModelMesh(wrapper);focusModelObject(wrapper);pushModelHistory();renderModelObjectList();$('#model-name').value=wrapper.name;
+    toast(`Импортировано: ${file.name}${['glb','gltf','fbx','obj'].includes(ext)?' · Y-up → Z-up':''}`,'success');
+  }catch(err){console.error(err);toast('Не удалось импортировать модель. Для GLTF с внешними файлами используй GLB.','error');}
+}
 
 // ---------- Startup ----------
 async function boot() {

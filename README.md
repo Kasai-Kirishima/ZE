@@ -1,6 +1,17 @@
-# ZeroEngine 0.10.2
+# ZeroEngine 0.10.5
 
 ZeroEngine is a browser-based game/scene editor prototype. The project uses Three.js and JSZip from CDN, so an internet connection is required.
+
+## Changes in 0.10.3 — mobile workflow and movement
+
+- Replaced the test-mode “main menu” action with a full-screen preview control. The editor home/menu remains available from the 3D scene editor.
+- Added mobile direct manipulation for selected objects: drag to move in translate mode, drag vertically to scale in scale mode, and pinch with two fingers for uniform scaling.
+- Added arrow stepper buttons beside transform values for precise phone input. Imported asset cards now have a rename action.
+- Changed new UI joystick bases and knobs to square shapes and simplified the mobile ZeroBox/UI Designer layout into dedicated “Blocks / Field / Properties” or “Elements / Screen / Properties” tabs.
+- Corrected player joystick movement to use the live camera-facing horizontal basis, including older Player joystick scripts that used object-relative defaults. World-relative mode remains available.
+- Reduced ZeroBox per-tick overhead by caching execution and incoming-data indexes while the graph topology is unchanged. Test-mode UI updates are still batched and do not trigger project saves on every movement tick.
+- Default newly created UI controls and standard object materials remain white.
+- Verified ES-module syntax, joystick camera-relative movement vectors, HTML structure, asset IDs, and ZIP integrity. A full end-to-end test in a physical Android browser is still recommended.
 
 ## Changes in 0.10.2 — button hotfix
 
@@ -129,3 +140,35 @@ Projects are stored locally in IndexedDB. Export ZIP regularly to back them up o
 - Join Selected groups the chosen objects under one parent; it does not perform a destructive Boolean/mesh weld. Separate Group restores its children.
 - New vertex/edge/face tools create visible geometry on the selected mesh; they are not a full professional retopology system.
 - Face operations have a polygon safety cap to prevent large operations from freezing the browser.
+
+
+## Changes in 0.10.4 — Z-up modeling, sculpt brush and cutting
+
+- The 3D Model Studio now uses Z as the vertical axis and XY as the ground plane. Grid, camera, primitive orientation and orthographic view buttons follow the same convention.
+- Primitive creation is separated from the modeling tool tab. Mobile Model Studio has four tabs: 3D view, Add, Tools and Properties.
+- Edge selection now raycasts the visible topology edge overlay and selects the actual edge endpoints. Component selection mode and the active modeling action remain selected until the user changes them.
+- Added a hold-and-drag sculpt brush with adjustable radius, strength, circle/square/triangle footprint and raise/dent direction. Low-density objects are subdivided before sculpting.
+- Replaced the old face-subdivision action with a screen-space cut stroke that splits a mesh into two mesh objects and creates a simple cap. Nested imported meshes are promoted to separate workspace objects after cutting. Added a 2D parallel-cut pattern editor with line count, spacing and angle controls.
+- Face creation now accepts three or more placed points and requires an explicit Finish Face action.
+- Added touch-friendly controls to finish or cancel multi-point creation and persistent tool status.
+
+Some geometric operations (especially caps for highly concave or non-manifold imported meshes) remain approximate. Test on a copy before applying complex cuts to important assets.
+
+
+## Changes in 0.10.5 — 3D modeling workflow
+
+- Confirmed Z-up coordinates in Model Studio: XY is the ground plane and positive Z points upward. The grid, camera, primitive orientation and X/Y/Z view shortcuts use the same convention. Camera orbit has unrestricted azimuth for a full 360-degree turn around the model.
+- Moved primitive creation into its own **Add** panel; modeling actions and component selection remain in the dedicated **Tools** panel. Mobile panel tabs are hidden on desktop and shown on touch/small-screen layouts.
+- Edge mode now draws the full triangle wireframe and supports a wider ray-pick tolerance on touch devices, so internal mesh edges can be selected as well as outer edges. Faces and edges retain the same persistent component-selection mode as vertices.
+- Added a hold/drag sculpt brush with radius, strength, circle, square and triangle footprints, and raise/dent actions. Brush settings remain available without resetting the active sculpt tool.
+- Added drawn-line mesh cutting and a 2D parallel-cut layout with editable line count, spacing and angle. Parallel cuts are kept within the projected model area. Meshes are split into separate objects and capped with approximate planar fans.
+- Face creation accepts three or more clicks and only finishes when **Завершить грань** is pressed. Tool and component modes remain active until explicitly changed or cancelled.
+- GLTF, FBX and OBJ imports are wrapped and rotated from their common Y-up convention into Model Studio's Z-up orientation. STL imports are left in their supplied orientation because STL files are not consistently authored to one up-axis. GLB export converts the workspace back to Y-up for compatibility with the game scene and external glTF tools.
+- Increased edge picking tolerance for touch input and ensured X, Y and Z are all enabled in transform gizmos.
+
+### Known limits in 0.10.5
+
+- The sculpt brush subdivides low-density mesh geometry before deformation. It is an early sculpt tool, not a production remesher; large imported meshes may remain coarse.
+- The cut operation is an approximate screen-space plane cut. Concave, open, thin or non-manifold meshes may produce imperfect caps or fail to split cleanly. Save a copy before complex cuts.
+- The 2D cut editor currently exposes line count, spacing and angle; it is a configurable parallel-line template rather than a general freehand 2D CAD plane.
+- OBJ/FBX up-axis conventions vary between exporters. Automatic Y-up conversion is the common case; if an imported model appears on its side, rotate it manually in the inspector.
