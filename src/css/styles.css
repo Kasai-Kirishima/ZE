@@ -418,3 +418,25 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
   #model-studio .model-viewport{overflow:hidden;background:#202326}
   #model-studio .model-viewport canvas{width:100%;height:100%;display:block}
 }
+
+
+/* ZeroEngine 0.9.7 — UV and 3D attachment workspaces, compact ZeroBox data ports */
+.model-uv-editor{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:14px;align-items:start}
+.model-uv-preview-wrap{min-width:0}.model-uv-preview-wrap canvas{display:block;width:100%;height:auto;max-height:56vh;object-fit:contain;border:1px solid var(--line2);border-radius:7px;background:#172026}
+.attach-editor-body{display:grid;gap:10px}.attach-editor-body canvas{width:100%;height:clamp(220px,45vh,440px);display:block;border:1px solid var(--line2);border-radius:7px;background:#20272b;touch-action:none}
+.zero-port.data-port{width:18px;min-width:18px;justify-content:center;background:transparent;border:0;padding:0;overflow:visible}
+.zero-port.data-port span{display:none!important}
+.zero-port.data-port i{width:11px;height:11px;flex:0 0 11px;border:2px solid #75c9e4;background:#172a31;box-shadow:0 0 0 2px var(--panel)}
+.node-card-body{grid-template-columns:minmax(0,1fr);gap:7px}
+.node-card-body .field-label{min-width:0}
+.zero-node-canvas{touch-action:pan-x pan-y}
+.node-card-head{touch-action:none}
+@media(max-width:700px){.model-uv-editor{grid-template-columns:minmax(0,1fr)}.model-uv-preview-wrap canvas{max-height:40vh}.attach-editor-body canvas{height:38vh}.node-card-body{grid-template-columns:minmax(0,1fr)}}
+/* Data ports are anchored to the matching field label, keeping node wiring legible. */
+.node-card-body .field-label.has-data-input-port{position:relative;padding-right:24px;min-height:32px;}
+.node-card-body .zero-port.field-data-port{position:absolute;right:0;left:auto;top:50%!important;transform:translateY(-50%);width:18px;min-width:18px;height:18px;justify-content:center;z-index:8;background:transparent;border:0;padding:0;}
+.node-card-body .zero-port.field-data-port i{width:11px;height:11px;flex:0 0 11px;}
+.node-card-body .zero-port.field-data-port:hover i,.node-card-body .zero-port.field-data-port.pending i{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 30%,transparent);}
+/* Block cards are manipulated independently from the ZeroBox canvas camera. */
+.zero-node-canvas{touch-action:none;}
+.node-card-head{touch-action:none;user-select:none;-webkit-user-select:none;}
