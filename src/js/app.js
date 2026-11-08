@@ -99,8 +99,9 @@ let viewportInspectionMode = false;
 let activeEditorView = 'perspective';
 let workspaceLayout = { hierarchy:true, inspector:true, assets:true, swapped:false, assetsTop:false, left:220, right:286, dock:222, cameraNavigation:false };
 let numericStepperObserver = null;
+let universalResizeObserver = null;
 let runtimeParticleSystems = new Map();
-let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, cameraNavigation:false, grid:null, sculptHelper:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false, sculptSettings:{radius:.65,strength:1.6,shape:'circle',action:'raise'}, sculptStroke:null, sculptRaf:0, cutStroke:null, cutSettings:{count:3,spacing:.28,angle:90,offset:0} };
+let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, transformTool:'move', toolScope:'all', cameraNavigation:false, grid:null, sculptHelper:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false, sculptSettings:{radius:.65,strength:.45,shape:'circle',action:'dent',profile:'flat'}, sculptStroke:null, sculptRaf:0, cutStroke:null, cutSettings:{count:3,spacing:.28,angle:90,offset:0} };
 let deviceSettings = { profile:'auto', width:window.innerWidth||1280, height:window.innerHeight||720 };
 const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey','Circle','Ring','Pyramid','Hexagonal Prism','Octahedron','Dodecahedron','Tetrahedron','Tube','Spring','Wedge'];
 let currentLanguage = 'ru';
@@ -854,7 +855,7 @@ function startSceneBoxSelection(event){
     const x1=Math.min(start.x,e.clientX),x2=Math.max(start.x,e.clientX),y1=Math.min(start.y,e.clientY),y2=Math.max(start.y,e.clientY);
     if(Math.hypot(e.clientX-start.x,e.clientY-start.y)<6)return;
     const picked=[];const viewport=canvas.getBoundingClientRect();
-    for(const [id,obj] of sceneObjects){const entity=findEntity(id);if(!entity||entity.visible===false||!obj.visible)continue;obj.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(obj);if(bounds.isEmpty())continue;let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity,any=false;
+    for(const [id,obj] of sceneObjects){const entity=findEntity(id);if(!entity||entity.visible===false||entity.editorLocked||!obj.visible)continue;obj.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(obj);if(bounds.isEmpty())continue;let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity,any=false;
       for(let mask=0;mask<8;mask++){const corner=new THREE.Vector3(mask&1?bounds.max.x:bounds.min.x,mask&2?bounds.max.y:bounds.min.y,mask&4?bounds.max.z:bounds.min.z).project(editorCamera);if(corner.z<-1||corner.z>1)continue;const px=viewport.left+(corner.x+1)*.5*viewport.width,py=viewport.top+(1-corner.y)*.5*viewport.height;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py);any=true;}
       if(any&&maxX>=x1&&minX<=x2&&maxY>=y1&&minY<=y2)picked.push(id);
     }
@@ -868,16 +869,50 @@ function viewportPointerNDC(clientX, clientY) {
   if (!rect.width || !rect.height) return null;
   return new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
 }
+function isEntityEditorLocked(id) { return !!findEntity(id)?.editorLocked; }
+function isPointCoveredByEditorUI(clientX, clientY) {
+  // Guard against browsers routing a touch through a transparent panel to the canvas beneath it.
+  if ($('#modal-backdrop') && !$('#modal-backdrop').classList.contains('hidden')) return true;
+  if ($('#workbench-overlay') && !$('#workbench-overlay').classList.contains('hidden')) return true;
+  const floating = [
+    '#editor-screen .hierarchy-panel.open', '#editor-screen .inspector-panel.open',
+    '#model-studio:not(.hidden) .model-add-panel.model-drawer-open',
+    '#model-studio:not(.hidden) .model-tools.model-drawer-open',
+    '#model-studio:not(.hidden) .model-inspector.model-drawer-open',
+    '#model-studio:not(.hidden) .model-studio-header',
+    '#model-studio:not(.hidden) .model-drawer-toolbar',
+    '#model-studio:not(.hidden) .model-viewport-tools',
+    '#model-studio:not(.hidden) .model-viewport-views',
+    '#model-studio:not(.hidden) .model-selection-info', '#model-studio:not(.hidden) .model-viewport-hud',
+    '#viewport-wrap .viewport-hud', '#viewport-wrap .viewport-center-hint', '#viewport-wrap .viewport-drop-overlay',
+    '#editor-screen [role="menu"]', '#editor-screen .context-menu', '#editor-screen .dropdown-menu'
+  ];
+  for (const selector of floating) for (const node of $$(selector)) {
+    const style=getComputedStyle(node);
+    if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)continue;
+    const rect=node.getBoundingClientRect();
+    if(clientX>=rect.left&&clientX<=rect.right&&clientY>=rect.top&&clientY<=rect.bottom)return true;
+  }
+  return false;
+}
+function firstUnlockedSceneHit(hits) {
+  for (const hit of hits||[]) {
+    let node=hit.object;
+    while(node&&!node.userData?.entityId)node=node.parent;
+    const id=node?.userData?.entityId;
+    if(id&&!isEntityEditorLocked(id))return {entityId:id,point:hit.point?.clone?.()||null,object:node};
+  }
+  return null;
+}
 function getEntityAtViewportPoint(clientX, clientY) {
+  if(isPointCoveredByEditorUI(clientX,clientY))return null;
   const ndc = viewportPointerNDC(clientX, clientY);
   if (!ndc) return null;
   raycaster.setFromCamera(ndc, editorCamera);
   const candidates = [];
   for (const object of sceneObjects.values()) object.traverse(child => { if (child.isMesh && child.visible) candidates.push(child); });
-  const hit = raycaster.intersectObjects(candidates, false)[0];
-  let target = hit?.object || null;
-  while (target && !target.userData.entityId) target = target.parent;
-  return target?.userData.entityId ? { entityId: target.userData.entityId, point: hit.point.clone() } : null;
+  const hit=firstUnlockedSceneHit(raycaster.intersectObjects(candidates,false));
+  return hit?.entityId?{entityId:hit.entityId,point:hit.point,object:hit.object}:null;
 }
 function setTouchGestureOrbit(enabled) {
   if (orbit) orbit.enabled = !!enabled && !isPlaying && !viewportTouchGesture;
@@ -1001,6 +1036,7 @@ function bindViewportTouchTransform() {
 }
 
 function onViewportPointerDown(event) {
+  if(isPointCoveredByEditorUI(event.clientX,event.clientY)){event.preventDefault();event.stopImmediatePropagation();return;}
   if(viewportInspectionMode){if(event.button===2){event.preventDefault();event.stopImmediatePropagation();}return;}
   if (handleViewportTouchPointerDown(event)) return;
   if(isPlaying||transform?.dragging)return;
@@ -1017,8 +1053,10 @@ function onViewportPointerDown(event) {
     const candidates=[];for(const object of sceneObjects.values())object.traverse(child=>{if(child.isMesh)candidates.push(child);});
     const hits=raycaster.intersectObjects(candidates,false);
     if(!hits.length){selectObject(null);return;}
-    let target=hits[0].object;while(target&&!target.userData.entityId)target=target.parent;
-    if(target?.userData.entityId)selectObject(target.userData.entityId, { additive: upEvent.shiftKey || upEvent.ctrlKey || upEvent.metaKey, toggle: upEvent.shiftKey || upEvent.ctrlKey || upEvent.metaKey });
+    const target=firstUnlockedSceneHit(hits);
+    // Locked objects are transparent to editor picking; they cannot steal a tap intended for another object.
+    if(!target)return;
+    selectObject(target.entityId,{additive:upEvent.shiftKey||upEvent.ctrlKey||upEvent.metaKey,toggle:upEvent.shiftKey||upEvent.ctrlKey||upEvent.metaKey});
   };
   canvas.addEventListener('pointerup',finish,{once:true});
 }
@@ -1108,7 +1146,7 @@ function selectObject(id, options = {}) {
   }
   const object = selectedId ? sceneObjects.get(selectedId) : null;
   if (transform) {
-    if (object && !isPlaying) transform.attach(object);
+    if (object && !isPlaying && !isEntityEditorLocked(selectedId)) transform.attach(object);
     else transform.detach();
   }
   updateSelectionHelpers();
@@ -1132,16 +1170,25 @@ function snapEditorView(view){
   orbit.object.up.copy(editorCamera.up);editorCamera.position.copy(target).addScaledVector(dir,distance);editorCamera.lookAt(target);editorCamera.updateProjectionMatrix();orbit.update();activeEditorView=view;
   $$('[data-editor-view]').forEach(button=>button.classList.toggle('active',button.dataset.editorView===view));
 }
-function setViewportInspectionMode(enabled){viewportInspectionMode=!!enabled;const button=$('#viewport-inspection-toggle');button?.classList.toggle('active',viewportInspectionMode);button?.setAttribute('aria-pressed',String(viewportInspectionMode));if(transform)transform.enabled=!viewportInspectionMode&&!isPlaying;if(viewportInspectionMode){viewportTouchGesture=null;viewportTouchPointers.clear();orbit.enabled=!isPlaying;toast('Режим осмотра: объекты нельзя случайно переместить или изменить размер');}else{if(transform&&selectedId&&!isPlaying)transform.attach(sceneObjects.get(selectedId));toast('Режим редактирования объектов включён');}}
+function setViewportInspectionMode(enabled){viewportInspectionMode=!!enabled;const button=$('#viewport-inspection-toggle');button?.classList.toggle('active',viewportInspectionMode);button?.setAttribute('aria-pressed',String(viewportInspectionMode));if(button){button.title=viewportInspectionMode?'Осмотр включён: выбор и изменение объектов заблокированы':'Осмотр: заблокировать выбор и трансформации объектов';button.setAttribute('aria-label',button.title);}if(transform)transform.enabled=!viewportInspectionMode&&!isPlaying;if(viewportInspectionMode){viewportTouchGesture=null;viewportTouchPointers.clear();orbit.enabled=!isPlaying;toast('Режим осмотра: выбор и перемещение объектов заблокированы');}else{if(transform&&selectedId&&!isPlaying&&!isEntityEditorLocked(selectedId))transform.attach(sceneObjects.get(selectedId));toast('Режим редактирования объектов включён');}}
 
 function updateViewportHint() { $('#viewport-empty-hint').classList.toggle('hidden', (activeSceneData()?.objects.length || 0) > 0); }
+function setEntityEditorLock(id,locked){
+  const entity=findEntity(id);if(!entity)return;
+  entity.editorLocked=!!locked;
+  if(entity.editorLocked&&selectedId===id&&transform)transform.detach();
+  else if(!entity.editorLocked&&selectedId===id&&!isPlaying&&!viewportInspectionMode&&transform)transform.attach(sceneObjects.get(id));
+  renderHierarchy();if(selectedId===id)renderInspector();scheduleSave();
+  toast(entity.editorLocked?`«${entity.name}» заблокирован от выбора на сцене`:`«${entity.name}» снова доступен для выбора`,'success');
+}
 function renderHierarchy() {
   if (!currentProject) return;
   const list = $('#hierarchy-list');
   const entities = activeSceneData()?.objects || [];
   if (!entities.length) list.innerHTML = '<div class="asset-empty">Сцена пока пустая.</div>';
-  else list.innerHTML = entities.map(item => `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''}" data-tree-id="${item.id}" draggable="true"><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span></div>`).join('');
-  $$('[data-tree-id]', list).forEach(row => {row.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-object',row.dataset.treeId);event.dataTransfer.effectAllowed='copy';});row.addEventListener('click', event => selectObject(row.dataset.treeId, { additive: event.shiftKey || event.ctrlKey || event.metaKey, toggle: event.shiftKey || event.ctrlKey || event.metaKey }));});
+  else list.innerHTML = entities.map(item => `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''} ${item.editorLocked?'editor-locked':''}" data-tree-id="${item.id}" draggable="true"><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span><button type="button" class="tree-lock-button ${item.editorLocked?'active':''}" data-tree-lock="${item.id}" title="${item.editorLocked?'Разблокировать выбор в сцене':'Не выбирать и не двигать в сцене'}">${item.editorLocked?'🔒':'◇'}</button></div>`).join('');
+  $$('[data-tree-id]', list).forEach(row => {row.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-object',row.dataset.treeId);event.dataTransfer.effectAllowed='copy';});row.addEventListener('click', event => {if(event.target.closest('[data-tree-lock]'))return;selectObject(row.dataset.treeId,{additive:event.shiftKey||event.ctrlKey||event.metaKey,toggle:event.shiftKey||event.ctrlKey||event.metaKey});});});
+  $$('[data-tree-lock]',list).forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();setEntityEditorLock(button.dataset.treeLock,!isEntityEditorLocked(button.dataset.treeLock));}));
   $('#object-count').textContent = localizedCount(entities.length,'objects');
   updateViewportHint();
 }
@@ -1697,6 +1744,8 @@ function renderInspector() {
     <section class="inspector-section"><div class="inspector-section-title">Объект <span>${entity.type.toUpperCase()}</span></div><div class="inspector-section-body">
       <label class="field-label">Название<input class="field-input" id="ins-name" value="${escapeAttr(entity.name)}" maxlength="64" /></label>
       <label class="check-line"><input type="checkbox" id="ins-visible" ${entity.visible !== false ? 'checked' : ''}/> Видимость объекта</label>
+      <label class="check-line"><input type="checkbox" id="ins-editor-locked" ${entity.editorLocked?'checked':''}/> Не выбирать и не двигать в 3D-сцене</label>
+      <div class="modal-note">Объект остаётся видимым и доступным через иерархию, но клики по нему проходят к объектам за ним.</div>
       <div class="inspector-actions"><button class="button" id="duplicate-object">⧉ Дублировать</button><button class="button button-danger" id="delete-object">Удалить</button></div><button class="button" id="make-player-object">♟ Сделать Player / прикрепить камеру</button>
     </div></section>
     <section class="inspector-section"><div class="inspector-section-title">Трансформация <span>TRANSFORM</span></div><div class="inspector-section-body">
@@ -1735,6 +1784,7 @@ function renderInspector() {
     </div></section>` : ''}`;
   $('#ins-name')?.addEventListener('change', event => { entity.name = event.target.value.trim() || 'Object'; const obj = sceneObjects.get(entity.id); if (obj) obj.name = entity.name; renderHierarchy(); updateSelectedStatus(); scheduleSave(); });
   $('#ins-visible')?.addEventListener('change', event => { entity.visible = event.target.checked; const obj = sceneObjects.get(entity.id); if (obj) obj.visible = entity.visible; setAllEditorMaterials(); scheduleSave(); });
+  $('#ins-editor-locked')?.addEventListener('change',event=>setEntityEditorLock(entity.id,event.target.checked));
   if (entity.type === 'player') {
     entity.cameraMount ||= {mode:'back',offset:[0,1.55,3.2],fov:70};
     delete entity.cameraMount.viewMode;
@@ -2270,7 +2320,7 @@ function undo() { restoreHistory(undoStack, redoStack); }
 function redo() { restoreHistory(redoStack, undoStack); }
 
 // ---------- Modals / UI helpers ----------
-function showModal(html) { $('#modal-content').innerHTML = html; $('#modal-backdrop').classList.remove('hidden'); $$('[data-close-modal]').forEach(button => button.addEventListener('click', closeModal)); }
+function showModal(html) { $('#modal-content').innerHTML = html; $('#modal-backdrop').classList.remove('hidden'); ensureUniversalResizeHandles(); $$('[data-close-modal]').forEach(button => button.addEventListener('click', closeModal)); }
 function closeModal() { $('#modal-backdrop').classList.add('hidden'); $('#modal-content').innerHTML = ''; }
 function openSpatialEditor(entity, mode='collision') {
   const isCamera=mode==='camera';
@@ -2362,6 +2412,136 @@ function bindPanelResizers(){
   });
 }
 
+
+function bindModelPanelResizers(){
+  const studio=$('#model-studio');if(!studio||studio.dataset.resizeBound==='1')return;studio.dataset.resizeBound='1';
+  const root=document.documentElement;
+  const definitions={
+    add:{variable:'--model-add-w',key:'add',fallback:190,min:130,max:520,direction:1},
+    tools:{variable:'--model-tools-w',key:'tools',fallback:220,min:150,max:560,direction:1},
+    inspector:{variable:'--model-inspector-w',key:'inspector',fallback:270,min:170,max:620,direction:-1}
+  };
+  try{const saved=JSON.parse(localStorage.getItem('zeroengine-model-layout')||'{}');for(const cfg of Object.values(definitions)){const value=Number(saved[cfg.key]);if(Number.isFinite(value)&&value>=cfg.min&&value<=cfg.max)root.style.setProperty(cfg.variable,`${value}px`);}}catch{}
+  studio.querySelectorAll('[data-model-resize]').forEach(handle=>{
+    handle.addEventListener('pointerdown',event=>{
+      if(event.button!==0&&event.pointerType==='mouse')return;
+      const cfg=definitions[handle.dataset.modelResize];if(!cfg)return;
+      const panel=handle.parentElement;if(!panel)return;event.preventDefault();event.stopPropagation();
+      try{handle.setPointerCapture?.(event.pointerId);}catch{}
+      const startX=event.clientX,startWidth=panel.getBoundingClientRect().width;
+      const move=ev=>{const delta=(ev.clientX-startX)*cfg.direction;const width=Math.round(THREE.MathUtils.clamp(startWidth+delta,cfg.min,Math.min(cfg.max,window.innerWidth-24)));root.style.setProperty(cfg.variable,`${width}px`);modelStudio.resize?.();};
+      const finish=()=>{handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',finish);handle.removeEventListener('pointercancel',finish);const width=Math.round(parseFloat(getComputedStyle(root).getPropertyValue(cfg.variable))||cfg.fallback);let saved={};try{saved=JSON.parse(localStorage.getItem('zeroengine-model-layout')||'{}');}catch{}saved[cfg.key]=width;try{localStorage.setItem('zeroengine-model-layout',JSON.stringify(saved));}catch{}requestAnimationFrame(()=>modelStudio.resize?.());};
+      handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',finish);handle.addEventListener('pointercancel',finish);
+    });
+  });
+}
+
+// ---------- Universal window/panel resizing ----------
+const UNIVERSAL_RESIZE_SELECTORS=[
+  ['#modal-content','modal'],['#editor-screen .hierarchy-panel','hierarchy'],['#editor-screen .inspector-panel','inspector'],['#editor-screen .asset-dock','dock'],
+  ['#workbench-body .workbench-sidebar','workbench-sidebar'],['#workbench-body .workbench-properties','workbench-properties'],
+  ['#workbench-body .ui-palette','ui-palette'],['#workbench-body .ui-property-panel','ui-properties'],['#workbench-body .ui-design-stage','ui-design-stage'],
+  ['#model-studio .model-add-panel','model-add'],['#model-studio .model-tools','model-tools'],['#model-studio .model-inspector','model-inspector']
+];
+function getUniversalWindowSizes(){try{return JSON.parse(localStorage.getItem('zeroengine-universal-window-sizes')||'{}');}catch{return {};}}
+function ensureUniversalResizeHandles(root=document){
+  const saved=getUniversalWindowSizes();
+  for(const [selector,key] of UNIVERSAL_RESIZE_SELECTORS){
+    const nodes=root.matches?.(selector)?[root]:$$(selector,root);
+    for(const node of nodes){
+      if(node.dataset.universalResizeReady!=='1'){
+        const size=saved[key],cssRoot=document.documentElement;
+        if(size&&Number(size.width)>0&&Number(size.height)>0){
+          const coarse=window.matchMedia?.('(max-width:900px), (pointer:coarse)').matches;
+          if(key==='hierarchy'){cssRoot.style.setProperty('--left-w',`${size.width}px`);if(coarse){node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('bottom','auto','important');}}
+          else if(key==='inspector'){cssRoot.style.setProperty('--right-w',`${size.width}px`);if(coarse){node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('bottom','auto','important');}}
+          else if(key==='dock')cssRoot.style.setProperty('--dock-h',`${size.height}px`);
+          else if(key==='workbench-sidebar'){
+            cssRoot.style.setProperty('--zero-side-w',`${size.width}px`);
+            if(coarse){node.style.setProperty('width',`${size.width}px`,'important');node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('left','0','important');node.style.setProperty('right','auto','important');}
+          }
+          else if(key==='workbench-properties'){
+            cssRoot.style.setProperty('--zero-props-w',`${size.width}px`);
+            if(coarse){node.style.setProperty('width',`${size.width}px`,'important');node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('left','auto','important');node.style.setProperty('right','0','important');}
+          }
+          else if(key==='ui-palette'){
+            cssRoot.style.setProperty('--ui-palette-w',`${size.width}px`);
+            if(coarse){node.style.setProperty('width',`${size.width}px`,'important');node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('left','0','important');node.style.setProperty('right','auto','important');}
+          }
+          else if(key==='ui-properties'){
+            cssRoot.style.setProperty('--ui-props-w',`${size.width}px`);
+            if(coarse){node.style.setProperty('width',`${size.width}px`,'important');node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('left','auto','important');node.style.setProperty('right','0','important');}
+          }
+          else if(key==='model-add'){cssRoot.style.setProperty('--model-add-w',`${size.width}px`);if(coarse){node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('bottom','auto','important');}}
+          else if(key==='model-tools'){cssRoot.style.setProperty('--model-tools-w',`${size.width}px`);if(coarse){node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('bottom','auto','important');}}
+          else if(key==='model-inspector'){cssRoot.style.setProperty('--model-inspector-w',`${size.width}px`);if(coarse){node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('bottom','auto','important');}}
+          else if(key==='modal'){node.style.width=`${size.width}px`;node.style.height=`${size.height}px`;}
+          else if(key==='ui-design-stage'){node.style.setProperty('width',`${size.width}px`,'important');node.style.setProperty('height',`${size.height}px`,'important');node.style.setProperty('aspect-ratio','auto','important');}
+        }
+        node.dataset.universalResizeReady='1';
+      }
+      if(node.querySelector(':scope > .universal-resize-handle'))continue;
+      const grip=document.createElement('div');grip.className='universal-resize-handle';grip.dataset.universalResize=key;grip.setAttribute('role','separator');grip.setAttribute('aria-label','Изменить размер окна');grip.title='Потяни за угол, чтобы изменить размер';node.appendChild(grip);
+    }
+  }
+}
+function initUniversalWindowResizing(){
+  ensureUniversalResizeHandles();if(universalResizeObserver)return;
+  universalResizeObserver=new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node.nodeType===1)ensureUniversalResizeHandles(node);});
+  universalResizeObserver.observe(document.body,{childList:true,subtree:true});
+  document.addEventListener('pointerdown',event=>{
+    const handle=event.target.closest?.('.universal-resize-handle');if(!handle)return;const panel=handle.parentElement,key=handle.dataset.universalResize;if(!panel)return;
+    if(event.pointerType==='mouse'&&event.button!==0)return;
+    event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();
+    try{handle.setPointerCapture?.(event.pointerId);}catch{}
+    const startX=event.clientX,startY=event.clientY,rect=panel.getBoundingClientRect(),startW=rect.width,startH=rect.height,root=document.documentElement;
+    const minW=key==='modal'?280:key==='ui-design-stage'?120:150,minH=key==='modal'?170:key==='ui-design-stage'?90:120;
+    const maxW=Math.max(minW,Math.min(window.innerWidth-12,key==='modal'?1100:760));
+    const maxH=Math.max(minH,Math.min(window.innerHeight-12,key==='modal'?window.innerHeight*.92:window.innerHeight*.9));
+    const coarse=window.matchMedia?.('(max-width:900px), (pointer:coarse)').matches;
+    const apply=(w,h)=>{
+      const width=Math.round(THREE.MathUtils.clamp(w,minW,maxW)),height=Math.round(THREE.MathUtils.clamp(h,minH,maxH));
+      if(key==='hierarchy')root.style.setProperty('--left-w',`${width}px`);
+      else if(key==='inspector')root.style.setProperty('--right-w',`${width}px`);
+      else if(key==='dock')root.style.setProperty('--dock-h',`${height}px`);
+      else if(key==='workbench-sidebar')root.style.setProperty('--zero-side-w',`${width}px`);
+      else if(key==='workbench-properties')root.style.setProperty('--zero-props-w',`${width}px`);
+      else if(key==='model-add')root.style.setProperty('--model-add-w',`${width}px`);
+      else if(key==='model-tools')root.style.setProperty('--model-tools-w',`${width}px`);
+      else if(key==='model-inspector')root.style.setProperty('--model-inspector-w',`${width}px`);
+      else if(key==='ui-palette')root.style.setProperty('--ui-palette-w',`${width}px`);
+      else if(key==='ui-properties')root.style.setProperty('--ui-props-w',`${width}px`);
+      if(['workbench-sidebar','workbench-properties','ui-palette','ui-properties'].includes(key)&&coarse){
+        panel.style.setProperty('width',`${width}px`,'important');panel.style.setProperty('height',`${height}px`,'important');
+        if(['workbench-properties','ui-properties'].includes(key)){panel.style.setProperty('left','auto','important');panel.style.setProperty('right','0','important');}
+        else{panel.style.setProperty('left','0','important');panel.style.setProperty('right','auto','important');}
+      }else if(key==='ui-design-stage'){
+        panel.style.setProperty('width',`${width}px`,'important');panel.style.setProperty('height',`${height}px`,'important');
+        panel.style.setProperty('max-width','none','important');panel.style.setProperty('max-height','none','important');panel.style.setProperty('aspect-ratio','auto','important');
+      }else if(key==='modal'){
+        panel.style.width=`${width}px`;panel.style.height=`${height}px`;panel.style.maxWidth='95vw';panel.style.maxHeight='92dvh';
+      }
+      if(coarse&&['hierarchy','inspector','model-add','model-tools','model-inspector'].includes(key)){panel.style.setProperty('height',`${height}px`,'important');panel.style.setProperty('bottom','auto','important');}
+      resizeRenderer();modelStudio.resize?.();
+    };
+    const rightAnchored=['inspector','workbench-properties','ui-properties','model-inspector'].includes(key)||(coarse&&key==='model-tools');
+    const move=ev=>{const dx=ev.clientX-startX,dy=ev.clientY-startY;apply(startW+(rightAnchored?-dx:dx),startH+(key==='dock'?-dy:dy));};
+    const finish=()=>{
+      handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',finish);handle.removeEventListener('pointercancel',finish);
+      const sizes=getUniversalWindowSizes(),final=panel.getBoundingClientRect();sizes[key]={width:Math.round(final.width),height:Math.round(final.height)};try{localStorage.setItem('zeroengine-universal-window-sizes',JSON.stringify(sizes));}catch{}
+      const layout=(()=>{try{return JSON.parse(localStorage.getItem('zeroengine-layout')||'{}');}catch{return {};}})();
+      if(key==='hierarchy'){layout.left=parseFloat(getComputedStyle(root).getPropertyValue('--left-w'))||220;workspaceLayout.left=layout.left;}
+      if(key==='inspector'){layout.right=parseFloat(getComputedStyle(root).getPropertyValue('--right-w'))||286;workspaceLayout.right=layout.right;}
+      if(key==='dock'){layout.dock=parseFloat(getComputedStyle(root).getPropertyValue('--dock-h'))||222;workspaceLayout.dock=layout.dock;}
+      if(key==='workbench-sidebar')layout['zero-left']=parseFloat(getComputedStyle(root).getPropertyValue('--zero-side-w'))||250;
+      if(key==='workbench-properties')layout['zero-right']=parseFloat(getComputedStyle(root).getPropertyValue('--zero-props-w'))||280;
+      try{localStorage.setItem('zeroengine-layout',JSON.stringify(layout));if(['hierarchy','inspector','dock'].includes(key))persistWorkspaceLayout();}catch{}
+      if(key.startsWith('model-')){const model=(()=>{try{return JSON.parse(localStorage.getItem('zeroengine-model-layout')||'{}');}catch{return {};}})(),part=key.slice(6);model[part]=parseFloat(getComputedStyle(root).getPropertyValue(`--model-${part}-w`))||sizes[key].width;try{localStorage.setItem('zeroengine-model-layout',JSON.stringify(model));}catch{}}
+    };
+    handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',finish);handle.addEventListener('pointercancel',finish);
+  },true);
+}
+
 // ---------- UI event wiring ----------
 const DEVICE_RESOLUTIONS = {
   desktop: [
@@ -2431,16 +2611,32 @@ function openDeviceSettings(){
   });
 }
 
+function getNumericInputStep(input,current){
+  const raw=input.getAttribute('step');
+  if(raw&&raw.toLowerCase()!=='any'){
+    const declared=Number(raw);if(Number.isFinite(declared)&&declared>0)return declared;
+  }
+  const custom=Number(input.dataset.step);if(Number.isFinite(custom)&&custom>0)return custom;
+  const abs=Math.abs(Number(current)||0);
+  if(abs<.01)return .001;if(abs<.1)return .01;if(abs<1)return .1;if(abs<10)return .5;if(abs<100)return 1;if(abs<1000)return 10;if(abs<10000)return 100;return 1000;
+}
 function enhanceNumericInputs(root=document){
   const candidates=$$('input[type="number"]',root);
   for(const input of candidates){
     if(input.closest('.axis-stepper,.numeric-stepper')||input.dataset.stepperEnhanced==='1')continue;
     input.dataset.stepperEnhanced='1';
-    const wrap=document.createElement('div');wrap.className='numeric-stepper';
-    input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
-    const make=(direction,label)=>{const button=document.createElement('button');button.type='button';button.className='numeric-step-button';button.textContent=direction<0?'−':'＋';button.setAttribute('aria-label',label);button.addEventListener('click',()=>{
-      const declaredStep=Number(input.step),step=declaredStep>0?declaredStep:(Number(input.dataset.step)||1);const current=Number(input.value)||0;const precision=Math.min(8,Math.max(0,(String(step).split('.')[1]||'').length));let next=Number((current+direction*step).toFixed(precision));const min=input.min!==''?Number(input.min):-Infinity,max=input.max!==''?Number(input.max):Infinity;next=Math.max(min,Math.min(max,next));input.value=String(next);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));});return button;};
-    wrap.appendChild(make(-1,'Уменьшить значение'));wrap.appendChild(input);wrap.appendChild(make(1,'Увеличить значение'));
+    const wrap=document.createElement('div');wrap.className='numeric-stepper';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
+    const make=(direction,label)=>{const button=document.createElement('button');button.type='button';button.className='numeric-step-button';button.textContent=direction<0?'−':'+';button.setAttribute('aria-label',label);button.addEventListener('click',()=>{
+      const current=Number(input.value)||0,step=getNumericInputStep(input,current);
+      const min=input.min!==''?Number(input.min):-Infinity,max=input.max!==''?Number(input.max):Infinity;
+      const base=Number.isFinite(min)?min:0,position=(current-base)/step,epsilon=1e-9;
+      const index=direction>0?Math.floor(position+epsilon)+1:Math.ceil(position-epsilon)-1;
+      const stepParts=String(step).toLowerCase().split('e'),mantissaDecimals=(stepParts[0].split('.')[1]||'').length,exponent=Number(stepParts[1]||0);
+      const decimals=Math.min(10,Math.max(0,mantissaDecimals-exponent));
+      const next=Math.max(min,Math.min(max,Number((base+index*step).toFixed(decimals))));
+      input.value=String(next);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));
+    });return button;};
+    wrap.appendChild(make(-1,'Уменьшить до предыдущего подходящего значения'));wrap.appendChild(input);wrap.appendChild(make(1,'Увеличить до следующего подходящего значения'));
   }
 }
 function initNumericSteppers(){
@@ -2491,6 +2687,7 @@ function openWorkspaceLayoutSettings(){
 
 function bindUI() {
   initNumericSteppers();
+  initUniversalWindowResizing();
   $('#open-settings-home').addEventListener('click',openDeviceSettings);
   $('#open-settings-editor').addEventListener('click',openDeviceSettings);
   $$('#model-studio [data-model-panel]').forEach(button=>button.addEventListener('click',()=>toggleModelDrawerPanel(button.dataset.modelPanel)));
@@ -2499,6 +2696,7 @@ function bindUI() {
   $('#language-select-home')?.addEventListener('change', e=>setLanguage(e.target.value));
   $('#language-select-editor')?.addEventListener('change', e=>setLanguage(e.target.value));
   bindPanelResizers();
+  bindModelPanelResizers();
   loadWorkspaceLayout();
   $('#new-project-open').addEventListener('click', createProjectModal);
   $('#import-project-open').addEventListener('click', () => $('#project-import-input').click());
@@ -2537,8 +2735,18 @@ function bindUI() {
   $$('#model-studio [data-model-tool]').forEach(b=>b.addEventListener('click',()=>runModelTool(b.dataset.modelTool)));
   $('#model-create-face-finish').addEventListener('click',finishModelFaceCreation);
   $('#model-tool-cancel').addEventListener('click',cancelModelActiveTool);
+  $('#model-tool-undo')?.addEventListener('click',undoModelToolAction);
+  $$('[data-model-scope]').forEach(button=>button.addEventListener('click',()=>{
+    modelStudio.toolScope=button.dataset.modelScope;
+    $$('[data-model-scope]').forEach(item=>item.classList.toggle('active',item.dataset.modelScope===modelStudio.toolScope));
+    $('#model-selection-info').textContent=modelStudio.toolScope==='all'?'Инструменты работают по всем объектам сцены':'Инструменты работают только по выбранному объекту';
+  }));
+  $$('[data-sculpt-profile]').forEach(button=>button.addEventListener('click',()=>{
+    modelStudio.sculptSettings.profile=button.dataset.sculptProfile;
+    $$('[data-sculpt-profile]').forEach(item=>item.classList.toggle('active',item===button));
+  }));
   $('#model-sculpt-radius').addEventListener('input',e=>{modelStudio.sculptSettings.radius=Number(e.target.value);$('#model-sculpt-radius-value').textContent=Number(e.target.value).toFixed(2);if(modelStudio.sculptStroke)updateModelSculptCursor(modelStudio.sculptStroke.x,modelStudio.sculptStroke.y);});
-  $('#model-sculpt-strength').addEventListener('input',e=>{modelStudio.sculptSettings.strength=Number(e.target.value);$('#model-sculpt-strength-value').textContent=Number(e.target.value).toFixed(2);});
+  $('#model-sculpt-strength').addEventListener('input',e=>{modelStudio.sculptSettings.strength=Number(e.target.value);$('#model-sculpt-strength-value').textContent=Number(e.target.value).toFixed(3);});
   $$('[data-sculpt-shape]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.shape=b.dataset.sculptShape;$$('[data-sculpt-shape]').forEach(x=>x.classList.toggle('active',x===b));}));
   $$('[data-sculpt-action]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.action=b.dataset.sculptAction;$$('[data-sculpt-action]').forEach(x=>x.classList.toggle('active',x===b));}));
   $('#model-cut-open-2d').addEventListener('click',openModelCut2DEditor);
@@ -3537,7 +3745,9 @@ function openModelStudio(){
   if(r.projectId!==currentProject.id){
     clearModelCreationPreview();r.historyLimited=false;r.transform.detach();if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
     for(const child of [...r.root.children]){r.root.remove(child);disposeModelNode(child);}
-    r.selected=null;r.selectedObjects.clear();clearModelTopologyOverlay();r.componentTarget=null;r.activeTool=null;r.mode='object';r.creationPoints=[];$$('[data-model-mode]').forEach(b=>b.classList.toggle('active',b.dataset.modelMode==='object'));$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));$('#model-sculpt-settings').classList.remove('active');$('#model-cut-settings').classList.remove('active');r.creationTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
+    r.selected=null;r.selectedObjects.clear();clearModelTopologyOverlay();r.componentTarget=null;r.activeTool=null;r.mode='object';r.transformTool='move';r.toolScope='all';$$('[data-model-scope]').forEach(button=>button.classList.toggle('active',button.dataset.modelScope==='all'));r.creationPoints=[];$$('[data-model-mode]').forEach(b=>b.classList.toggle('active',b.dataset.modelMode==='object'));$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='move'));$('#model-sculpt-settings').classList.remove('active');$('#model-cut-settings').classList.remove('active');r.creationTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
+    // A new model project always opens centered at the world origin with Z as world up.
+    r.orbit.target.set(0,0,0);r.camera.up.set(0,0,1);r.orbit.object.up.set(0,0,1);r.camera.position.set(6,-8,6);r.camera.near=.01;r.camera.far=3000;r.camera.lookAt(0,0,0);r.camera.updateProjectionMatrix();r.orbit.update();
     $('#model-name').value='New Model';$('#model-paint-panel').classList.add('hidden');
     $('#model-selection-info').textContent='Объект не выбран';
   }
@@ -3741,7 +3951,7 @@ function selectModelComponent(hit){
   if(!indices.length)return;
   clearModelComponentHelper();r.selected=target;r.componentTarget=target;r.componentSelection={target,indices,face,faceIndices,mode:r.mode};
   r.componentHelper=new THREE.Group();r.scene.add(r.componentHelper);renderModelComponentMarker();
-  syncModelComponentPivot();r.transform.enabled=!r.activeTool;r.transform.attach(r.componentPivot);r.transform.setMode('translate');
+  syncModelComponentPivot();r.transform.enabled=!r.activeTool;r.transform.attach(r.componentPivot);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[r.transformTool]||'translate');
   const label=r.mode==='face'?`грань ${faceIndices.length>1?`(${faceIndices.length} треугольника)`:`${face}`}`:r.mode==='vertex'?`вершина ${indices[0]}`:`ребро ${face}`;
   $('#model-selection-info').textContent=`${r.mode}: ${label}`;
   renderModelFields();renderModelObjectList();
@@ -3762,9 +3972,9 @@ function createModelElementAtHit(hit,kind){
     r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новое ребро создано';return;
   }
   if(kind==='create-face'){
-    const count=r.creationPoints.length;$('#model-create-face-finish').hidden=count<3;$('#model-tool-cancel').hidden=false;
-    $('#model-selection-info').textContent=`Грань: ${count} точек. Добавь ещё или нажми «Завершить грань»`;
-    if(count>=3)toast(`Добавлено точек: ${count}. Нажми «Завершить грань», когда закончишь`);
+    const count=r.creationPoints.length;$('#model-create-face-finish').hidden=count<4;$('#model-tool-cancel').hidden=false;
+    $('#model-selection-info').textContent=`Грань: ${count} точек. Нужно минимум 4; затем нажми «Завершить грань»`;
+    if(count>=4)toast(`Добавлено точек: ${count}. Нажми «Завершить грань», когда закончишь`);
     return;
   }
   $('#model-selection-info').textContent=`Ребро: точка ${r.creationPoints.length} из 2`;
@@ -3776,11 +3986,18 @@ function modelCanvasPointer(clientX,clientY){
   modelStudio.raycaster.setFromCamera(modelStudio.pointer,modelStudio.camera);
   return {canvas,rect};
 }
+function isModelNodeEffectivelyVisible(node){for(let current=node;current;current=current.parent)if(current.visible===false)return false;return true;}
 function selectedModelMeshes(){
   const selected=modelStudio.selected;if(!selected)return [];
-  return modelMeshesWithin(selected).filter(mesh=>mesh.visible&&!mesh.userData.editorOnly&&!mesh.userData.reference);
+  return modelMeshesWithin(selected).filter(mesh=>mesh.visible&&!mesh.userData.editorOnly&&!mesh.userData.reference&&mesh.geometry?.attributes?.position&&isModelNodeEffectivelyVisible(mesh));
 }
-function getModelHitAt(clientX,clientY,targets=selectedModelMeshes()){
+function allModelMeshes(){
+  const result=[];modelStudio.root?.traverse?.(node=>{if(node.isMesh&&node.geometry?.attributes?.position&&!node.userData.editorOnly&&!node.userData.reference&&isModelNodeEffectivelyVisible(node))result.push(node);});return result;
+}
+function modelToolMeshes(){
+  const r=modelStudio;return r.toolScope==='selected'?selectedModelMeshes():allModelMeshes();
+}
+function getModelHitAt(clientX,clientY,targets=modelToolMeshes()){
   if(!targets.length)return null;modelCanvasPointer(clientX,clientY);
   let best=null;for(const target of targets){target.updateMatrixWorld(true);const hits=modelStudio.raycaster.intersectObject(target,false);if(hits.length&&(!best||hits[0].distance<best.distance))best=hits[0];}
   return best;
@@ -3798,71 +4015,96 @@ function modelBrushContains(u,v,radius,shape){
 function ensureModelSculptResolution(target){
   if(target.userData.sculptPrepared)return;
   if(target.geometry?.index){const old=target.geometry;target.geometry=old.toNonIndexed();old.dispose();}
-  const initial=Math.floor((target.geometry?.attributes?.position?.count||0)/3),levels=initial<80?2:initial<700?1:0;
+  const initial=Math.floor((target.geometry?.attributes?.position?.count||0)/3);
+  const levels=initial<24?4:initial<250?3:initial<1500?2:initial<5000?1:0;
   for(let level=0;level<levels;level++){
-    const count=Math.floor(target.geometry.attributes.position.count/3);if(count*4+countModelTriangles(modelStudio.root)>MAX_MODEL_TRIANGLES)break;
+    const count=Math.floor(target.geometry.attributes.position.count/3);
+    if(countModelTriangles(modelStudio.root)+count*3>MAX_MODEL_TRIANGLES)break;
     if(!subdivideModelFaces(target,Array.from({length:count},(_,i)=>i)))break;
   }
   target.userData.sculptPrepared=true;
 }
+function smooth01(value){const t=THREE.MathUtils.clamp(value,0,1);return t*t*(3-2*t);}
 function applyModelSculptAt(clientX,clientY){
-  const r=modelStudio,hit=getModelHitAt(clientX,clientY);if(!hit?.object?.geometry?.attributes?.position)return false;
+  const r=modelStudio,hit=getModelHitAt(clientX,clientY,modelToolMeshes());
+  if(!hit?.object?.geometry?.attributes?.position)return false;
   const target=hit.object;ensureModelSculptResolution(target);target.updateMatrixWorld(true);
-  const geometry=target.geometry,position=geometry.attributes.position,inverse=target.matrixWorld.clone().invert();
-  const normalMatrix=new THREE.Matrix3().getNormalMatrix(target.matrixWorld);
+  const geometry=target.geometry,position=geometry.attributes.position;
+  if(!geometry.attributes.normal)geometry.computeVertexNormals();
+  const normals=geometry.attributes.normal;
+  const inverse=target.matrixWorld.clone().invert(),normalMatrix=new THREE.Matrix3().getNormalMatrix(target.matrixWorld);
+  const worldHit=hit.point.clone();
   const worldNormal=(hit.face?.normal?.clone?.()||new THREE.Vector3(0,0,1)).applyMatrix3(normalMatrix).normalize();
-  if(worldNormal.lengthSq()<1e-8)return false;
-  const cameraRight=new THREE.Vector3().setFromMatrixColumn(r.camera.matrixWorld,0);
-  let axisU=cameraRight.addScaledVector(worldNormal,-cameraRight.dot(worldNormal)).normalize();
-  if(axisU.lengthSq()<1e-8){axisU.set(1,0,0).addScaledVector(worldNormal,-worldNormal.x).normalize();}
-  const axisV=worldNormal.clone().cross(axisU).normalize();
-  const cfg=r.sculptSettings,radius=Math.max(.03,Number(cfg.radius)||.65),sign=cfg.action==='dent'?-1:1;
-  const amount=Math.min(.8,Math.max(.001,Number(cfg.strength)||1.6)*.045)*sign;
+  let reference=new THREE.Vector3(0,0,1);if(Math.abs(worldNormal.dot(reference))>.92)reference.set(0,1,0);
+  const axisU=reference.cross(worldNormal).normalize(),axisV=worldNormal.clone().cross(axisU).normalize();
+  const cfg=r.sculptSettings,radius=THREE.MathUtils.clamp(Number(cfg.radius)||.65,.01,100),sign=cfg.action==='dent'?-1:1;
+  const amount=THREE.MathUtils.clamp((Number(cfg.strength)||.45)*.095,.001,1.5)*sign;
+  const flatRatio=cfg.profile==='flat'?.72:0;
   let changed=false;
   for(let i=0;i<position.count;i++){
-    const localVertex=new THREE.Vector3().fromBufferAttribute(position,i),worldVertex=localVertex.clone().applyMatrix4(target.matrixWorld),delta=worldVertex.clone().sub(hit.point);
-    const signedDepth=delta.dot(worldNormal),normalDistance=Math.abs(signedDepth);
-    // Only deform the surface patch around the hit; do not pull the back side of a thin object.
-    if(normalDistance>Math.max(.035,radius*.28))continue;
-    const tangent=delta.addScaledVector(worldNormal,-signedDepth),u=tangent.dot(axisU),v=tangent.dot(axisV);
-    if(!modelBrushContains(u,v,radius,cfg.shape))continue;
-    const radial=cfg.shape==='square'?Math.max(Math.abs(u),Math.abs(v))/radius:Math.sqrt(u*u+v*v)/radius;
-    const spatial=Math.max(0,1-radial),depthFalloff=Math.max(0,1-normalDistance/Math.max(.035,radius*.28));
-    const falloff=spatial*spatial*(.65+.35*depthFalloff);if(falloff<=0)continue;
-    const movedWorld=worldVertex.clone().addScaledVector(worldNormal,amount*falloff);
+    const local=new THREE.Vector3().fromBufferAttribute(position,i),world=local.clone().applyMatrix4(target.matrixWorld),delta=world.sub(worldHit);
+    const normalDistance=Math.abs(delta.dot(worldNormal));if(normalDistance>Math.max(.025,radius*.28))continue;
+    if(normals){const vertexNormal=new THREE.Vector3().fromBufferAttribute(normals,i).applyMatrix3(normalMatrix).normalize();if(vertexNormal.dot(worldNormal)<.48)continue;}
+    const u=delta.dot(axisU),v=delta.dot(axisV);
+    let normalizedDistance;
+    if(cfg.shape==='square')normalizedDistance=Math.max(Math.abs(u),Math.abs(v))/radius;
+    else if(cfg.shape==='triangle'){
+      const x=u/radius,y=v/radius,ax=-1,ay=-.58,bx=1,by=-.58,cx=0,cy=1.16,d=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);
+      const a=((by-cy)*(x-cx)+(cx-bx)*(y-cy))/d,b=((cy-ay)*(x-cx)+(ax-cx)*(y-cy))/d,c=1-a-b;
+      if(a<0||b<0||c<0)continue;normalizedDistance=Math.max(Math.abs(u)/radius,Math.abs(v)/(radius*1.16));
+    }else normalizedDistance=Math.sqrt(u*u+v*v)/radius;
+    if(normalizedDistance>1)continue;
+    let falloff;
+    if(cfg.profile==='flat'){
+      // A flat central plateau plus a wide smooth transition to untouched geometry.
+      falloff=normalizedDistance<=flatRatio?1:1-smooth01((normalizedDistance-flatRatio)/(1-flatRatio));
+    }else{
+      falloff=1-smooth01(normalizedDistance);
+    }
+    if(falloff<=.0005)continue;
+    const movedWorld=worldHit.clone().add(delta).addScaledVector(worldNormal,amount*falloff);
     const movedLocal=movedWorld.applyMatrix4(inverse);position.setXYZ(i,movedLocal.x,movedLocal.y,movedLocal.z);changed=true;
   }
   if(changed){position.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();target.updateMatrixWorld(true);}
   return changed;
 }
+function stampModelSculptSegment(from,to){
+  const dx=to.x-from.x,dy=to.y-from.y,distance=Math.hypot(dx,dy),step=3.5,count=Math.max(1,Math.ceil(distance/step));let changed=false;
+  for(let i=1;i<=count;i++){const t=i/count;if(applyModelSculptAt(from.x+dx*t,from.y+dy*t))changed=true;}
+  return changed;
+}
+function startModelSculptStroke(event){
+  const r=modelStudio;if(event.button!==0&&event.pointerType==='mouse')return;
+  if(!modelToolMeshes().length){toast(r.toolScope==='selected'?'В режиме «Только выбранный» сначала выбери объект':'Добавь модель для рельефа','error');return;}
+  if(!getModelHitAt(event.clientX,event.clientY,modelToolMeshes()))return;
+  event.preventDefault();try{event.currentTarget.setPointerCapture?.(event.pointerId);}catch{}
+  const now=performance.now();r.sculptStroke={pointerId:event.pointerId,x:event.clientX,y:event.clientY,lastApplied:{x:event.clientX,y:event.clientY},lastStamp:now,changed:applyModelSculptAt(event.clientX,event.clientY)};
+  updateModelSculptCursor(event.clientX,event.clientY);cancelAnimationFrame(r.sculptRaf);
+  const tick=time=>{if(!r.sculptStroke||r.activeTool!=='sculpt')return;r.sculptRaf=requestAnimationFrame(tick);if(time-r.sculptStroke.lastStamp>=75){const point={x:r.sculptStroke.x,y:r.sculptStroke.y};if(applyModelSculptAt(point.x,point.y))r.sculptStroke.changed=true;r.sculptStroke.lastApplied=point;r.sculptStroke.lastStamp=time;}};
+  r.sculptRaf=requestAnimationFrame(tick);
+}
 function updateModelSculptCursor(clientX,clientY){
   const r=modelStudio,cursor=$('#model-sculpt-cursor'),canvas=$('#model-canvas');if(!cursor||!canvas||r.activeTool!=='sculpt'){if(cursor)cursor.hidden=true;return;}
-  const hit=getModelHitAt(clientX,clientY);if(!hit){cursor.hidden=true;return;}
+  const hit=getModelHitAt(clientX,clientY,modelToolMeshes());if(!hit){cursor.hidden=true;return;}
   const rect=canvas.getBoundingClientRect(),viewport=canvas.parentElement.getBoundingClientRect(),distance=Math.max(.05,r.camera.position.distanceTo(hit.point)),worldPerPixel=2*distance*Math.tan(THREE.MathUtils.degToRad(r.camera.fov/2))/Math.max(1,rect.height),diameter=THREE.MathUtils.clamp((r.sculptSettings.radius*2)/worldPerPixel,18,520);
   cursor.hidden=false;cursor.dataset.shape=r.sculptSettings.shape;cursor.dataset.action=r.sculptSettings.action;cursor.style.width=`${diameter}px`;cursor.style.height=`${diameter}px`;cursor.style.left=`${clientX-viewport.left}px`;cursor.style.top=`${clientY-viewport.top}px`;
 }
-function startModelSculptStroke(event){
-  const r=modelStudio;if(!r.selected){toast('Сначала выбери объект для скульптинга','error');return;}
-  if(event.button!==0&&event.pointerType==='mouse')return;
-  event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture?.(event.pointerId);
-  r.orbit.enabled=false;
-  r.sculptStroke={pointerId:event.pointerId,x:event.clientX,y:event.clientY,lastStamp:0,changed:false};
-  updateModelSculptCursor(event.clientX,event.clientY);r.sculptStroke.changed=applyModelSculptAt(event.clientX,event.clientY);
-  cancelAnimationFrame(r.sculptRaf);
-  const tick=time=>{if(!r.sculptStroke||r.activeTool!=='sculpt')return;r.sculptRaf=requestAnimationFrame(tick);if(time-r.sculptStroke.lastStamp>=55){if(applyModelSculptAt(r.sculptStroke.x,r.sculptStroke.y))r.sculptStroke.changed=true;r.sculptStroke.lastStamp=time;}};
-  r.sculptRaf=requestAnimationFrame(tick);
-}
 function startModelCutStroke(event){
-  const r=modelStudio;if(!r.selected){toast('Сначала выбери объект для разреза','error');return;}
-  if(event.button!==0&&event.pointerType==='mouse')return;
-  event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture?.(event.pointerId);r.orbit.enabled=false;
+  const r=modelStudio;if(event.button!==0&&event.pointerType==='mouse')return;
+  if(!modelToolMeshes().length){toast(r.toolScope==='selected'?'В режиме «Только выбранный» сначала выбери объект':'Добавь модель для разреза','error');return;}
+  if(!getModelHitAt(event.clientX,event.clientY,modelToolMeshes()))return;
+  event.preventDefault();try{event.currentTarget.setPointerCapture?.(event.pointerId);}catch{}
   r.cutStroke={pointerId:event.pointerId,points:[{x:event.clientX,y:event.clientY}]};
-  const rect=$('#model-canvas').getBoundingClientRect();$('#model-cut-path').setAttribute('d',`M ${event.clientX-rect.left} ${event.clientY-rect.top}`);
+  $('#model-cut-path').setAttribute('d',`M ${event.clientX-event.currentTarget.getBoundingClientRect().left} ${event.clientY-event.currentTarget.getBoundingClientRect().top}`);
 }
 function handleModelToolPointerMove(event){
   const r=modelStudio;
   if(r.activeTool==='sculpt'&&!r.sculptStroke)updateModelSculptCursor(event.clientX,event.clientY);
-  if(r.sculptStroke&&r.sculptStroke.pointerId===event.pointerId){r.sculptStroke.x=event.clientX;r.sculptStroke.y=event.clientY;updateModelSculptCursor(event.clientX,event.clientY);return;}
+  if(r.sculptStroke&&r.sculptStroke.pointerId===event.pointerId){
+    const stroke=r.sculptStroke,from=stroke.lastApplied,to={x:event.clientX,y:event.clientY};
+    if(stampModelSculptSegment(from,to))stroke.changed=true;
+    stroke.x=to.x;stroke.y=to.y;stroke.lastApplied=to;updateModelSculptCursor(to.x,to.y);return;
+  }
   if(r.cutStroke&&r.cutStroke.pointerId===event.pointerId){
     const last=r.cutStroke.points.at(-1);if(Math.hypot(event.clientX-last.x,event.clientY-last.y)>=3)r.cutStroke.points.push({x:event.clientX,y:event.clientY});
     const rect=$('#model-canvas').getBoundingClientRect();$('#model-cut-path').setAttribute('d',r.cutStroke.points.map((p,i)=>`${i?'L':'M'} ${p.x-rect.left} ${p.y-rect.top}`).join(' '));return;
@@ -3871,131 +4113,102 @@ function handleModelToolPointerMove(event){
 function finishModelToolPointer(event){
   const r=modelStudio;
   if(r.sculptStroke&&(!event||r.sculptStroke.pointerId===event.pointerId)){
-    const stroke=r.sculptStroke;r.sculptStroke=null;cancelAnimationFrame(r.sculptRaf);r.sculptRaf=0;r.orbit.enabled=true;
-    if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;
-    if(stroke.changed){if(r.topologyOverlay)updateModelTopologyOverlay();pushModelHistory();$('#model-selection-info').textContent='Рельеф изменён';}
-    else toast('Кисть не попала по поверхности. Наведи центр круга точно на модель','error');
+    const stroke=r.sculptStroke;r.sculptStroke=null;cancelAnimationFrame(r.sculptRaf);r.sculptRaf=0;if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;if(stroke.changed){if(r.topologyOverlay)updateModelTopologyOverlay();pushModelHistory();$('#model-selection-info').textContent='Рельеф изменён';}
     return;
   }
   if(r.cutStroke&&(!event||r.cutStroke.pointerId===event.pointerId)){
-    const stroke=r.cutStroke;r.cutStroke=null;r.orbit.enabled=true;$('#model-cut-path').setAttribute('d','');
+    const stroke=r.cutStroke;if(event&&Number.isFinite(event.clientX)&&Number.isFinite(event.clientY)){const last=stroke.points.at(-1);if(!last||Math.hypot(event.clientX-last.x,event.clientY-last.y)>=1)stroke.points.push({x:event.clientX,y:event.clientY});}r.cutStroke=null;$('#model-cut-path').setAttribute('d','');
     if(stroke.points.length>=2)cutModelAlongScreenStroke(stroke.points);else toast('Проведи линию по поверхности объекта');
   }
 }
 function interpolateModelAttribute(a,b,t){const row={};for(const name of Object.keys(a))row[name]=a[name].map((v,i)=>v+(b[name][i]-v)*t);return row;}
 function splitModelMeshByPlane(target,planePointWorld,planeNormalWorld){
-  const original=target?.geometry;if(!original?.attributes?.position)return null;
-  target.updateMatrixWorld(true);const source=original.index?original.toNonIndexed():original.clone();
-  const attrNames=Object.keys(source.attributes),position=source.attributes.position,triangleCount=Math.floor(position.count/3);
-  if(!triangleCount){source.dispose();return null;}
-  const normalWorld=planeNormalWorld.clone().normalize();if(normalWorld.lengthSq()<1e-8){source.dispose();return null;}
-  const distance=row=>new THREE.Vector3(...row.position).applyMatrix4(target.matrixWorld).sub(planePointWorld).dot(normalWorld);
-  const read=index=>Object.fromEntries(attrNames.map(name=>{const a=source.attributes[name];return [name,Array.from({length:a.itemSize},(_,k)=>a.array[index*a.itemSize+k])];}));
-  const interpolate=(a,b,t)=>interpolateModelAttribute(a,b,t);
-  const sides=[0,1].map(()=>({data:Object.fromEntries(attrNames.map(name=>[name,[]])),groups:[]}));
-  const intersections=new Map();
-  const pointKey=row=>modelPointKey(new THREE.Vector3(...row.position));
-  const addIntersection=row=>intersections.set(pointKey(row),row);
-  const appendTriangle=(side,tri,materialIndex)=>{
-    const bucket=sides[side],start=bucket.data.position.length/3;
-    tri.forEach(row=>attrNames.forEach(name=>bucket.data[name].push(...row[name])));
-    const prev=bucket.groups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else bucket.groups.push({start,count:3,materialIndex});
-  };
-  const clipTriangle=(tri,distances,side)=>{
+  const original=target.geometry;if(!original?.attributes?.position)return null;target.updateMatrixWorld(true);
+  const source=original.index?original.toNonIndexed():original.clone();const attrNames=Object.keys(source.attributes),position=source.attributes.position;
+  const sides=[{data:Object.fromEntries(attrNames.map(n=>[n,[]])),groups:[]},{data:Object.fromEntries(attrNames.map(n=>[n,[]])),groups:[]}];
+  let cutLocal=[];const read=i=>Object.fromEntries(attrNames.map(name=>{const a=source.attributes[name];return [name,Array.from({length:a.itemSize},(_,k)=>a.array[i*a.itemSize+k])];}));
+  const rowLocalWorld=row=>new THREE.Vector3(...row.position).applyMatrix4(target.matrixWorld);
+  const dist=row=>rowLocalWorld(row).sub(planePointWorld).dot(planeNormalWorld);
+  const append=(side,tri,materialIndex)=>{const bucket=sides[side],start=bucket.data.position.length/3;tri.forEach(row=>attrNames.forEach(name=>bucket.data[name].push(...row[name])));const prev=bucket.groups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else bucket.groups.push({start,count:3,materialIndex});};
+  const clip=(tri,side)=>{
     const sign=side===0?1:-1,out=[];
-    for(let i=0;i<3;i++){
-      const a=tri[i],b=tri[(i+1)%3],da=distances[i]*sign,db=distances[(i+1)%3]*sign;
-      const insideA=da>=-1e-7,insideB=db>=-1e-7;
+    for(let i=0;i<tri.length;i++){
+      const a=tri[i],b=tri[(i+1)%tri.length],da=dist(a)*sign,db=dist(b)*sign,insideA=da>=-1e-7,insideB=db>=-1e-7;
       if(insideA&&insideB)out.push(b);
-      else if(insideA&&!insideB){const t=da/(da-db),row=interpolate(a,b,t);out.push(row);addIntersection(row);}
-      else if(!insideA&&insideB){const t=da/(da-db),row=interpolate(a,b,t);out.push(row,b);addIntersection(row);}
-      if(Math.abs(da)<=1e-7)addIntersection(a);
+      else if(insideA&&!insideB){const t=da/(da-db),v=interpolateModelAttribute(a,b,t);out.push(v);cutLocal.push(new THREE.Vector3(...v.position));}
+      else if(!insideA&&insideB){const t=da/(da-db),v=interpolateModelAttribute(a,b,t);out.push(v,b);cutLocal.push(new THREE.Vector3(...v.position));}
     }
     return out;
   };
-  for(let face=0;face<triangleCount;face++){
-    const tri=[read(face*3),read(face*3+1),read(face*3+2)],distances=tri.map(distance),materialIndex=modelFaceMaterialIndex(source,face);
-    // Capture exact on-plane vertices as well as strict edge crossings.
-    for(let e=0;e<3;e++){
-      const a=tri[e],b=tri[(e+1)%3],da=distances[e],db=distances[(e+1)%3];
-      if(Math.abs(da)<=1e-7)addIntersection(a);
-      if((da<-1e-7&&db>1e-7)||(da>1e-7&&db<-1e-7))addIntersection(interpolate(a,b,da/(da-db)));
-    }
+  const total=Math.floor(position.count/3);
+  for(let face=0;face<total;face++){
+    const tri=[read(face*3),read(face*3+1),read(face*3+2)],materialIndex=modelFaceMaterialIndex(source,face);
+    const da=dist(tri[0]),db=dist(tri[1]),dc=dist(tri[2]);
     for(let side=0;side<2;side++){
-      const poly=clipTriangle(tri,distances,side);if(poly.length<3)continue;
-      for(let i=1;i<poly.length-1;i++)appendTriangle(side,[poly[0],poly[i],poly[i+1]],materialIndex);
+      const poly=clip(tri,side);if(poly.length<3)continue;
+      for(let i=1;i<poly.length-1;i++)append(side,[poly[0],poly[i],poly[i+1]],materialIndex);
     }
   }
-  let ringRows=[...intersections.values()],ring=ringRows.map(row=>new THREE.Vector3(...row.position));
-  if(sides.some(side=>side.data.position.length===0)||ring.length<3){source.dispose();return null;}
-  let worldRing=ring.map(point=>point.clone().applyMatrix4(target.matrixWorld));
-  const center=worldRing.reduce((sum,p)=>sum.add(p),new THREE.Vector3()).multiplyScalar(1/worldRing.length);
-  let worldU=new THREE.Vector3(1,0,0);if(Math.abs(worldU.dot(normalWorld))>.92)worldU.set(0,1,0);
-  worldU.addScaledVector(normalWorld,-worldU.dot(normalWorld)).normalize();const worldV=normalWorld.clone().cross(worldU).normalize();
-  const angles=worldRing.map(point=>{const delta=point.clone().sub(center);return Math.atan2(delta.dot(worldV),delta.dot(worldU));});
-  const order=angles.map((angle,index)=>({angle,index})).sort((a,b)=>a.angle-b.angle).map(item=>item.index);
-  ringRows=order.map(index=>ringRows[index]);ring=order.map(index=>ring[index]);worldRing=order.map(index=>worldRing[index]);
-  const projected=worldRing.map(point=>{const delta=point.clone().sub(center);return new THREE.Vector2(delta.dot(worldU),delta.dot(worldV));});
-  const triangles=THREE.ShapeUtils.triangulateShape(projected,[]);if(!triangles.length){source.dispose();return null;}
-  const minX=Math.min(...projected.map(p=>p.x)),maxX=Math.max(...projected.map(p=>p.x)),minY=Math.min(...projected.map(p=>p.y)),maxY=Math.max(...projected.map(p=>p.y));
-  const uvAt=p=>[(p.x-minX)/Math.max(1e-6,maxX-minX),(p.y-minY)/Math.max(1e-6,maxY-minY)];
-  const normalMatrix=new THREE.Matrix3().getNormalMatrix(target.matrixWorld),localNormal=normalWorld.clone().applyMatrix3(normalMatrix.clone().invert()).normalize();
-  for(let side=0;side<2;side++){
-    const desired=localNormal.clone().multiplyScalar(side===0?-1:1);
-    for(const indices of triangles){
-      const ordered=[...indices],p0=ring[ordered[0]],p1=ring[ordered[1]],p2=ring[ordered[2]],cross=p1.clone().sub(p0).cross(p2.clone().sub(p0));if(cross.dot(desired)<0)[ordered[1],ordered[2]]=[ordered[2],ordered[1]];
-      const rows=ordered.map(index=>{
-        const base=ringRows[index],uv=uvAt(projected[index]);const row={};
-        attrNames.forEach(name=>{
-          const itemSize=source.attributes[name]?.itemSize||3;
-          if(name==='position')row[name]=ring[index].toArray();
-          else if(name==='normal')row[name]=desired.toArray().slice(0,itemSize);
-          else if(name==='uv')row[name]=itemSize===1?[uv[0]]:itemSize===2?uv:[...uv,...Array(Math.max(0,itemSize-2)).fill(0)];
-          else if(base?.[name])row[name]=base[name].slice(0,itemSize);
-          else row[name]=Array(itemSize).fill(0);
-        });return row;
-      });
-      appendTriangle(side,rows,0);
-    }
-  }
-  const totalAdded=sides.reduce((sum,side)=>sum+side.data.position.length/3,0)/3;
-  if(countModelTriangles(modelStudio.root)+totalAdded>MAX_MODEL_TRIANGLES){source.dispose();toast('Разрез создаст слишком много полигонов. Уменьши сложность модели','error');return null;}
-  const parent=target.parent||modelStudio.root,materials=Array.isArray(target.material)?target.material.map(m=>m.clone()):target.material.clone(),pieces=[];
+  source.dispose();
+  const unique=new Map();cutLocal.forEach(p=>unique.set(modelPointKey(p),p));const ring=[...unique.values()];
+  if(sides.some(side=>side.data.position.length===0)||ring.length<3){return null;}
+  const parent=target.parent||modelStudio.root,meshes=[];
   for(let side=0;side<2;side++){
     const bucket=sides[side],geometry=new THREE.BufferGeometry();
     attrNames.forEach(name=>{const old=original.attributes[name],Typed=old.array.constructor;geometry.setAttribute(name,new THREE.BufferAttribute(new Typed(bucket.data[name]),old.itemSize,old.normalized));});
-    bucket.groups.forEach(group=>geometry.addGroup(group.start,group.count,group.materialIndex));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
-    const material=Array.isArray(materials)?materials.map(m=>m.clone()):materials.clone();
-    const piece=new THREE.Mesh(geometry,material);piece.name=`${target.name||'Object'}_${side===0?'A':'B'}`;piece.position.copy(target.position);piece.quaternion.copy(target.quaternion);piece.scale.copy(target.scale);piece.castShadow=target.castShadow;piece.receiveShadow=target.receiveShadow;piece.userData={...target.userData,sculptPrepared:false};parent.add(piece);pieces.push(piece);
+    bucket.groups.forEach(g=>geometry.addGroup(g.start,g.count,g.materialIndex));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+    const materials=Array.isArray(target.material)?target.material.map(m=>m.clone()):target.material.clone();
+    const mesh=new THREE.Mesh(geometry,materials);mesh.name=`${target.name||'Object'}_${side===0?'A':'B'}`;mesh.position.copy(target.position);mesh.quaternion.copy(target.quaternion);mesh.scale.copy(target.scale);mesh.castShadow=target.castShadow;mesh.receiveShadow=target.receiveShadow;mesh.userData={...target.userData};parent.add(mesh);meshes.push(mesh);
   }
-  if(Array.isArray(materials))materials.forEach(m=>m.dispose?.());else materials.dispose?.();
-  parent.remove(target);original.dispose();
-  // Preserve world transforms for pieces extracted from nested imported-model groups.
-  if(parent!==modelStudio.root){modelStudio.root.updateMatrixWorld(true);pieces.forEach(piece=>modelStudio.root.attach(piece));}
-  source.dispose();return pieces;
+  // Close the cut for solid primitives with a simple planar fan cap.
+  target.updateMatrixWorld(true);const worldRing=ring.map(p=>p.clone().applyMatrix4(target.matrixWorld));const center=worldRing.reduce((a,b)=>a.add(b),new THREE.Vector3()).multiplyScalar(1/worldRing.length);
+  let u=new THREE.Vector3(1,0,0);if(Math.abs(u.dot(planeNormalWorld))>.9)u.set(0,1,0);u.addScaledVector(planeNormalWorld,-u.dot(planeNormalWorld)).normalize();const v=planeNormalWorld.clone().cross(u).normalize();
+  const ordered=ring.map((p,i)=>({p,w:worldRing[i],angle:Math.atan2(worldRing[i].clone().sub(center).dot(v),worldRing[i].clone().sub(center).dot(u))})).sort((a,b)=>a.angle-b.angle).map(item=>item.p);
+  const localCenter=ordered.reduce((a,b)=>a.add(b),new THREE.Vector3()).multiplyScalar(1/ordered.length);
+  const capA=[],capB=[];for(let i=0;i<ordered.length;i++){const j=(i+1)%ordered.length;capA.push([localCenter,ordered[j],ordered[i]]);capB.push([localCenter,ordered[i],ordered[j]]);}
+  makeModelTriangleMesh(meshes[0],capA,'Cut_Cap');makeModelTriangleMesh(meshes[1],capB,'Cut_Cap');
+  parent.updateMatrixWorld(true);parent.remove(target);
+  // Expose cut fragments as independent workspace objects even when the source mesh was nested in an imported model group.
+  if(parent!==modelStudio.root){modelStudio.root.updateMatrixWorld(true);meshes.forEach(piece=>modelStudio.root.attach(piece));}
+  original.dispose();for(const material of Array.isArray(target.material)?target.material:[target.material])material?.dispose?.();
+  return meshes;
 }
-function cutMeshAlongScreenSegment(target,start,end){
-  const r=modelStudio,canvas=$('#model-canvas'),rect=canvas.getBoundingClientRect();if(!target||!rect.width||!rect.height)return null;
-  const dx=end.x-start.x,dy=end.y-start.y;if(Math.hypot(dx,dy)<4)return null;
-  let hit=null;const steps=48;
-  for(let i=0;i<=steps&&!hit;i++){
-    const t=i/steps,x=start.x+dx*t,y=start.y+dy*t;hit=getModelHitAt(x,y,[target]);
+function screenLinePlaneForMesh(target,screenA,screenB,viewport){
+  const r=modelStudio,dx=screenB.x-screenA.x,dy=screenB.y-screenA.y;
+  if(Math.hypot(dx,dy)<4)return null;
+  r.camera.updateMatrixWorld(true);const matrix=r.camera.matrixWorld;
+  const cameraRight=new THREE.Vector3().setFromMatrixColumn(matrix,0).normalize();
+  const cameraUp=new THREE.Vector3().setFromMatrixColumn(matrix,1).normalize();
+  const view=r.camera.getWorldDirection(new THREE.Vector3()).normalize();
+  // Convert pixels to normalized screen units so the cut angle stays correct on wide and portrait viewports.
+  const width=Math.max(1,viewport?.width||$('#model-canvas').clientWidth),height=Math.max(1,viewport?.height||$('#model-canvas').clientHeight);
+  const lineWorld=cameraRight.multiplyScalar(dx/width).addScaledVector(cameraUp,-dy/height).normalize();
+  const planeNormal=lineWorld.cross(view).normalize();if(planeNormal.lengthSq()<1e-8)return null;
+  const length=Math.hypot(dx,dy),steps=Math.max(12,Math.min(180,Math.ceil(length/4))),hits=[];
+  for(let step=0;step<=steps;step++){
+    const t=step/steps,x=THREE.MathUtils.lerp(screenA.x,screenB.x,t),y=THREE.MathUtils.lerp(screenA.y,screenB.y,t),hit=getModelHitAt(x,y,[target]);
+    if(hit)hits.push({t,point:hit.point.clone()});
   }
-  if(!hit)return null;
-  r.camera.updateMatrixWorld(true);
-  const right=new THREE.Vector3().setFromMatrixColumn(r.camera.matrixWorld,0).normalize(),up=new THREE.Vector3().setFromMatrixColumn(r.camera.matrixWorld,1).normalize(),view=r.camera.getWorldDirection(new THREE.Vector3()).normalize();
-  const strokeDirection=right.multiplyScalar(dx).addScaledVector(up,-dy).normalize(),normal=strokeDirection.cross(view).normalize();
-  if(normal.lengthSq()<1e-8)return null;
-  return splitModelMeshByPlane(target,hit.point,normal);
+  if(!hits.length)return null;
+  // Even a short stroke through a small model is enough to anchor the cutting plane.
+  // Use the hit nearest the screen midpoint; the plane remains aligned to the drawn line.
+  const centerHit=hits.reduce((best,item)=>Math.abs(item.t-.5)<Math.abs(best.t-.5)?item:best,hits[0]);
+  return {point:centerHit.point,normal:planeNormal,hits:hits.length};
+}
+function splitModelWithScreenLine(target,screenA,screenB,viewport){
+  const plane=screenLinePlaneForMesh(target,screenA,screenB,viewport);if(!plane)return null;
+  return splitModelMeshByPlane(target,plane.point,plane.normal);
 }
 function cutModelAlongScreenStroke(screenPoints){
-  const r=modelStudio,targets=selectedModelMeshes();if(!targets.length){toast('Выбери модель перед разрезом','error');return;}
-  if(screenPoints.length<2){toast('Проведи линию через модель','error');return;}
-  let start=screenPoints[0],end=screenPoints.at(-1),max=0;
-  for(let i=0;i<screenPoints.length;i++)for(let j=i+1;j<screenPoints.length;j++){const d=Math.hypot(screenPoints[i].x-screenPoints[j].x,screenPoints[i].y-screenPoints[j].y);if(d>max){max=d;start=screenPoints[i];end=screenPoints[j];}}
-  const pieces=[];for(const target of targets){const result=cutMeshAlongScreenSegment(target,start,end);if(result?.length===2)pieces.push(...result);}
-  if(pieces.length){r.selected=pieces[0];r.transform.detach();r.transform.enabled=true;if(r.mode!=='object')updateModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();toast(`Разрез выполнен. Создано частей: ${pieces.length}`,'success');}
-  else toast('Разрез не пересёк модель. Проведи линию от одного края модели до другого','error');
+  const r=modelStudio,targets=modelToolMeshes();if(!targets.length){toast(r.toolScope==='selected'?'Выбери объект в режиме «Только выбранный»':'На сцене нет доступных моделей','error');return;}
+  if(screenPoints.length<2){toast('Проведи линию подлиннее через модель');return;}
+  const start=screenPoints[0],end=screenPoints.at(-1),fragments=[];let cuts=0,firstCutFragment=null;
+  for(const target of targets){
+    const result=splitModelWithScreenLine(target,start,end,$('#model-canvas').getBoundingClientRect());
+    if(result?.length===2){fragments.push(...result);firstCutFragment ||= result[0];cuts++;}
+  }
+  if(cuts){r.selected=firstCutFragment||fragments[0]||null;r.transform.detach();r.transform.enabled=false;if(r.mode!=='object')updateModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();toast(`Разрез выполнен: ${cuts} сеток разделено, создано частей: ${fragments.length}`,'success');}
+  else toast('Линия не разделила модель. Проведи её через всю видимую поверхность от края до края.','error');
 }
 function openModelCut2DEditor(){
   const cfg=modelStudio.cutSettings;
@@ -4008,24 +4221,31 @@ function updateModelCut2DPreview(){
   const host=$('#model-cut-2d-lines');if(host)host.innerHTML=Array.from({length:count},(_,i)=>{const offset=(i-(count-1)/2)*spacing*100;return `<i style="top:calc(50% + ${offset.toFixed(2)}%);transform:translate(-50%,-50%) rotate(${angle}deg)"></i>`;}).join('');
 }
 function applyModelCutPreset(){
-  const r=modelStudio,targets=selectedModelMeshes();if(!targets.length){toast('Сначала выбери модель для разреза','error');return;}
-  const viewport=$('#model-canvas').getBoundingClientRect(),cfg=r.cutSettings,screenLines=[];
-  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
-  for(const target of targets){const attr=target.geometry?.attributes?.position;if(!attr)continue;target.updateMatrixWorld(true);for(let i=0;i<attr.count;i++){const point=new THREE.Vector3().fromBufferAttribute(attr,i).applyMatrix4(target.matrixWorld).project(r.camera);if(point.z<-1||point.z>1)continue;minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);minY=Math.min(minY,point.y);maxY=Math.max(maxY,point.y);}}
-  if(!Number.isFinite(minX)||maxX-minX<.01||maxY-minY<.01){toast('Не удалось определить область модели','error');return;}
-  const direction=new THREE.Vector2(Math.cos(THREE.MathUtils.degToRad(cfg.angle)),Math.sin(THREE.MathUtils.degToRad(cfg.angle))),perp=new THREE.Vector2(-direction.y,direction.x),corners=[new THREE.Vector2(minX,minY),new THREE.Vector2(minX,maxY),new THREE.Vector2(maxX,minY),new THREE.Vector2(maxX,maxY)],along=corners.map(p=>p.dot(direction)),across=corners.map(p=>p.dot(perp)),lo=Math.min(...along),hi=Math.max(...along),mid=(Math.min(...across)+Math.max(...across))/2,span=Math.max(.01,Math.max(...across)-Math.min(...across));
-  for(let i=0;i<cfg.count;i++){
-    const spacing=Math.min(cfg.spacing,.82/Math.max(1,cfg.count-1)),acrossAt=mid+(i-(cfg.count-1)/2)*spacing*span;
-    const a=direction.clone().multiplyScalar(lo-.08).addScaledVector(perp,acrossAt),b=direction.clone().multiplyScalar(hi+.08).addScaledVector(perp,acrossAt);
-    screenLines.push([{x:viewport.left+(a.x+1)*.5*viewport.width,y:viewport.top+(1-a.y)*.5*viewport.height},{x:viewport.left+(b.x+1)*.5*viewport.width,y:viewport.top+(1-b.y)*.5*viewport.height}]);
+  const r=modelStudio,targets=modelToolMeshes();if(!targets.length){toast(r.toolScope==='selected'?'Выбери объект в режиме «Только выбранный»':'На сцене нет доступных моделей','error');return;}
+  const viewport=$('#model-canvas').getBoundingClientRect(),cfg=r.cutSettings,projected=[];
+  for(const target of targets){const attr=target.geometry?.attributes?.position;if(!attr)continue;target.updateMatrixWorld(true);for(let i=0;i<attr.count;i++){const point=new THREE.Vector3().fromBufferAttribute(attr,i).applyMatrix4(target.matrixWorld).project(r.camera);if(Number.isFinite(point.x)&&Number.isFinite(point.y)&&point.z>=-1&&point.z<=1)projected.push(new THREE.Vector2(point.x,point.y));}}
+  if(projected.length<3){toast('Не удалось определить область модели','error');return;}
+  const minX=Math.min(...projected.map(p=>p.x)),maxX=Math.max(...projected.map(p=>p.x)),minY=Math.min(...projected.map(p=>p.y)),maxY=Math.max(...projected.map(p=>p.y));
+  if(maxX-minX<.01||maxY-minY<.01){toast('Модель слишком мала в текущем ракурсе. Приблизь камеру.','error');return;}
+  const direction=new THREE.Vector2(Math.cos(THREE.MathUtils.degToRad(cfg.angle)),Math.sin(THREE.MathUtils.degToRad(cfg.angle))),perp=new THREE.Vector2(-direction.y,direction.x);
+  const corners=[new THREE.Vector2(minX,minY),new THREE.Vector2(minX,maxY),new THREE.Vector2(maxX,minY),new THREE.Vector2(maxX,maxY)],along=corners.map(p=>p.dot(direction)),across=corners.map(p=>p.dot(perp)),lo=Math.min(...along),hi=Math.max(...along),mid=(Math.min(...across)+Math.max(...across))/2,span=Math.max(.01,Math.max(...across)-Math.min(...across));
+  const lines=[];for(let i=0;i<cfg.count;i++){const spacing=Math.min(cfg.spacing,.82/Math.max(1,cfg.count-1)),acrossAt=mid+(i-(cfg.count-1)/2)*spacing*span,a=direction.clone().multiplyScalar(lo-.08).addScaledVector(perp,acrossAt),b=direction.clone().multiplyScalar(hi+.08).addScaledVector(perp,acrossAt);lines.push([a,b]);}
+  let fragments=[...targets],cuts=0,firstCutFragment=null;
+  for(const [a,b] of lines){
+    const next=[];
+    for(const mesh of fragments){
+      const screenA={x:viewport.left+(a.x+1)*.5*viewport.width,y:viewport.top+(1-a.y)*.5*viewport.height};
+      const screenB={x:viewport.left+(b.x+1)*.5*viewport.width,y:viewport.top+(1-b.y)*.5*viewport.height};
+      const result=splitModelWithScreenLine(mesh,screenA,screenB,viewport);
+      if(result?.length===2){next.push(...result);firstCutFragment ||= result[0];cuts++;}else next.push(mesh);
+    }
+    fragments=next;
   }
-  let fragments=[...targets],cutCount=0;
-  for(const line of screenLines){const next=[];for(const mesh of fragments){const pieces=cutMeshAlongScreenSegment(mesh,line[0],line[1]);if(pieces?.length===2){next.push(...pieces);cutCount++;}else next.push(mesh);}fragments=next;}
-  if(cutCount){r.selected=fragments[0]||null;r.transform.detach();r.transform.enabled=true;if(r.mode!=='object')updateModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();toast(`Шаблон применён: ${cutCount} разрезов, частей: ${fragments.length}`,'success');}
-  else toast('Шаблон не пересёк модель. Измени угол или расстояние','error');
+  if(cuts){r.selected=firstCutFragment||fragments[0]||null;r.transform.detach();r.transform.enabled=false;if(r.mode!=='object')updateModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();toast(`Выполнено разрезов: ${cuts}. Создано частей: ${fragments.length}`,'success');}
+  else toast('Линии не разделили модель. Измени угол или расположение в 2D и повтори.','error');
 }
 function finishModelFaceCreation(){
-  const r=modelStudio,target=r.creationTarget,points=r.creationPoints;if(!target||points.length<3){toast('Для грани нужно минимум три точки','error');return false;}
+  const r=modelStudio,target=r.creationTarget,points=r.creationPoints;if(!target||points.length<4){toast('Для грани нужно минимум четыре точки','error');return false;}
   const origin=points[0],normal=points[1].clone().sub(origin).cross(points[2].clone().sub(origin)).normalize();if(normal.lengthSq()<1e-8){toast('Точки грани лежат на одной линии','error');return false;}
   const axisU=points[1].clone().sub(origin).normalize(),axisV=normal.clone().cross(axisU).normalize(),contour=points.map(p=>{const delta=p.clone().sub(origin);return new THREE.Vector2(delta.dot(axisU),delta.dot(axisV));});
   const triangles=THREE.ShapeUtils.triangulateShape(contour,[]).map(indices=>indices.map(index=>points[index]));if(!triangles.length){toast('Не удалось построить полигон из этих точек','error');return false;}
@@ -4033,11 +4253,12 @@ function finishModelFaceCreation(){
   r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=false;$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='create-face'));pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent=`Создана грань из ${points.length} точек. Можно создать следующую`;return true;
 }
 function cancelModelActiveTool(){
-  const r=modelStudio;r.activeTool=null;r.cameraNavigation=false;if(r.orbit)r.orbit.enabled=true;$('#model-camera-orbit-toggle')?.classList.remove('active');if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;r.sculptStroke=null;r.cutStroke=null;cancelAnimationFrame(r.sculptRaf);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-cut-path').setAttribute('d','');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=true;$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));r.transform.enabled=true;if(r.mode==='object'&&r.selected)r.transform.attach(r.selected);else r.transform.detach();$('#model-selection-info').textContent='Инструмент отключён';
+  const r=modelStudio;r.activeTool=null;r.cameraNavigation=false;$('#model-camera-orbit-toggle')?.classList.remove('active');if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;r.sculptStroke=null;r.cutStroke=null;cancelAnimationFrame(r.sculptRaf);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-cut-path').setAttribute('d','');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=true;$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));r.transform.enabled=true;if(r.mode==='object'&&r.selected){r.transform.attach(r.selected);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[r.transformTool]||'translate');}else if(r.componentSelection){r.transform.attach(r.componentPivot);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[r.transformTool]||'translate');}else r.transform.detach();$('#model-selection-info').textContent='Инструмент отключён';
 }
 
 function selectModelObject(e){
-  const r=modelStudio;if(r.cameraNavigation)return;if((e.pointerType==='mouse'&&e.button!==0)||r.transform?.dragging||!e.isPrimary)return;
+  if(isPointCoveredByEditorUI(e.clientX,e.clientY)){e.preventDefault();e.stopImmediatePropagation();return;}
+  const r=modelStudio;if(r.cameraNavigation)return;if((e.pointerType==='mouse'&&e.button!==0)||r.transform?.dragging||e.isPrimary===false)return;
   if(r.activeTool==='sculpt'){startModelSculptStroke(e);return;}
   if(r.activeTool==='cut'){startModelCutStroke(e);return;}
   const rect=e.currentTarget.getBoundingClientRect();if(!rect.width||!rect.height)return;
@@ -4068,7 +4289,7 @@ function selectModelObject(e){
 function selectModelMesh(mesh){
   clearModelComponentHelper();clearModelTopologyOverlay();clearModelCreationPreview();modelStudio.creationPoints=[];modelStudio.creationTarget=null;modelStudio.selected=mesh;modelStudio.selectedObjects.clear();
   $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===modelStudio.mode));
-  if(modelStudio.mode==='object'&&!modelStudio.activeTool){syncModelTransformToolButtons('move');modelStudio.transform.enabled=true;modelStudio.transform.attach(mesh);modelStudio.transform.setMode('translate');}
+  if(modelStudio.mode==='object'&&!modelStudio.activeTool){syncModelTransformToolButtons(modelStudio.transformTool||'move');modelStudio.transform.enabled=true;modelStudio.transform.attach(mesh);modelStudio.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[modelStudio.transformTool]||'translate');}
   else{modelStudio.transform.detach();modelStudio.transform.enabled=!modelStudio.activeTool;updateModelTopologyOverlay();}
   $('#model-selection-info').textContent=mesh.name||'Объект';renderModelFields();renderModelObjectList();
 }
@@ -4098,12 +4319,12 @@ function renderModelFields(){
   const transformHost=$('#model-transform-fields'),materialHost=$('#model-material-fields');if(!transformHost||!materialHost)return;
   const object=modelStudio.selected;
   if(!object){transformHost.innerHTML='<div class="modal-note">Выбери объект в 3D-окне или в списке.</div>';materialHost.innerHTML='<div class="modal-note">Материал не выбран.</div>';return;}
-  const vector=(kind,label,values)=>`<div class="model-vector-row"><b>${label}</b>${values.map((value,axis)=>`<label>${['X','Y','Z'][axis]}<input type="number" step="0.01" data-model-vector="${kind}" data-model-axis="${axis}" value="${Number(value).toFixed(3)}"></label>`).join('')}</div>`;
+  const vector=(kind,label,values)=>`<div class="model-vector-row"><b>${label}</b>${values.map((value,axis)=>`<label>${['X','Y','Z'][axis]}<input type="number" step="0.01" data-model-vector="${kind}" data-model-axis="${axis}" data-stepper-enhanced="1" value="${Number(value).toFixed(3)}"></label>`).join('')}</div>`;
   transformHost.innerHTML=`<label class="field-label">Имя объекта<input class="field-input" id="model-object-name" maxlength="80" value="${escapeAttr(object.name||'Object')}"></label>${vector('position','Позиция',object.position.toArray())}${vector('rotation','Вращение °',[object.rotation.x,object.rotation.y,object.rotation.z].map(v=>THREE.MathUtils.radToDeg(v)))}${vector('scale','Масштаб',object.scale.toArray())}<div class="modal-note">Трансформации можно менять здесь или манипулятором прямо в 3D-окне.</div>`;
   const materials=modelMaterialList(object),first=materials[0],color=first?.color?`#${first.color.getHexString()}`:'#ffffff';
   if(!first){materialHost.innerHTML='<div class="modal-note">У объекта пока нет редактируемого материала.</div>';return;}
   const repeat=first.map?.repeat||{x:1,y:1},offset=first.map?.offset||{x:0,y:0};
-  materialHost.innerHTML=`<label class="field-label">Цвет<input class="field-input" type="color" data-model-material="color" value="${color}"></label><div class="model-vector-row"><b>UV повтор</b><label>U<input type="number" step="0.1" min="0.01" data-model-material="repeatX" value="${Number(repeat.x||1).toFixed(2)}"></label><label>V<input type="number" step="0.1" min="0.01" data-model-material="repeatY" value="${Number(repeat.y||1).toFixed(2)}"></label></div><div class="model-vector-row"><b>UV сдвиг</b><label>U<input type="number" step="0.05" data-model-material="offsetX" value="${Number(offset.x||0).toFixed(2)}"></label><label>V<input type="number" step="0.05" data-model-material="offsetY" value="${Number(offset.y||0).toFixed(2)}"></label></div><label class="field-label">Шероховатость <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="roughness" value="${Number(first.roughness??.7).toFixed(2)}"></label><label class="field-label">Металличность <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="metalness" value="${Number(first.metalness??0).toFixed(2)}"></label><small class="asset-meta">Изменение применяется ко всем материалам выбранной модели.</small>`;
+  materialHost.innerHTML=`<label class="field-label">Цвет<input class="field-input" type="color" data-model-material="color" value="${color}"></label><div class="model-vector-row"><b>UV повтор</b><label>U<input type="number" step="0.1" min="0.01" data-model-material="repeatX" data-stepper-enhanced="1" value="${Number(repeat.x||1).toFixed(2)}"></label><label>V<input type="number" step="0.1" min="0.01" data-model-material="repeatY" data-stepper-enhanced="1" value="${Number(repeat.y||1).toFixed(2)}"></label></div><div class="model-vector-row"><b>UV сдвиг</b><label>U<input type="number" step="0.05" data-model-material="offsetX" data-stepper-enhanced="1" value="${Number(offset.x||0).toFixed(2)}"></label><label>V<input type="number" step="0.05" data-model-material="offsetY" data-stepper-enhanced="1" value="${Number(offset.y||0).toFixed(2)}"></label></div><label class="field-label">Шероховатость <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="roughness" data-stepper-enhanced="1" value="${Number(first.roughness??.7).toFixed(2)}"></label><label class="field-label">Металличность <input class="field-input" type="number" min="0" max="1" step="0.05" data-model-material="metalness" data-stepper-enhanced="1" value="${Number(first.metalness??0).toFixed(2)}"></label><small class="asset-meta">Изменение применяется ко всем материалам выбранной модели.</small>`;
   const nameInput=$('#model-object-name');nameInput?.addEventListener('change',()=>{object.name=nameInput.value.trim()||'Object';renderModelObjectList();$('#model-selection-info').textContent=object.name;pushModelHistory();});
   const applyVectorField=(field,commit=false)=>{
     const kind=field.dataset.modelVector,axis=Number(field.dataset.modelAxis),value=Number(field.value);if(!Number.isFinite(value))return;
@@ -4145,13 +4366,21 @@ function updateModelTopologyOverlay(){
   });
   r.scene.add(group);r.topologyOverlay=group;
 }
+function focusModelWorkspace(){
+  const r=modelStudio;if(!r.camera||!r.orbit)return;
+  const objects=(r.root?.children||[]).filter(object=>!object.userData.reference);
+  let center=new THREE.Vector3(),radius=1;
+  if(objects.length){const box=new THREE.Box3();objects.forEach(object=>box.expandByObject(object));if(!box.isEmpty()){center=box.getCenter(new THREE.Vector3());radius=Math.max(.75,box.getSize(new THREE.Vector3()).length()*.9);}}
+  const direction=new THREE.Vector3(1,-1,.72).normalize();r.orbit.target.copy(center);r.camera.up.set(0,0,1);r.orbit.object.up.set(0,0,1);r.camera.position.copy(center).addScaledVector(direction,Math.max(4,radius*2.2));r.camera.near=.01;r.camera.far=Math.max(3000,radius*30);r.camera.lookAt(center);r.camera.updateProjectionMatrix();r.orbit.update();
+  $$('#model-studio [data-model-view]').forEach(button=>button.classList.remove('active'));
+}
 function snapModelView(spec){
-  const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1,r=modelStudio;if(!r.camera||!r.orbit)return;
-  const target=r.orbit.target.clone(),direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
-  const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,.2,2000);
-  r.orbit.enabled=true;r.camera.up.copy(axis==='z'?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));r.orbit.object.up.copy(r.camera.up);
-  r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateMatrixWorld(true);r.camera.updateProjectionMatrix();
-  r.orbit.target.copy(target);r.orbit.update();
+  const r=modelStudio;if(spec==='center'||spec==='reset'){focusModelWorkspace();return;}const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1;if(!r.camera||!r.orbit)return;
+  const target=r.orbit.target.clone();const direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
+  const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,2,2000);
+  // Z is the world-up axis. Side views keep Z vertical; top/bottom views use Y as screen-up.
+  r.camera.up.copy(axis==='z'?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));
+  r.orbit.object.up.copy(r.camera.up);r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();
   $$('#model-studio [data-model-view]').forEach(button=>button.classList.toggle('active',button.dataset.modelView===spec));
 }
 function joinSelectedModelObjects(){
@@ -4173,7 +4402,7 @@ function separateSelectedModelGroup(){
 function setModelMode(mode){
   const r=modelStudio;r.mode=mode;r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-canvas')?.classList.toggle('model-tool-cursor',!!r.activeTool);clearModelComponentHelper();
   $$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===mode));
-  if(mode==='object'){clearModelTopologyOverlay();if(r.activeTool){r.transform.enabled=false;r.transform.detach();}else{r.transform.enabled=true;if(r.selected)r.transform.attach(r.selected);else r.transform.detach();}}
+  if(mode==='object'){clearModelTopologyOverlay();if(r.activeTool){r.transform.enabled=false;r.transform.detach();}else{r.transform.enabled=true;if(r.selected){r.transform.attach(r.selected);r.transform.setMode(({move:'translate',rotate:'rotate',scale:'scale'})[r.transformTool]||'translate');}else r.transform.detach();}}
   else{r.transform.detach();r.transform.enabled=!r.activeTool;updateModelTopologyOverlay();}
   $('#model-selection-info').textContent=mode==='object'?'Режим объекта':`Режим: ${mode} — выбери элемент прямо на модели`;
 }
@@ -4309,6 +4538,7 @@ function applyModelComponentTool(tool){
 function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale','move-plane','scale-uniform'].includes(tool)&&button.dataset.modelTool===tool));}
 function setModelTool(tool){
   const r=modelStudio,mesh=r.selected;if(!mesh&&!['cut','sculpt'].includes(tool)){toast('Сначала выбери объект','error');return;}
+  if(['cut','sculpt'].includes(tool)&&r.toolScope==='selected'&&!mesh){toast('Выбран режим «Только выбранный»: сначала выбери объект','error');return;}
   if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;
   if(r.cameraNavigation)setModelCameraNavigation(false);
   clearModelCreationPreview();r.creationPoints=[];r.creationTarget=null;
@@ -4321,13 +4551,14 @@ function setModelTool(tool){
     $('#model-sculpt-settings').classList.toggle('active',tool==='sculpt');$('#model-cut-settings').classList.toggle('active',tool==='cut');
     $('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=false;
     $('#model-canvas').classList.add('model-tool-cursor');
-    const labels={sculpt:'Рельеф: удерживай и веди по поверхности',cut:'Разрез: проведи линию через объект',bevel:'Переключись на грани и выбери грань',sharpen:'Переключись на грани и выбери грань',joint:'Переключись на точки и выбери точку — в этой позиции будет создан шарнир сгиба','create-vertex':'Нажми на поверхность для новой точки','create-edge':'Нажми две точки на поверхности для ребра','create-face':'Расставь минимум три точки, затем нажми «Завершить грань»',delete:'Нажми на компонент для удаления',duplicate:'Нажми на грань для дублирования'};
+    const labels={sculpt:'Рельеф: удерживай и веди по поверхности',cut:'Разрез: проведи линию через объект',bevel:'Переключись на грани и выбери грань',sharpen:'Переключись на грани и выбери грань',joint:'Переключись на точки и выбери точку — в этой позиции будет создан шарнир сгиба','create-vertex':'Нажми на поверхность для новой точки','create-edge':'Нажми две точки на поверхности для ребра','create-face':'Расставь минимум четыре точки, затем нажми «Завершить грань»',delete:'Нажми на компонент для удаления',duplicate:'Нажми на грань для дублирования'};
     $('#model-selection-info').textContent=labels[tool]||tool;
     if(window.matchMedia?.('(pointer: coarse)').matches)setModelMobilePanel('viewport');
     return;
   }
   r.activeTool=null;$('#model-sculpt-settings').classList.remove('active');$('#model-cut-settings').classList.remove('active');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-tool-cancel').hidden=true;
   if(['move','rotate','scale','move-plane','scale-uniform'].includes(tool)){
+    r.transformTool=['move-plane'].includes(tool)?'move':['scale-uniform'].includes(tool)?'scale':tool;
     const baseTool=tool==='move-plane'?'move':tool==='scale-uniform'?'scale':tool;
     syncModelTransformToolButtons(tool);
     if(r.mode!=='object'&&!r.componentSelection){toast('Сначала выбери точку, ребро или грань','error');return;}
@@ -4350,10 +4581,16 @@ function pasteModelObject(){if(!modelStudio.clipboard)return;const copy=cloneMod
 function cloneModelObjectDeep(object){const copy=object.clone(true);copy.traverse(child=>{if(child.isMesh){child.geometry=child.geometry?.clone?.()||child.geometry;if(Array.isArray(child.material))child.material=child.material.map(material=>material?.clone?.()||material);else child.material=child.material?.clone?.()||child.material;}});return copy;}
 function pushModelHistory(){try{const total=countModelTriangles(modelStudio.root);if(total>40000){modelStudio.history=[];modelStudio.future=[];if(!modelStudio.historyLimited){toast('Для тяжёлой модели история отмены отключена ради стабильности','info');modelStudio.historyLimited=true;}return;}modelStudio.historyLimited=false;const snapshot=modelStudio.root.children.filter(object=>!object.userData.reference).map(object=>({object:cloneModelObjectDeep(object)}));modelStudio.history.push(snapshot);modelStudio.future=[];if(modelStudio.history.length>10)modelStudio.history.shift();}catch(error){console.warn('Model history snapshot failed',error);}}
 function restoreModelHistorySnapshot(snapshot){
-  clearModelCreationPreview();modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;$('#model-canvas')?.classList.remove('model-tool-cursor');modelStudio.transform.detach();clearModelComponentHelper();clearModelTopologyOverlay();modelStudio.selectedObjects.clear();
+  clearModelCreationPreview();modelStudio.activeTool=null;modelStudio.sculptStroke=null;modelStudio.cutStroke=null;cancelAnimationFrame(modelStudio.sculptRaf);modelStudio.sculptRaf=0;modelStudio.creationPoints=[];modelStudio.creationTarget=null;$('#model-sculpt-settings')?.classList.remove('active');$('#model-cut-settings')?.classList.remove('active');$('#model-tool-cancel')?.setAttribute('hidden','');$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.toggle('active',button.dataset.modelTool===modelStudio.transformTool));modelStudio.transform.detach();clearModelComponentHelper();clearModelTopologyOverlay();modelStudio.selectedObjects.clear();
   for(const child of [...modelStudio.root.children]){if(child.userData.reference)continue;modelStudio.root.remove(child);disposeModelNode(child);}
   snapshot.forEach(item=>modelStudio.root.add(cloneModelObjectDeep(item.object)));
   modelStudio.selected=null;renderModelObjectList();renderModelFields();
+}
+function undoModelToolAction(){
+  const r=modelStudio;
+  if(r.sculptStroke||r.cutStroke){finishModelToolPointer();undoModelStudio();return;}
+  if(r.creationPoints.length){const target=r.creationTarget;r.creationPoints.pop();clearModelCreationPreview();if(target){target.updateMatrixWorld(true);r.creationPoints.forEach(point=>updateModelCreationPreview(point.clone().applyMatrix4(target.matrixWorld)));}$('#model-selection-info').textContent=`Точек осталось: ${r.creationPoints.length}`;$('#model-create-face-finish').hidden=r.creationPoints.length<4;return;}
+  undoModelStudio();
 }
 function undoModelStudio(){
   if(modelStudio.history.length<2){toast('Нет предыдущего действия для отмены');return;}

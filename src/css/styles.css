@@ -867,14 +867,146 @@ input[type="range"]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;b
 }
 
 
-/* 0.10.11 — restore axis views and keep them reachable on touch screens. */
-#model-studio .model-viewport-tools .model-viewport-views{display:flex!important;align-items:center;flex-wrap:nowrap;gap:3px;padding:3px;border:1px solid #ffffff30;border-radius:8px;background:#10171dcc;backdrop-filter:blur(8px)}
-#model-studio .model-viewport-views button{min-width:34px!important;min-height:32px!important;padding:5px 7px!important;font-size:11px!important;font-weight:700!important;letter-spacing:.02em}
-#model-studio .model-viewport-views button.active{background:var(--accent,#d6e5d5)!important;color:#111!important;border-color:#fff!important}
-#model-studio .model-viewport-tools{max-width:calc(100% - 16px);overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;scrollbar-width:thin}
+/* ZeroEngine 0.10.11 — dependable 3D sculpt/cut controls, axis views and resizable docks. */
+#model-studio .model-studio-layout{grid-template-columns:var(--model-add-w,190px) var(--model-tools-w,220px) minmax(280px,1fr) var(--model-inspector-w,270px)!important}
+#model-studio .model-add-panel,#model-studio .model-tools,#model-studio .model-inspector{position:relative}
+#model-studio .model-panel-resize{position:absolute;right:-4px;top:0;bottom:0;width:9px;z-index:50;cursor:col-resize;touch-action:none;background:transparent}
+#model-studio .model-panel-resize::after{content:"";position:absolute;left:3px;top:36%;bottom:36%;width:3px;border-radius:4px;background:#ffffff22}
+#model-studio .model-panel-resize:active::after{background:var(--accent,#a5ef4c)}
+#model-studio .model-panel-resize-left{right:auto;left:-4px}
+#model-studio .model-panel-resize-left::after{left:3px}
+#model-studio .model-quick-transform{display:flex;gap:3px;padding:3px;border:1px solid #ffffff30;border-radius:8px;background:#10171dcc}
+#model-studio .model-quick-transform button{min-width:36px;min-height:34px;padding:5px 8px;border:1px solid #ffffff22;border-radius:5px;background:#293238;color:#e9eeee;font-size:17px;cursor:pointer}
+#model-studio .model-quick-transform button.active{background:var(--accent,#a5ef4c);color:#101510;border-color:var(--accent,#a5ef4c)}
+#model-studio .model-viewport-views{display:flex!important;align-items:center;gap:4px;max-width:calc(100% - 16px);z-index:18}
+#model-studio .model-viewport-views button{min-width:34px;min-height:32px;font-size:11px;touch-action:manipulation}
+#model-studio .model-create-controls button{min-height:32px;padding:5px 8px;border-radius:6px;font-size:10px}
+#model-studio #model-tool-undo{background:#293238;color:#f0f0f0;border:1px solid #ffffff28}
+#model-studio .model-scope-control{margin:8px 0 12px;padding:9px;border:1px solid var(--border,#45494b);border-radius:8px;background:#1a2022}
+#model-studio .model-scope-control strong{display:block;font-size:11px;margin-bottom:7px}
+#model-studio .model-scope-control>div{display:flex;gap:5px}
+#model-studio .model-scope-control button{flex:1;min-width:0;min-height:34px;padding:5px 6px;border:1px solid #ffffff24;border-radius:6px;background:#30383a;color:#eee;font-size:10px}
+#model-studio .model-scope-control button.active{background:var(--accent,#a5ef4c);color:#101510;border-color:var(--accent,#a5ef4c)}
+#model-studio .model-scope-control small{display:block;margin-top:7px;color:#bdc9c0;font-size:10px;line-height:1.4}
+#model-studio .model-sculpt-settings .model-setting-buttons button{min-height:35px}
+#model-studio .model-sculpt-settings input[type=range]{min-height:24px}
+#model-studio .model-viewport-views{top:10px;right:10px;left:auto;bottom:auto}
+#model-studio .model-vector-row .numeric-stepper{grid-template-columns:20px minmax(0,1fr) 20px;gap:2px}
+#model-studio .model-vector-row .numeric-stepper .numeric-step-button{min-height:27px;padding:0;font-size:12px}
+#model-studio .model-vector-row input[type=number]{font-size:12px;text-align:center;padding:4px 1px;font-variant-numeric:tabular-nums}
+#model-studio .model-vector-row>label{min-width:0;overflow:hidden}
 @media(max-width:850px),(pointer:coarse){
-  #model-studio .model-viewport-tools{max-height:94px!important;overflow-x:auto!important;overflow-y:hidden!important;flex-wrap:nowrap!important;align-items:center!important}
-  #model-studio .model-viewport-tools .model-viewport-views{display:flex!important;flex:0 0 auto!important}
-  #model-studio .model-viewport-views button{min-width:38px!important;min-height:38px!important;font-size:12px!important}
+  #model-studio .model-studio-layout>.model-add-panel{width:min(var(--model-add-w,250px),calc(100vw - 16px))!important}
+  #model-studio .model-studio-layout>.model-tools{width:min(var(--model-tools-w,320px),calc(100vw - 16px))!important}
+  #model-studio .model-studio-layout>.model-inspector{width:min(var(--model-inspector-w,320px),calc(100vw - 16px))!important}
+  #model-studio .model-panel-resize{width:14px;right:-5px;z-index:55}
+  #model-studio .model-panel-resize-left{left:-5px;right:auto}
+  #model-studio .model-viewport-views{display:flex!important;top:92px!important;right:7px!important;left:auto!important;bottom:auto!important;gap:2px!important;padding:4px!important;max-width:calc(100vw - 14px)!important;overflow-x:auto!important;background:#10171ded!important}
+  #model-studio .model-viewport-views button{min-width:32px!important;min-height:36px!important;padding:4px!important;font-size:10px!important}
+  #model-studio .model-viewport-views span{display:none}
+  #model-studio .model-quick-transform button{min-width:38px;min-height:38px}
+  #model-studio .model-scope-control button{min-height:40px;font-size:11px}
+  #model-studio .model-create-controls{flex-wrap:wrap}
+  #model-studio .model-viewport-tools{max-width:calc(100% - 12px)!important;max-height:86px!important}
 }
-#model-studio #model-canvas{touch-action:none}
+
+/* 0.10.11 hotfix: sculpt strokes and 3D panel resizing. */
+#model-studio .model-vector-row{grid-template-columns:54px repeat(3,minmax(48px,1fr));gap:5px;overflow:visible}
+#model-studio .model-vector-row>label{min-width:0;overflow:visible;display:flex;flex-direction:column;gap:3px}
+#model-studio .model-vector-row input[type=number]{display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;padding:5px 2px;font-size:12px;font-variant-numeric:tabular-nums;text-align:center}
+#model-studio .model-panel-resize{touch-action:none;cursor:col-resize;user-select:none;-webkit-user-select:none}
+#model-studio .model-panel-resize::after{transition:background .12s ease,opacity .12s ease}
+#model-studio .model-panel-resize:hover::after,#model-studio .model-panel-resize:active::after{background:var(--accent,#a5ef4c);opacity:1}
+@media(max-width:850px),(pointer:coarse){
+  #model-studio .model-vector-row{grid-template-columns:48px repeat(3,minmax(52px,1fr));gap:4px}
+  #model-studio .model-vector-row input[type=number]{font-size:13px;min-height:36px}
+  #model-studio .model-panel-resize{min-height:44px}
+}
+
+/* ZeroEngine 0.10.12 — compact numeric steppers, touch-safe overlays and universal resize grips. */
+.numeric-stepper{grid-template-columns:24px minmax(38px,1fr) 24px!important;gap:2px!important;align-items:center!important}
+.numeric-stepper .numeric-step-button{width:24px!important;min-width:24px!important;height:27px!important;min-height:27px!important;padding:0!important;font-size:12px!important;font-weight:600!important;line-height:1!important;border-radius:4px!important}
+.numeric-stepper input[type=number]{min-width:0!important;min-height:29px!important;height:29px!important;padding:3px 3px!important;text-align:center!important;font-size:12px!important;font-variant-numeric:tabular-nums!important}
+.axis-stepper{grid-template-columns:24px minmax(38px,1fr) 24px!important;gap:2px!important}
+.axis-stepper button{width:24px!important;min-width:24px!important;height:27px!important;min-height:27px!important;padding:0!important;font-size:12px!important;line-height:1!important}
+.axis-stepper input[type=number]{min-height:29px!important;height:29px!important;padding:3px 2px!important;font-size:12px!important}
+@media(max-width:850px),(pointer:coarse){
+  .numeric-stepper{grid-template-columns:27px minmax(42px,1fr) 27px!important;gap:2px!important}
+  .numeric-stepper .numeric-step-button{width:27px!important;min-width:27px!important;height:30px!important;min-height:30px!important;font-size:13px!important}
+  .numeric-stepper input[type=number]{height:32px!important;min-height:32px!important;font-size:13px!important}
+  .axis-stepper{grid-template-columns:27px minmax(42px,1fr) 27px!important}
+  .axis-stepper button{width:27px!important;min-width:27px!important;height:30px!important;min-height:30px!important;font-size:13px!important}
+}
+
+/* Open editor drawers and dialogs must intercept input instead of passing it to the 3D canvas. */
+#modal-backdrop:not(.hidden){pointer-events:auto!important;z-index:2000!important}
+#modal-backdrop:not(.hidden),#modal-backdrop:not(.hidden) *{touch-action:pan-y;}
+#modal-content{pointer-events:auto!important;position:relative;resize:both;overflow:auto;min-width:min(280px,92vw);min-height:170px;max-width:95vw;max-height:92dvh}
+#editor-screen>.editor-layout>.hierarchy-panel.open,
+#editor-screen>.editor-layout>.inspector-panel.open{pointer-events:auto!important;z-index:80!important;isolation:isolate}
+#editor-screen>.editor-layout>.hierarchy-panel.open *,
+#editor-screen>.editor-layout>.inspector-panel.open *{pointer-events:auto}
+#workbench-overlay:not(.hidden){pointer-events:auto!important;z-index:2100!important;isolation:isolate}
+#model-studio:not(.hidden) .model-add-panel.model-drawer-open,
+#model-studio:not(.hidden) .model-tools.model-drawer-open,
+#model-studio:not(.hidden) .model-inspector.model-drawer-open{pointer-events:auto!important;z-index:100!important;isolation:isolate}
+
+.universal-resize-handle{position:absolute;right:3px;bottom:3px;z-index:120;width:20px;height:20px;border:1px solid #ffffff38;border-radius:5px;background:linear-gradient(135deg,transparent 0 42%,#ffffff18 43% 50%,transparent 51% 62%,#ffffff32 63% 70%,transparent 71%),#12191dcc;box-shadow:0 1px 5px #0008;cursor:nwse-resize;touch-action:none;user-select:none;-webkit-user-select:none;pointer-events:auto}
+.universal-resize-handle::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid #d6e0e0;border-bottom:2px solid #d6e0e0;opacity:.85}
+.universal-resize-handle:active{background:var(--accent,#fff);border-color:#fff}
+@media(max-width:850px),(pointer:coarse){.universal-resize-handle{width:27px;height:27px;right:4px;bottom:4px;z-index:150}.universal-resize-handle::after{width:11px;height:11px;right:4px;bottom:4px}}
+
+.tree-item{position:relative;padding-right:32px}
+.tree-lock-button{flex:0 0 24px;width:24px;height:23px;min-width:24px;border:1px solid transparent;border-radius:4px;background:transparent;color:#718087;font-size:11px;line-height:1;padding:0;display:grid;place-items:center;opacity:.55}
+.tree-item:hover .tree-lock-button,.tree-lock-button.active{opacity:1}
+.tree-lock-button.active{background:#4a3830;border-color:#8a6855;color:#ffcf9b}
+.tree-item.editor-locked .tree-name{opacity:.65;text-decoration:line-through;text-decoration-color:#806a5a}
+
+/* ZeroEngine 0.10.12 — resize every major editor pane, compact steppers and block click-through. */
+:root{--ui-palette-w:190px;--ui-props-w:250px}
+#workbench-body .ui-designer-grid{grid-template-columns:var(--ui-palette-w,190px) minmax(0,1fr) var(--ui-props-w,250px)!important}
+#workbench-body .ui-palette,#workbench-body .ui-property-panel{position:relative;min-width:0;min-height:0}
+#workbench-body .ui-design-stage{position:relative;min-width:120px;min-height:90px}
+#modal-content{resize:both;overflow:auto;min-width:min(280px,92vw);min-height:170px;max-width:95vw;max-height:92dvh;pointer-events:auto}
+#modal-backdrop:not(.hidden){pointer-events:auto!important;z-index:2000!important}
+#modal-backdrop:not(.hidden) #modal-content{pointer-events:auto!important;isolation:isolate}
+#workbench-overlay:not(.hidden){pointer-events:auto!important;z-index:900!important;isolation:isolate}
+#editor-screen>.editor-layout>.hierarchy-panel.open,
+#editor-screen>.editor-layout>.inspector-panel.open{pointer-events:auto!important;z-index:80!important;isolation:isolate}
+#editor-screen>.editor-layout>.hierarchy-panel.open *,
+#editor-screen>.editor-layout>.inspector-panel.open *{pointer-events:auto}
+#model-studio:not(.hidden) .model-add-panel.model-drawer-open,
+#model-studio:not(.hidden) .model-tools.model-drawer-open,
+#model-studio:not(.hidden) .model-inspector.model-drawer-open{pointer-events:auto!important;z-index:100!important;isolation:isolate}
+.universal-resize-handle{position:absolute;right:3px;bottom:3px;z-index:120;width:20px;height:20px;border:1px solid #ffffff38;border-radius:5px;background:linear-gradient(135deg,transparent 0 42%,#ffffff18 43% 50%,transparent 51% 62%,#ffffff32 63% 70%,transparent 71%),#12191dcc;box-shadow:0 1px 5px #0008;cursor:nwse-resize;touch-action:none;user-select:none;-webkit-user-select:none;pointer-events:auto}
+.universal-resize-handle::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid #d6e0e0;border-bottom:2px solid #d6e0e0;opacity:.85}
+.universal-resize-handle:active{background:var(--accent,#fff);border-color:#fff}
+@media(max-width:900px),(pointer:coarse){
+  #workbench-body .ui-designer-grid{grid-template-columns:var(--ui-palette-w,115px) minmax(0,1fr) var(--ui-props-w,250px)!important}
+  .universal-resize-handle{width:27px;height:27px;right:4px;bottom:4px;z-index:150}
+  .universal-resize-handle::after{width:11px;height:11px;right:4px;bottom:4px}
+  #workbench-body .workbench-sidebar,#workbench-body .workbench-properties,
+  #workbench-body .ui-palette,#workbench-body .ui-property-panel{overscroll-behavior:contain;max-width:calc(100vw - 12px)}
+  #workbench-body .ui-design-stage{max-width:none!important;max-height:none!important}
+}
+
+/* ZeroEngine 0.10.13 — final touch sizing and modal stacking fixes. */
+#workbench-overlay:not(.hidden){z-index:900!important}
+#modal-backdrop:not(.hidden){z-index:2000!important}
+.numeric-stepper{grid-template-columns:24px minmax(38px,1fr) 24px!important;gap:2px!important;align-items:center!important}
+.numeric-stepper .numeric-step-button{width:24px!important;min-width:24px!important;height:27px!important;min-height:27px!important;padding:0!important;font-size:12px!important;font-weight:600!important;line-height:1!important;border-radius:4px!important}
+.numeric-stepper input[type=number]{min-width:0!important;min-height:29px!important;height:29px!important;padding:3px!important;text-align:center!important;font-size:12px!important;font-variant-numeric:tabular-nums!important}
+.axis-stepper{grid-template-columns:24px minmax(38px,1fr) 24px!important;gap:2px!important}
+.axis-stepper button{width:24px!important;min-width:24px!important;height:27px!important;min-height:27px!important;padding:0!important;font-size:12px!important;line-height:1!important}
+.axis-stepper input[type=number]{min-width:0!important;width:100%!important;min-height:29px!important;height:29px!important;padding:3px 2px!important;font-size:12px!important}
+#model-studio .model-viewport-tools,#model-studio .model-drawer-toolbar{pointer-events:auto}
+@media(max-width:900px),(pointer:coarse){
+  .numeric-stepper{grid-template-columns:27px minmax(42px,1fr) 27px!important}
+  .numeric-stepper .numeric-step-button{width:27px!important;min-width:27px!important;height:30px!important;min-height:30px!important;font-size:13px!important}
+  .numeric-stepper input[type=number]{height:32px!important;min-height:32px!important;font-size:13px!important}
+  .axis-stepper{grid-template-columns:27px minmax(42px,1fr) 27px!important}
+  .axis-stepper button{width:27px!important;min-width:27px!important;height:30px!important;min-height:30px!important;font-size:13px!important}
+  .axis-stepper input[type=number]{height:32px!important;min-height:32px!important;font-size:13px!important}
+}
+#viewport-wrap .viewport-hud,#viewport-wrap .viewport-center-hint,#viewport-wrap .viewport-drop-overlay{pointer-events:auto!important;touch-action:pan-y}
+#workbench-body .ui-design-stage{flex-shrink:0!important}
