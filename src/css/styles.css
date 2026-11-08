@@ -865,3 +865,16 @@ input[type="range"]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;b
   #model-studio .model-drawer-toolbar button{min-height:40px!important;min-width:0!important;padding:6px 9px!important;border:1px solid #ffffff25!important;border-radius:7px!important;background:#252d33!important;color:#fff!important;font-size:10px!important;white-space:nowrap!important}
   #model-studio .model-drawer-toolbar button.active{background:var(--accent,#dce6dc)!important;color:#101413!important;border-color:#fff!important}
 }
+
+
+/* 0.10.11 — restore axis views and keep them reachable on touch screens. */
+#model-studio .model-viewport-tools .model-viewport-views{display:flex!important;align-items:center;flex-wrap:nowrap;gap:3px;padding:3px;border:1px solid #ffffff30;border-radius:8px;background:#10171dcc;backdrop-filter:blur(8px)}
+#model-studio .model-viewport-views button{min-width:34px!important;min-height:32px!important;padding:5px 7px!important;font-size:11px!important;font-weight:700!important;letter-spacing:.02em}
+#model-studio .model-viewport-views button.active{background:var(--accent,#d6e5d5)!important;color:#111!important;border-color:#fff!important}
+#model-studio .model-viewport-tools{max-width:calc(100% - 16px);overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;scrollbar-width:thin}
+@media(max-width:850px),(pointer:coarse){
+  #model-studio .model-viewport-tools{max-height:94px!important;overflow-x:auto!important;overflow-y:hidden!important;flex-wrap:nowrap!important;align-items:center!important}
+  #model-studio .model-viewport-tools .model-viewport-views{display:flex!important;flex:0 0 auto!important}
+  #model-studio .model-viewport-views button{min-width:38px!important;min-height:38px!important;font-size:12px!important}
+}
+#model-studio #model-canvas{touch-action:none}

@@ -207,3 +207,15 @@ Some geometric operations (especially caps for highly concave or non-manifold im
 - Range controls use a full-width track with visible end stops, including WebKit and Firefox styling.
 - The editor keeps the common panel workspace on touch and desktop devices; ZeroBox and UI Designer remain dedicated workbenches.
 - On touch devices, Model Studio panels now open independently around the same 3D viewport instead of behaving as mutually exclusive tabs. Assets stay on the left, tools at the upper right and properties at the lower right.
+
+
+## 0.10.11 — Model Studio hotfix
+
+- Restored six orthographic camera presets: +X, −X, +Y, −Y, +Z and −Z.
+- Reworked sculpting to deform the selected mesh in world-space brush coordinates, with a practical default radius/strength range and a clear press/hold stroke.
+- Reworked line cutting around a screen-space stroke plane, so the stroke can start/end slightly outside the visible mesh and still cut through it.
+- Reworked 2D preset cuts to use the same screen-line cutter as manual cuts.
+- Rebuilt split geometry with per-side caps triangulated from the actual intersection contour.
+- Disabled orbit controls while sculpting/cutting and restored them after pointer release.
+
+The editor remains an early-access browser engine; verify final interaction on the target Android device and desktop browser.

@@ -100,7 +100,7 @@ let activeEditorView = 'perspective';
 let workspaceLayout = { hierarchy:true, inspector:true, assets:true, swapped:false, assetsTop:false, left:220, right:286, dock:222, cameraNavigation:false };
 let numericStepperObserver = null;
 let runtimeParticleSystems = new Map();
-let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, cameraNavigation:false, grid:null, sculptHelper:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false, sculptSettings:{radius:2.5,strength:.35,shape:'circle',action:'raise'}, sculptStroke:null, sculptRaf:0, cutStroke:null, cutSettings:{count:3,spacing:.28,angle:90,offset:0} };
+let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, cameraNavigation:false, grid:null, sculptHelper:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false, sculptSettings:{radius:.65,strength:1.6,shape:'circle',action:'raise'}, sculptStroke:null, sculptRaf:0, cutStroke:null, cutSettings:{count:3,spacing:.28,angle:90,offset:0} };
 let deviceSettings = { profile:'auto', width:window.innerWidth||1280, height:window.innerHeight||720 };
 const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey','Circle','Ring','Pyramid','Hexagonal Prism','Octahedron','Dodecahedron','Tetrahedron','Tube','Spring','Wedge'];
 let currentLanguage = 'ru';
@@ -2538,14 +2538,13 @@ function bindUI() {
   $('#model-create-face-finish').addEventListener('click',finishModelFaceCreation);
   $('#model-tool-cancel').addEventListener('click',cancelModelActiveTool);
   $('#model-sculpt-radius').addEventListener('input',e=>{modelStudio.sculptSettings.radius=Number(e.target.value);$('#model-sculpt-radius-value').textContent=Number(e.target.value).toFixed(2);if(modelStudio.sculptStroke)updateModelSculptCursor(modelStudio.sculptStroke.x,modelStudio.sculptStroke.y);});
-  $('#model-sculpt-strength').addEventListener('input',e=>{modelStudio.sculptSettings.strength=Number(e.target.value);$('#model-sculpt-strength-value').textContent=Number(e.target.value).toFixed(3);});
+  $('#model-sculpt-strength').addEventListener('input',e=>{modelStudio.sculptSettings.strength=Number(e.target.value);$('#model-sculpt-strength-value').textContent=Number(e.target.value).toFixed(2);});
   $$('[data-sculpt-shape]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.shape=b.dataset.sculptShape;$$('[data-sculpt-shape]').forEach(x=>x.classList.toggle('active',x===b));}));
   $$('[data-sculpt-action]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.action=b.dataset.sculptAction;$$('[data-sculpt-action]').forEach(x=>x.classList.toggle('active',x===b));}));
   $('#model-cut-open-2d').addEventListener('click',openModelCut2DEditor);
   $('#model-camera-orbit-toggle')?.addEventListener('click',()=>setModelCameraNavigation(!modelStudio.cameraNavigation));
   $('#model-grid-toggle')?.addEventListener('click',()=>{if(!modelStudio.grid)return;modelStudio.grid.visible=!modelStudio.grid.visible;$('#model-grid-toggle').classList.toggle('active',modelStudio.grid.visible);});
   $$('#model-studio [data-model-mirror]').forEach(b=>b.addEventListener('click',()=>mirrorModelObject(Number(b.dataset.modelMirror))));
-  $$('#model-studio [data-model-view]').forEach(b=>b.addEventListener('click',()=>snapModelView(b.dataset.modelView)));
   $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>({n,i})).filter(item=>item.i!==2).map(({n,i})=>`<button type="button" data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇','♟','○','◌','⌂','⬡','◇','⬟','△','∿','⟲','◩'][i]} ${n}</button>`).join('');
   $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
   $('#close-workbench').addEventListener('click', closeWorkbench);
@@ -3808,22 +3807,32 @@ function ensureModelSculptResolution(target){
 }
 function applyModelSculptAt(clientX,clientY){
   const r=modelStudio,hit=getModelHitAt(clientX,clientY);if(!hit?.object?.geometry?.attributes?.position)return false;
-  const target=hit.object;ensureModelSculptResolution(target);const geometry=target.geometry,position=geometry.attributes.position;
-  const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
-  const normal=hit.face?.normal?.clone?.()||new THREE.Vector3(0,0,1);normal.normalize();
-  let tangent=new THREE.Vector3(0,0,1);if(Math.abs(normal.dot(tangent))>.92)tangent.set(0,1,0);
-  const axisU=tangent.cross(normal).normalize(),axisV=normal.clone().cross(axisU).normalize();
-  const cfg=r.sculptSettings,radius=Math.max(.01,Number(cfg.radius)||2.5),sign=cfg.action==='dent'?-1:1,amount=Math.min(.6,(Number(cfg.strength)||.35)*.12)*sign;
+  const target=hit.object;ensureModelSculptResolution(target);target.updateMatrixWorld(true);
+  const geometry=target.geometry,position=geometry.attributes.position,inverse=target.matrixWorld.clone().invert();
+  const normalMatrix=new THREE.Matrix3().getNormalMatrix(target.matrixWorld);
+  const worldNormal=(hit.face?.normal?.clone?.()||new THREE.Vector3(0,0,1)).applyMatrix3(normalMatrix).normalize();
+  if(worldNormal.lengthSq()<1e-8)return false;
+  const cameraRight=new THREE.Vector3().setFromMatrixColumn(r.camera.matrixWorld,0);
+  let axisU=cameraRight.addScaledVector(worldNormal,-cameraRight.dot(worldNormal)).normalize();
+  if(axisU.lengthSq()<1e-8){axisU.set(1,0,0).addScaledVector(worldNormal,-worldNormal.x).normalize();}
+  const axisV=worldNormal.clone().cross(axisU).normalize();
+  const cfg=r.sculptSettings,radius=Math.max(.03,Number(cfg.radius)||.65),sign=cfg.action==='dent'?-1:1;
+  const amount=Math.min(.8,Math.max(.001,Number(cfg.strength)||1.6)*.045)*sign;
   let changed=false;
   for(let i=0;i<position.count;i++){
-    const vertex=new THREE.Vector3().fromBufferAttribute(position,i),delta=vertex.clone().sub(localHit);
-    const u=delta.dot(axisU),v=delta.dot(axisV),normalDistance=Math.abs(delta.dot(normal));
-    if(normalDistance>radius*.8||!modelBrushContains(u,v,radius,cfg.shape))continue;
+    const localVertex=new THREE.Vector3().fromBufferAttribute(position,i),worldVertex=localVertex.clone().applyMatrix4(target.matrixWorld),delta=worldVertex.clone().sub(hit.point);
+    const signedDepth=delta.dot(worldNormal),normalDistance=Math.abs(signedDepth);
+    // Only deform the surface patch around the hit; do not pull the back side of a thin object.
+    if(normalDistance>Math.max(.035,radius*.28))continue;
+    const tangent=delta.addScaledVector(worldNormal,-signedDepth),u=tangent.dot(axisU),v=tangent.dot(axisV);
+    if(!modelBrushContains(u,v,radius,cfg.shape))continue;
     const radial=cfg.shape==='square'?Math.max(Math.abs(u),Math.abs(v))/radius:Math.sqrt(u*u+v*v)/radius;
-    const falloff=Math.pow(Math.max(0,1-radial),2);if(falloff<=0)continue;
-    vertex.addScaledVector(normal,amount*falloff);position.setXYZ(i,vertex.x,vertex.y,vertex.z);changed=true;
+    const spatial=Math.max(0,1-radial),depthFalloff=Math.max(0,1-normalDistance/Math.max(.035,radius*.28));
+    const falloff=spatial*spatial*(.65+.35*depthFalloff);if(falloff<=0)continue;
+    const movedWorld=worldVertex.clone().addScaledVector(worldNormal,amount*falloff);
+    const movedLocal=movedWorld.applyMatrix4(inverse);position.setXYZ(i,movedLocal.x,movedLocal.y,movedLocal.z);changed=true;
   }
-  if(changed){position.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();}
+  if(changed){position.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();target.updateMatrixWorld(true);}
   return changed;
 }
 function updateModelSculptCursor(clientX,clientY){
@@ -3835,7 +3844,8 @@ function updateModelSculptCursor(clientX,clientY){
 function startModelSculptStroke(event){
   const r=modelStudio;if(!r.selected){toast('Сначала выбери объект для скульптинга','error');return;}
   if(event.button!==0&&event.pointerType==='mouse')return;
-  event.preventDefault();event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture?.(event.pointerId);
+  r.orbit.enabled=false;
   r.sculptStroke={pointerId:event.pointerId,x:event.clientX,y:event.clientY,lastStamp:0,changed:false};
   updateModelSculptCursor(event.clientX,event.clientY);r.sculptStroke.changed=applyModelSculptAt(event.clientX,event.clientY);
   cancelAnimationFrame(r.sculptRaf);
@@ -3845,9 +3855,9 @@ function startModelSculptStroke(event){
 function startModelCutStroke(event){
   const r=modelStudio;if(!r.selected){toast('Сначала выбери объект для разреза','error');return;}
   if(event.button!==0&&event.pointerType==='mouse')return;
-  event.preventDefault();event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture?.(event.pointerId);r.orbit.enabled=false;
   r.cutStroke={pointerId:event.pointerId,points:[{x:event.clientX,y:event.clientY}]};
-  $('#model-cut-path').setAttribute('d',`M ${event.clientX-event.currentTarget.getBoundingClientRect().left} ${event.clientY-event.currentTarget.getBoundingClientRect().top}`);
+  const rect=$('#model-canvas').getBoundingClientRect();$('#model-cut-path').setAttribute('d',`M ${event.clientX-rect.left} ${event.clientY-rect.top}`);
 }
 function handleModelToolPointerMove(event){
   const r=modelStudio;
@@ -3861,80 +3871,131 @@ function handleModelToolPointerMove(event){
 function finishModelToolPointer(event){
   const r=modelStudio;
   if(r.sculptStroke&&(!event||r.sculptStroke.pointerId===event.pointerId)){
-    const stroke=r.sculptStroke;r.sculptStroke=null;cancelAnimationFrame(r.sculptRaf);r.sculptRaf=0;if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;if(stroke.changed){if(r.topologyOverlay)updateModelTopologyOverlay();pushModelHistory();$('#model-selection-info').textContent='Рельеф изменён';}
+    const stroke=r.sculptStroke;r.sculptStroke=null;cancelAnimationFrame(r.sculptRaf);r.sculptRaf=0;r.orbit.enabled=true;
+    if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;
+    if(stroke.changed){if(r.topologyOverlay)updateModelTopologyOverlay();pushModelHistory();$('#model-selection-info').textContent='Рельеф изменён';}
+    else toast('Кисть не попала по поверхности. Наведи центр круга точно на модель','error');
     return;
   }
   if(r.cutStroke&&(!event||r.cutStroke.pointerId===event.pointerId)){
-    const stroke=r.cutStroke;r.cutStroke=null;$('#model-cut-path').setAttribute('d','');
+    const stroke=r.cutStroke;r.cutStroke=null;r.orbit.enabled=true;$('#model-cut-path').setAttribute('d','');
     if(stroke.points.length>=2)cutModelAlongScreenStroke(stroke.points);else toast('Проведи линию по поверхности объекта');
   }
 }
 function interpolateModelAttribute(a,b,t){const row={};for(const name of Object.keys(a))row[name]=a[name].map((v,i)=>v+(b[name][i]-v)*t);return row;}
 function splitModelMeshByPlane(target,planePointWorld,planeNormalWorld){
-  const original=target.geometry;if(!original?.attributes?.position)return null;target.updateMatrixWorld(true);
-  const source=original.index?original.toNonIndexed():original.clone();const attrNames=Object.keys(source.attributes),position=source.attributes.position;
-  const sides=[{data:Object.fromEntries(attrNames.map(n=>[n,[]])),groups:[]},{data:Object.fromEntries(attrNames.map(n=>[n,[]])),groups:[]}];
-  let cutLocal=[];const read=i=>Object.fromEntries(attrNames.map(name=>{const a=source.attributes[name];return [name,Array.from({length:a.itemSize},(_,k)=>a.array[i*a.itemSize+k])];}));
-  const rowLocalWorld=row=>new THREE.Vector3(...row.position).applyMatrix4(target.matrixWorld);
-  const dist=row=>rowLocalWorld(row).sub(planePointWorld).dot(planeNormalWorld);
-  const append=(side,tri,materialIndex)=>{const bucket=sides[side],start=bucket.data.position.length/3;tri.forEach(row=>attrNames.forEach(name=>bucket.data[name].push(...row[name])));const prev=bucket.groups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else bucket.groups.push({start,count:3,materialIndex});};
-  const clip=(tri,side)=>{
+  const original=target?.geometry;if(!original?.attributes?.position)return null;
+  target.updateMatrixWorld(true);const source=original.index?original.toNonIndexed():original.clone();
+  const attrNames=Object.keys(source.attributes),position=source.attributes.position,triangleCount=Math.floor(position.count/3);
+  if(!triangleCount){source.dispose();return null;}
+  const normalWorld=planeNormalWorld.clone().normalize();if(normalWorld.lengthSq()<1e-8){source.dispose();return null;}
+  const distance=row=>new THREE.Vector3(...row.position).applyMatrix4(target.matrixWorld).sub(planePointWorld).dot(normalWorld);
+  const read=index=>Object.fromEntries(attrNames.map(name=>{const a=source.attributes[name];return [name,Array.from({length:a.itemSize},(_,k)=>a.array[index*a.itemSize+k])];}));
+  const interpolate=(a,b,t)=>interpolateModelAttribute(a,b,t);
+  const sides=[0,1].map(()=>({data:Object.fromEntries(attrNames.map(name=>[name,[]])),groups:[]}));
+  const intersections=new Map();
+  const pointKey=row=>modelPointKey(new THREE.Vector3(...row.position));
+  const addIntersection=row=>intersections.set(pointKey(row),row);
+  const appendTriangle=(side,tri,materialIndex)=>{
+    const bucket=sides[side],start=bucket.data.position.length/3;
+    tri.forEach(row=>attrNames.forEach(name=>bucket.data[name].push(...row[name])));
+    const prev=bucket.groups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else bucket.groups.push({start,count:3,materialIndex});
+  };
+  const clipTriangle=(tri,distances,side)=>{
     const sign=side===0?1:-1,out=[];
-    for(let i=0;i<tri.length;i++){
-      const a=tri[i],b=tri[(i+1)%tri.length],da=dist(a)*sign,db=dist(b)*sign,insideA=da>=-1e-7,insideB=db>=-1e-7;
+    for(let i=0;i<3;i++){
+      const a=tri[i],b=tri[(i+1)%3],da=distances[i]*sign,db=distances[(i+1)%3]*sign;
+      const insideA=da>=-1e-7,insideB=db>=-1e-7;
       if(insideA&&insideB)out.push(b);
-      else if(insideA&&!insideB){const t=da/(da-db),v=interpolateModelAttribute(a,b,t);out.push(v);cutLocal.push(new THREE.Vector3(...v.position));}
-      else if(!insideA&&insideB){const t=da/(da-db),v=interpolateModelAttribute(a,b,t);out.push(v,b);cutLocal.push(new THREE.Vector3(...v.position));}
+      else if(insideA&&!insideB){const t=da/(da-db),row=interpolate(a,b,t);out.push(row);addIntersection(row);}
+      else if(!insideA&&insideB){const t=da/(da-db),row=interpolate(a,b,t);out.push(row,b);addIntersection(row);}
+      if(Math.abs(da)<=1e-7)addIntersection(a);
     }
     return out;
   };
-  const total=Math.floor(position.count/3);
-  for(let face=0;face<total;face++){
-    const tri=[read(face*3),read(face*3+1),read(face*3+2)],materialIndex=modelFaceMaterialIndex(source,face);
-    const da=dist(tri[0]),db=dist(tri[1]),dc=dist(tri[2]);
+  for(let face=0;face<triangleCount;face++){
+    const tri=[read(face*3),read(face*3+1),read(face*3+2)],distances=tri.map(distance),materialIndex=modelFaceMaterialIndex(source,face);
+    // Capture exact on-plane vertices as well as strict edge crossings.
+    for(let e=0;e<3;e++){
+      const a=tri[e],b=tri[(e+1)%3],da=distances[e],db=distances[(e+1)%3];
+      if(Math.abs(da)<=1e-7)addIntersection(a);
+      if((da<-1e-7&&db>1e-7)||(da>1e-7&&db<-1e-7))addIntersection(interpolate(a,b,da/(da-db)));
+    }
     for(let side=0;side<2;side++){
-      const poly=clip(tri,side);if(poly.length<3)continue;
-      for(let i=1;i<poly.length-1;i++)append(side,[poly[0],poly[i],poly[i+1]],materialIndex);
+      const poly=clipTriangle(tri,distances,side);if(poly.length<3)continue;
+      for(let i=1;i<poly.length-1;i++)appendTriangle(side,[poly[0],poly[i],poly[i+1]],materialIndex);
     }
   }
-  source.dispose();
-  const unique=new Map();cutLocal.forEach(p=>unique.set(modelPointKey(p),p));const ring=[...unique.values()];
-  if(sides.some(side=>side.data.position.length===0)||ring.length<3){return null;}
-  const parent=target.parent||modelStudio.root,meshes=[];
+  let ringRows=[...intersections.values()],ring=ringRows.map(row=>new THREE.Vector3(...row.position));
+  if(sides.some(side=>side.data.position.length===0)||ring.length<3){source.dispose();return null;}
+  let worldRing=ring.map(point=>point.clone().applyMatrix4(target.matrixWorld));
+  const center=worldRing.reduce((sum,p)=>sum.add(p),new THREE.Vector3()).multiplyScalar(1/worldRing.length);
+  let worldU=new THREE.Vector3(1,0,0);if(Math.abs(worldU.dot(normalWorld))>.92)worldU.set(0,1,0);
+  worldU.addScaledVector(normalWorld,-worldU.dot(normalWorld)).normalize();const worldV=normalWorld.clone().cross(worldU).normalize();
+  const angles=worldRing.map(point=>{const delta=point.clone().sub(center);return Math.atan2(delta.dot(worldV),delta.dot(worldU));});
+  const order=angles.map((angle,index)=>({angle,index})).sort((a,b)=>a.angle-b.angle).map(item=>item.index);
+  ringRows=order.map(index=>ringRows[index]);ring=order.map(index=>ring[index]);worldRing=order.map(index=>worldRing[index]);
+  const projected=worldRing.map(point=>{const delta=point.clone().sub(center);return new THREE.Vector2(delta.dot(worldU),delta.dot(worldV));});
+  const triangles=THREE.ShapeUtils.triangulateShape(projected,[]);if(!triangles.length){source.dispose();return null;}
+  const minX=Math.min(...projected.map(p=>p.x)),maxX=Math.max(...projected.map(p=>p.x)),minY=Math.min(...projected.map(p=>p.y)),maxY=Math.max(...projected.map(p=>p.y));
+  const uvAt=p=>[(p.x-minX)/Math.max(1e-6,maxX-minX),(p.y-minY)/Math.max(1e-6,maxY-minY)];
+  const normalMatrix=new THREE.Matrix3().getNormalMatrix(target.matrixWorld),localNormal=normalWorld.clone().applyMatrix3(normalMatrix.clone().invert()).normalize();
+  for(let side=0;side<2;side++){
+    const desired=localNormal.clone().multiplyScalar(side===0?-1:1);
+    for(const indices of triangles){
+      const ordered=[...indices],p0=ring[ordered[0]],p1=ring[ordered[1]],p2=ring[ordered[2]],cross=p1.clone().sub(p0).cross(p2.clone().sub(p0));if(cross.dot(desired)<0)[ordered[1],ordered[2]]=[ordered[2],ordered[1]];
+      const rows=ordered.map(index=>{
+        const base=ringRows[index],uv=uvAt(projected[index]);const row={};
+        attrNames.forEach(name=>{
+          const itemSize=source.attributes[name]?.itemSize||3;
+          if(name==='position')row[name]=ring[index].toArray();
+          else if(name==='normal')row[name]=desired.toArray().slice(0,itemSize);
+          else if(name==='uv')row[name]=itemSize===1?[uv[0]]:itemSize===2?uv:[...uv,...Array(Math.max(0,itemSize-2)).fill(0)];
+          else if(base?.[name])row[name]=base[name].slice(0,itemSize);
+          else row[name]=Array(itemSize).fill(0);
+        });return row;
+      });
+      appendTriangle(side,rows,0);
+    }
+  }
+  const totalAdded=sides.reduce((sum,side)=>sum+side.data.position.length/3,0)/3;
+  if(countModelTriangles(modelStudio.root)+totalAdded>MAX_MODEL_TRIANGLES){source.dispose();toast('Разрез создаст слишком много полигонов. Уменьши сложность модели','error');return null;}
+  const parent=target.parent||modelStudio.root,materials=Array.isArray(target.material)?target.material.map(m=>m.clone()):target.material.clone(),pieces=[];
   for(let side=0;side<2;side++){
     const bucket=sides[side],geometry=new THREE.BufferGeometry();
     attrNames.forEach(name=>{const old=original.attributes[name],Typed=old.array.constructor;geometry.setAttribute(name,new THREE.BufferAttribute(new Typed(bucket.data[name]),old.itemSize,old.normalized));});
-    bucket.groups.forEach(g=>geometry.addGroup(g.start,g.count,g.materialIndex));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
-    const materials=Array.isArray(target.material)?target.material.map(m=>m.clone()):target.material.clone();
-    const mesh=new THREE.Mesh(geometry,materials);mesh.name=`${target.name||'Object'}_${side===0?'A':'B'}`;mesh.position.copy(target.position);mesh.quaternion.copy(target.quaternion);mesh.scale.copy(target.scale);mesh.castShadow=target.castShadow;mesh.receiveShadow=target.receiveShadow;mesh.userData={...target.userData};parent.add(mesh);meshes.push(mesh);
+    bucket.groups.forEach(group=>geometry.addGroup(group.start,group.count,group.materialIndex));geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+    const material=Array.isArray(materials)?materials.map(m=>m.clone()):materials.clone();
+    const piece=new THREE.Mesh(geometry,material);piece.name=`${target.name||'Object'}_${side===0?'A':'B'}`;piece.position.copy(target.position);piece.quaternion.copy(target.quaternion);piece.scale.copy(target.scale);piece.castShadow=target.castShadow;piece.receiveShadow=target.receiveShadow;piece.userData={...target.userData,sculptPrepared:false};parent.add(piece);pieces.push(piece);
   }
-  // Close the cut for solid primitives with a simple planar fan cap.
-  target.updateMatrixWorld(true);const worldRing=ring.map(p=>p.clone().applyMatrix4(target.matrixWorld));const center=worldRing.reduce((a,b)=>a.add(b),new THREE.Vector3()).multiplyScalar(1/worldRing.length);
-  let u=new THREE.Vector3(1,0,0);if(Math.abs(u.dot(planeNormalWorld))>.9)u.set(0,1,0);u.addScaledVector(planeNormalWorld,-u.dot(planeNormalWorld)).normalize();const v=planeNormalWorld.clone().cross(u).normalize();
-  const ordered=ring.map((p,i)=>({p,w:worldRing[i],angle:Math.atan2(worldRing[i].clone().sub(center).dot(v),worldRing[i].clone().sub(center).dot(u))})).sort((a,b)=>a.angle-b.angle).map(item=>item.p);
-  const localCenter=ordered.reduce((a,b)=>a.add(b),new THREE.Vector3()).multiplyScalar(1/ordered.length);
-  const capTris=[];for(let i=0;i<ordered.length;i++){const j=(i+1)%ordered.length;capTris.push(side=>side===0?[localCenter,ordered[j],ordered[i]]:[localCenter,ordered[i],ordered[j]]);}
-  capTris.forEach(factory=>{makeModelTriangleMesh(meshes[0],[factory(0)],'Cut_Cap');makeModelTriangleMesh(meshes[1],[factory(1)],'Cut_Cap');});
-  parent.updateMatrixWorld(true);parent.remove(target);
-  // Expose cut fragments as independent workspace objects even when the source mesh was nested in an imported model group.
-  if(parent!==modelStudio.root){modelStudio.root.updateMatrixWorld(true);meshes.forEach(piece=>modelStudio.root.attach(piece));}
-  original.dispose();for(const material of Array.isArray(target.material)?target.material:[target.material])material?.dispose?.();
-  return meshes;
+  if(Array.isArray(materials))materials.forEach(m=>m.dispose?.());else materials.dispose?.();
+  parent.remove(target);original.dispose();
+  // Preserve world transforms for pieces extracted from nested imported-model groups.
+  if(parent!==modelStudio.root){modelStudio.root.updateMatrixWorld(true);pieces.forEach(piece=>modelStudio.root.attach(piece));}
+  source.dispose();return pieces;
+}
+function cutMeshAlongScreenSegment(target,start,end){
+  const r=modelStudio,canvas=$('#model-canvas'),rect=canvas.getBoundingClientRect();if(!target||!rect.width||!rect.height)return null;
+  const dx=end.x-start.x,dy=end.y-start.y;if(Math.hypot(dx,dy)<4)return null;
+  let hit=null;const steps=48;
+  for(let i=0;i<=steps&&!hit;i++){
+    const t=i/steps,x=start.x+dx*t,y=start.y+dy*t;hit=getModelHitAt(x,y,[target]);
+  }
+  if(!hit)return null;
+  r.camera.updateMatrixWorld(true);
+  const right=new THREE.Vector3().setFromMatrixColumn(r.camera.matrixWorld,0).normalize(),up=new THREE.Vector3().setFromMatrixColumn(r.camera.matrixWorld,1).normalize(),view=r.camera.getWorldDirection(new THREE.Vector3()).normalize();
+  const strokeDirection=right.multiplyScalar(dx).addScaledVector(up,-dy).normalize(),normal=strokeDirection.cross(view).normalize();
+  if(normal.lengthSq()<1e-8)return null;
+  return splitModelMeshByPlane(target,hit.point,normal);
 }
 function cutModelAlongScreenStroke(screenPoints){
   const r=modelStudio,targets=selectedModelMeshes();if(!targets.length){toast('Выбери модель перед разрезом','error');return;}
-  const fragments=[];let cuts=0,firstCutFragment=null;
-  for(const target of targets){
-    const hits=[];for(const point of screenPoints){const hit=getModelHitAt(point.x,point.y,[target]);if(hit)hits.push(hit.point.clone());}
-    if(hits.length<2)continue;
-    let pair=[hits[0],hits.at(-1)],best=pair[0].distanceTo(pair[1]);
-    for(let i=0;i<hits.length;i++)for(let j=i+1;j<hits.length;j++){const d=hits[i].distanceTo(hits[j]);if(d>best){best=d;pair=[hits[i],hits[j]];}}
-    const line=pair[1].clone().sub(pair[0]);if(line.length()<.015)continue;
-    const view=r.camera.getWorldDirection(new THREE.Vector3()),normal=line.cross(view).normalize();if(normal.lengthSq()<.0001)continue;
-    const result=splitModelMeshByPlane(target,pair[0],normal);if(result){fragments.push(...result);cuts++;}
-  }
-  if(cuts){r.selected=firstCutFragment||fragments[0]||null;r.transform.detach();r.transform.enabled=false;if(r.mode!=='object')updateModelTopologyOverlay();$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='cut'));renderModelObjectList();renderModelFields();pushModelHistory();toast(`Разрез выполнен: ${cuts} сеток разделено, создано частей: ${fragments.length}`,'success');}
-  else toast('Не удалось провести разрез: проведи линию через всю видимую часть модели','error');
+  if(screenPoints.length<2){toast('Проведи линию через модель','error');return;}
+  let start=screenPoints[0],end=screenPoints.at(-1),max=0;
+  for(let i=0;i<screenPoints.length;i++)for(let j=i+1;j<screenPoints.length;j++){const d=Math.hypot(screenPoints[i].x-screenPoints[j].x,screenPoints[i].y-screenPoints[j].y);if(d>max){max=d;start=screenPoints[i];end=screenPoints[j];}}
+  const pieces=[];for(const target of targets){const result=cutMeshAlongScreenSegment(target,start,end);if(result?.length===2)pieces.push(...result);}
+  if(pieces.length){r.selected=pieces[0];r.transform.detach();r.transform.enabled=true;if(r.mode!=='object')updateModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();toast(`Разрез выполнен. Создано частей: ${pieces.length}`,'success');}
+  else toast('Разрез не пересёк модель. Проведи линию от одного края модели до другого','error');
 }
 function openModelCut2DEditor(){
   const cfg=modelStudio.cutSettings;
@@ -3948,17 +4009,20 @@ function updateModelCut2DPreview(){
 }
 function applyModelCutPreset(){
   const r=modelStudio,targets=selectedModelMeshes();if(!targets.length){toast('Сначала выбери модель для разреза','error');return;}
-  const viewport=$('#model-canvas').getBoundingClientRect(),cfg=r.cutSettings,lines=[];const ndc=[];let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
-  for(const target of targets){const attr=target.geometry?.attributes?.position;if(!attr)continue;target.updateMatrixWorld(true);for(let i=0;i<attr.count;i++){const point=new THREE.Vector3().fromBufferAttribute(attr,i).applyMatrix4(target.matrixWorld).project(r.camera);minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);minY=Math.min(minY,point.y);maxY=Math.max(maxY,point.y);}}
+  const viewport=$('#model-canvas').getBoundingClientRect(),cfg=r.cutSettings,screenLines=[];
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const target of targets){const attr=target.geometry?.attributes?.position;if(!attr)continue;target.updateMatrixWorld(true);for(let i=0;i<attr.count;i++){const point=new THREE.Vector3().fromBufferAttribute(attr,i).applyMatrix4(target.matrixWorld).project(r.camera);if(point.z<-1||point.z>1)continue;minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);minY=Math.min(minY,point.y);maxY=Math.max(maxY,point.y);}}
   if(!Number.isFinite(minX)||maxX-minX<.01||maxY-minY<.01){toast('Не удалось определить область модели','error');return;}
   const direction=new THREE.Vector2(Math.cos(THREE.MathUtils.degToRad(cfg.angle)),Math.sin(THREE.MathUtils.degToRad(cfg.angle))),perp=new THREE.Vector2(-direction.y,direction.x),corners=[new THREE.Vector2(minX,minY),new THREE.Vector2(minX,maxY),new THREE.Vector2(maxX,minY),new THREE.Vector2(maxX,maxY)],along=corners.map(p=>p.dot(direction)),across=corners.map(p=>p.dot(perp)),lo=Math.min(...along),hi=Math.max(...along),mid=(Math.min(...across)+Math.max(...across))/2,span=Math.max(.01,Math.max(...across)-Math.min(...across));
-  for(let i=0;i<cfg.count;i++){const spacing=Math.min(cfg.spacing,.82/Math.max(1,cfg.count-1));const acrossAt=mid+(i-(cfg.count-1)/2)*spacing*span;const a=direction.clone().multiplyScalar(lo-.05).addScaledVector(perp,acrossAt),b=direction.clone().multiplyScalar(hi+.05).addScaledVector(perp,acrossAt);lines.push([a,b]);}
-  let fragments=[...targets],cuts=0,firstCutFragment=null;
-  for(const [a,b] of lines){const next=[];for(const mesh of fragments){const points=[];for(let step=0;step<=72;step++){const t=step/72,ndcPoint=a.clone().lerp(b,t),clientX=viewport.left+(ndcPoint.x+1)*.5*viewport.width,clientY=viewport.top+(1-ndcPoint.y)*.5*viewport.height,hit=getModelHitAt(clientX,clientY,[mesh]);if(hit)points.push(hit.point.clone());}
-      if(points.length<2){next.push(mesh);continue;}const first=points[0],last=points.at(-1),line=last.clone().sub(first),normal=line.cross(r.camera.getWorldDirection(new THREE.Vector3())).normalize();const result=normal.lengthSq()>.0001?splitModelMeshByPlane(mesh,first,normal):null;if(result){next.push(...result);firstCutFragment ||= result[0];cuts++;}else next.push(mesh);}
-    fragments=next;
+  for(let i=0;i<cfg.count;i++){
+    const spacing=Math.min(cfg.spacing,.82/Math.max(1,cfg.count-1)),acrossAt=mid+(i-(cfg.count-1)/2)*spacing*span;
+    const a=direction.clone().multiplyScalar(lo-.08).addScaledVector(perp,acrossAt),b=direction.clone().multiplyScalar(hi+.08).addScaledVector(perp,acrossAt);
+    screenLines.push([{x:viewport.left+(a.x+1)*.5*viewport.width,y:viewport.top+(1-a.y)*.5*viewport.height},{x:viewport.left+(b.x+1)*.5*viewport.width,y:viewport.top+(1-b.y)*.5*viewport.height}]);
   }
-  if(cuts){r.selected=firstCutFragment||fragments[0]||null;r.transform.detach();r.transform.enabled=false;if(r.mode!=='object')updateModelTopologyOverlay();$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='cut'));renderModelObjectList();renderModelFields();pushModelHistory();toast(`Выполнено разрезов: ${cuts}. Частей: ${fragments.length}`,'success');}else toast('Линии не пересекли модель. Измени угол или расположение','error');
+  let fragments=[...targets],cutCount=0;
+  for(const line of screenLines){const next=[];for(const mesh of fragments){const pieces=cutMeshAlongScreenSegment(mesh,line[0],line[1]);if(pieces?.length===2){next.push(...pieces);cutCount++;}else next.push(mesh);}fragments=next;}
+  if(cutCount){r.selected=fragments[0]||null;r.transform.detach();r.transform.enabled=true;if(r.mode!=='object')updateModelTopologyOverlay();renderModelObjectList();renderModelFields();pushModelHistory();toast(`Шаблон применён: ${cutCount} разрезов, частей: ${fragments.length}`,'success');}
+  else toast('Шаблон не пересёк модель. Измени угол или расстояние','error');
 }
 function finishModelFaceCreation(){
   const r=modelStudio,target=r.creationTarget,points=r.creationPoints;if(!target||points.length<3){toast('Для грани нужно минимум три точки','error');return false;}
@@ -3969,7 +4033,7 @@ function finishModelFaceCreation(){
   r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=false;$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='create-face'));pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent=`Создана грань из ${points.length} точек. Можно создать следующую`;return true;
 }
 function cancelModelActiveTool(){
-  const r=modelStudio;r.activeTool=null;r.cameraNavigation=false;$('#model-camera-orbit-toggle')?.classList.remove('active');if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;r.sculptStroke=null;r.cutStroke=null;cancelAnimationFrame(r.sculptRaf);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-cut-path').setAttribute('d','');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=true;$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));r.transform.enabled=true;if(r.mode==='object'&&r.selected)r.transform.attach(r.selected);else r.transform.detach();$('#model-selection-info').textContent='Инструмент отключён';
+  const r=modelStudio;r.activeTool=null;r.cameraNavigation=false;if(r.orbit)r.orbit.enabled=true;$('#model-camera-orbit-toggle')?.classList.remove('active');if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;r.sculptStroke=null;r.cutStroke=null;cancelAnimationFrame(r.sculptRaf);r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-cut-path').setAttribute('d','');$('#model-canvas').classList.remove('model-tool-cursor');$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=true;$$('[data-model-tool]').forEach(b=>b.classList.remove('active'));r.transform.enabled=true;if(r.mode==='object'&&r.selected)r.transform.attach(r.selected);else r.transform.detach();$('#model-selection-info').textContent='Инструмент отключён';
 }
 
 function selectModelObject(e){
@@ -4082,12 +4146,12 @@ function updateModelTopologyOverlay(){
   r.scene.add(group);r.topologyOverlay=group;
 }
 function snapModelView(spec){
-  const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1;const r=modelStudio;if(!r.camera||!r.orbit)return;
-  const target=r.orbit.target.clone();const direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
-  const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,2,2000);
-  // Z is the world-up axis. Side views keep Z vertical; top/bottom views use Y as screen-up.
-  r.camera.up.copy(axis==='z'?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));
-  r.orbit.object.up.copy(r.camera.up);r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();
+  const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1,r=modelStudio;if(!r.camera||!r.orbit)return;
+  const target=r.orbit.target.clone(),direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
+  const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,.2,2000);
+  r.orbit.enabled=true;r.camera.up.copy(axis==='z'?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));r.orbit.object.up.copy(r.camera.up);
+  r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateMatrixWorld(true);r.camera.updateProjectionMatrix();
+  r.orbit.target.copy(target);r.orbit.update();
   $$('#model-studio [data-model-view]').forEach(button=>button.classList.toggle('active',button.dataset.modelView===spec));
 }
 function joinSelectedModelObjects(){
