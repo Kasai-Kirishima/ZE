@@ -748,3 +748,120 @@ html,body,#app{height:100%;height:100dvh;min-height:0}
   #model-studio .model-setting-buttons button{min-height:42px;font-size:12px}
   #model-studio .model-create-controls{max-width:calc(100vw - 10px)}
 }
+
+
+/* ZeroEngine 0.10.7 — flexible workspace, numeric steppers and touch-first Model Studio drawers */
+.workspace-hidden{display:none!important}
+.editor-layout.workspace-hide-assets{grid-template-rows:minmax(0,1fr) 0!important}
+.editor-layout.workspace-hide-hierarchy:not(.panels-swapped){grid-template-columns:0 minmax(0,1fr) var(--right-w)!important}
+.editor-layout.workspace-hide-inspector:not(.panels-swapped){grid-template-columns:var(--left-w) minmax(0,1fr) 0!important}
+.editor-layout.workspace-hide-hierarchy.workspace-hide-inspector:not(.panels-swapped){grid-template-columns:minmax(0,1fr)!important}
+.editor-layout.panels-swapped.workspace-hide-hierarchy{grid-template-columns:var(--right-w) minmax(0,1fr) 0!important}
+.editor-layout.panels-swapped.workspace-hide-inspector{grid-template-columns:0 minmax(0,1fr) var(--left-w)!important}
+.editor-layout.panels-swapped.workspace-hide-hierarchy.workspace-hide-inspector{grid-template-columns:minmax(0,1fr)!important}
+.layout-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.numeric-stepper{display:grid;grid-template-columns:30px minmax(0,1fr) 30px;gap:4px;align-items:stretch;width:100%;min-width:0}
+.numeric-stepper input[type=number]{min-width:0;width:100%;text-align:center;padding-left:4px;padding-right:4px;font-variant-numeric:tabular-nums}
+.numeric-step-button{min-width:0;min-height:34px;border:1px solid var(--line2);border-radius:5px;background:var(--panel2);color:var(--text);font-size:16px;font-weight:700;line-height:1;touch-action:manipulation}
+.numeric-step-button:active{background:var(--accent);color:#111}
+input[type=range]{display:block;width:100%;min-width:0;max-width:100%;margin:8px 0 4px;padding:0;box-sizing:border-box;accent-color:var(--accent);touch-action:pan-y}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:19px;height:19px;margin-top:-6px;border-radius:50%;border:2px solid var(--panel);background:var(--accent);box-shadow:0 0 0 1px #0005}
+input[type=range]::-moz-range-track{height:6px;border-radius:999px}
+input[type=range]::-moz-range-thumb{width:17px;height:17px;border-radius:50%;border:2px solid var(--panel);background:var(--accent)}
+
+/* Mobile side panels remain the same panels as desktop; no alternate-tab layout is introduced. */
+@media (max-width:700px),(pointer:coarse){
+  #editor-screen>.editor-layout:not(.workspace-hide-assets){grid-template-rows:minmax(0,1fr) minmax(90px,min(42dvh,var(--dock-h)))!important}
+  #editor-screen>.editor-layout.workspace-hide-assets{grid-template-rows:minmax(0,1fr) 0!important}
+  #editor-screen>.editor-layout>.hierarchy-panel{width:min(var(--left-w),90vw)!important;max-width:90vw!important}
+  #editor-screen>.editor-layout>.inspector-panel{width:min(var(--right-w),90vw)!important;max-width:90vw!important}
+  #editor-screen>.editor-layout>.hierarchy-panel.workspace-hidden,#editor-screen>.editor-layout>.inspector-panel.workspace-hidden{display:none!important}
+  .resize-left-handle,.resize-right-handle{display:block!important;width:12px!important;z-index:55!important;touch-action:none}
+  .resize-left-handle{right:-5px!important}
+  .resize-right-handle{left:-5px!important}
+  .resize-dock-handle{display:block!important;height:12px!important;top:-6px!important;z-index:55!important;touch-action:none}
+  .numeric-stepper{grid-template-columns:38px minmax(0,1fr) 38px;gap:5px}
+  .numeric-step-button{min-height:42px;font-size:20px}
+  .numeric-stepper input[type=number]{min-height:42px;font-size:14px}
+}
+
+/* Model Studio tool panels are floating drawers, not tab pages. Camera navigation can be enabled without changing tool selection. */
+#model-studio .model-drawer-toolbar{display:none}
+#model-studio .model-viewport-tools{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+#model-studio .model-viewport-tools>button{min-height:30px;padding:5px 8px;border:1px solid #ffffff30;border-radius:7px;background:#10171dcc;color:#eef3f2;font-size:10px}
+#model-studio .model-viewport-tools>button.active{background:#f0f0f0;color:#111;border-color:#fff}
+#model-studio .model-viewport-tools .model-viewport-views{display:flex;flex-wrap:wrap;gap:3px}
+#model-studio .model-tools .model-transform-tools{grid-template-columns:repeat(3,minmax(0,1fr))}
+#model-studio #model-sculpt-cursor{position:absolute;z-index:8;left:0;top:0;transform:translate(-50%,-50%);border:2px solid #ffe06b;background:#ffdf6530;border-radius:50%;box-shadow:0 0 0 2px #17171780,0 0 14px #ffc34a90;pointer-events:none;display:block}
+#model-studio #model-sculpt-cursor[hidden]{display:none}
+#model-studio #model-sculpt-cursor[data-shape="square"]{border-radius:3px}
+#model-studio #model-sculpt-cursor[data-shape="triangle"]{clip-path:polygon(50% 0,0 100%,100% 100%);border-radius:0;background:#ffdf6540}
+#model-studio #model-sculpt-cursor[data-action="dent"]{border-color:#64d4ff;background:#64d4ff30;box-shadow:0 0 0 2px #17171780,0 0 14px #64d4ff90}
+#model-studio .model-tools .model-sculpt-settings input[type=range]{width:100%;min-width:0;max-width:100%;margin:10px 0 4px;touch-action:pan-y}
+#model-studio .model-cut-2d-frame{touch-action:pan-y}
+@media(max-width:850px),(pointer:coarse){
+  #model-studio .model-studio-layout{position:relative!important;display:block!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:minmax(0,1fr)!important;overflow:hidden!important}
+  #model-studio .model-studio-layout>.model-viewport{position:absolute!important;inset:0!important;display:block!important;width:100%!important;height:100%!important;z-index:1!important;min-width:0!important;min-height:0!important}
+  #model-studio .model-studio-layout>.model-add-panel,#model-studio .model-studio-layout>.model-tools,#model-studio .model-studio-layout>.model-inspector{display:none!important;position:absolute!important;top:8px!important;bottom:64px!important;left:8px!important;right:auto!important;inset-block:auto!important;width:min(88vw,350px)!important;max-width:88vw!important;height:auto!important;max-height:none!important;z-index:40!important;box-sizing:border-box!important;border:1px solid #ffffff30!important;border-radius:12px!important;background:#171c20f5!important;box-shadow:0 14px 40px #000b!important;padding:14px!important;overflow:auto!important;overscroll-behavior:contain!important;transform:translateX(-110%)!important;transition:transform .18s ease!important}
+  #model-studio .model-studio-layout>.model-inspector{left:auto!important;right:8px!important;transform:translateX(110%)!important;border-left:1px solid #ffffff30!important}
+  #model-studio .model-studio-layout>.model-add-panel.model-drawer-open,#model-studio .model-studio-layout>.model-tools.model-drawer-open{display:block!important;transform:translateX(0)!important}
+  #model-studio .model-studio-layout>.model-inspector.model-drawer-open{display:block!important;transform:translateX(0)!important}
+  #model-studio .model-drawer-toolbar{display:flex!important;position:absolute!important;z-index:60!important;left:50%!important;bottom:10px!important;transform:translateX(-50%)!important;max-width:calc(100vw - 16px)!important;gap:5px!important;padding:5px!important;border:1px solid #ffffff28!important;border-radius:12px!important;background:#111820ed!important;box-shadow:0 8px 28px #0008!important}
+  #model-studio .model-drawer-toolbar button{min-height:42px!important;min-width:0!important;padding:7px 11px!important;border:1px solid #ffffff25!important;border-radius:8px!important;background:#252d33!important;color:#fff!important;font-size:11px!important;white-space:nowrap!important}
+  #model-studio .model-drawer-toolbar button.active{background:#f0f0f0!important;color:#111!important;border-color:#fff!important}
+  #model-studio .model-viewport-tools{position:absolute!important;top:8px!important;left:8px!important;right:8px!important;z-index:15!important;display:flex!important;justify-content:flex-start!important;align-content:flex-start!important;max-height:80px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:3px!important;background:#10171d99!important;border-radius:8px!important;touch-action:pan-x}
+  #model-studio .model-viewport-tools>button{min-height:36px!important;font-size:11px!important}
+  #model-studio .model-viewport-modes{display:none!important}
+  #model-studio .model-viewport-views{display:none!important}
+  #model-studio .model-viewport-hud{bottom:64px!important;left:8px!important;font-size:9px!important}
+  #model-studio .model-selection-info{top:auto!important;bottom:64px!important;right:8px!important;max-width:55vw!important}
+  #model-studio .model-tools .model-tool-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #model-studio .model-tools button,#model-studio .model-inspector button,#model-studio .model-add-panel button{min-height:42px!important;font-size:12px!important}
+  #model-studio .model-create-controls{max-width:calc(100vw - 24px)!important}
+}
+@media(orientation:landscape) and (pointer:coarse){
+  #model-studio .model-studio-layout>.model-add-panel,#model-studio .model-studio-layout>.model-tools{width:min(55vw,380px)!important}
+  #model-studio .model-studio-layout>.model-inspector{width:min(55vw,380px)!important}
+}
+
+/* Workspace dock position customization. */
+.editor-layout.assets-top{grid-template-rows:var(--dock-h) minmax(0,1fr)}
+.editor-layout.assets-top>.asset-dock{grid-row:1;grid-column:1/4}
+.editor-layout.assets-top>.hierarchy-panel,.editor-layout.assets-top>.viewport-column,.editor-layout.assets-top>.inspector-panel{grid-row:2}
+@media(max-width:700px),(pointer:coarse){#editor-screen>.editor-layout.assets-top:not(.workspace-hide-assets){grid-template-rows:minmax(90px,min(42dvh,var(--dock-h))) minmax(0,1fr)!important}#editor-screen>.editor-layout.assets-top>.asset-dock{grid-row:1}#editor-screen>.editor-layout.assets-top>.hierarchy-panel,#editor-screen>.editor-layout.assets-top>.viewport-column,#editor-screen>.editor-layout.assets-top>.inspector-panel{grid-row:2}}
+
+.editor-layout.assets-top.workspace-hide-assets{grid-template-rows:minmax(0,1fr) 0!important}
+@media(max-width:700px),(pointer:coarse){#editor-screen>.editor-layout.assets-top.workspace-hide-assets{grid-template-rows:minmax(0,1fr) 0!important}}
+
+/* Model Studio: component tools live in the tool drawer; the main scene keeps its own angle controls. */
+#model-studio .model-viewport-tools{gap:6px}
+#model-studio .model-viewport-tools .model-viewport-modes,#model-studio .model-viewport-tools .model-viewport-transforms,#model-studio .model-viewport-tools .model-viewport-views{display:none!important}
+
+/* 0.10.10 */
+
+/* Range controls use the full available track; thumbs are allowed to reach both end stops. */
+input[type="range"]{appearance:none;-webkit-appearance:none;display:block;box-sizing:border-box;width:100%;max-width:100%;min-width:0;height:22px;padding:0;margin:8px 0 4px;background:transparent;overflow:visible;cursor:pointer;touch-action:pan-y}
+input[type="range"]::-webkit-slider-runnable-track{width:100%;height:6px;border-radius:999px;background:var(--range-track,#53615f)}
+input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;border:2px solid var(--panel,#20282a);background:var(--accent,#d6e5d5);box-shadow:0 0 0 1px #0005}
+input[type="range"]::-moz-range-track{width:100%;height:6px;border:0;border-radius:999px;background:var(--range-track,#53615f)}
+input[type="range"]::-moz-range-progress{height:6px;border-radius:999px;background:var(--accent,#d6e5d5)}
+input[type="range"]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;border:2px solid var(--panel,#20282a);background:var(--accent,#d6e5d5);box-shadow:0 0 0 1px #0005}
+
+/* Model Studio on touch keeps the same canvas and independent floating panels — no exclusive tabs. */
+@media(max-width:850px),(pointer:coarse){
+  #model-studio .model-studio-layout{position:relative!important;display:block!important;overflow:hidden!important}
+  #model-studio .model-studio-layout>.model-viewport{display:block!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;z-index:1!important}
+  #model-studio .model-studio-layout>.model-add-panel,
+  #model-studio .model-studio-layout>.model-tools,
+  #model-studio .model-studio-layout>.model-inspector{display:none!important;position:absolute!important;top:8px!important;bottom:64px!important;left:auto!important;right:auto!important;width:min(48vw,300px)!important;max-width:calc(100vw - 16px)!important;height:auto!important;max-height:none!important;min-height:0!important;box-sizing:border-box!important;z-index:40!important;border:1px solid #ffffff35!important;border-radius:11px!important;background:#171c20f5!important;box-shadow:0 14px 36px #000b!important;transform:none!important;overflow:auto!important;overscroll-behavior:contain!important}
+  #model-studio .model-studio-layout>.model-add-panel{left:8px!important;right:auto!important;width:min(42vw,250px)!important}
+  #model-studio .model-studio-layout>.model-tools{right:8px!important;left:auto!important;bottom:calc(34dvh + 70px)!important;max-height:calc(66dvh - 90px)!important}
+  #model-studio .model-studio-layout>.model-inspector{right:8px!important;left:auto!important;top:auto!important;bottom:64px!important;height:32dvh!important;max-height:32dvh!important}
+  #model-studio .model-studio-layout>.model-add-panel.model-drawer-open,
+  #model-studio .model-studio-layout>.model-tools.model-drawer-open,
+  #model-studio .model-studio-layout>.model-inspector.model-drawer-open{display:block!important;visibility:visible!important;pointer-events:auto!important;transform:none!important}
+  #model-studio .model-drawer-toolbar{display:flex!important;position:absolute!important;z-index:60!important;left:50%!important;bottom:9px!important;transform:translateX(-50%)!important;max-width:calc(100vw - 12px)!important;gap:4px!important;padding:4px!important;border:1px solid #ffffff28!important;border-radius:11px!important;background:#111820ed!important;box-shadow:0 8px 24px #0008!important}
+  #model-studio .model-drawer-toolbar button{min-height:40px!important;min-width:0!important;padding:6px 9px!important;border:1px solid #ffffff25!important;border-radius:7px!important;background:#252d33!important;color:#fff!important;font-size:10px!important;white-space:nowrap!important}
+  #model-studio .model-drawer-toolbar button.active{background:var(--accent,#dce6dc)!important;color:#101413!important;border-color:#fff!important}
+}

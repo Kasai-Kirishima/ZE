@@ -172,3 +172,38 @@ Some geometric operations (especially caps for highly concave or non-manifold im
 - The cut operation is an approximate screen-space plane cut. Concave, open, thin or non-manifold meshes may produce imperfect caps or fail to split cleanly. Save a copy before complex cuts.
 - The 2D cut editor currently exposes line count, spacing and angle; it is a configurable parallel-line template rather than a general freehand 2D CAD plane.
 - OBJ/FBX up-axis conventions vary between exporters. Automatic Y-up conversion is the common case; if an imported model appears on its side, rotate it manually in the inspector.
+
+
+## 0.10.7
+
+- Workspace panel visibility, resizing and persistence improved for desktop and touch devices.
+- Numeric controls now include compact plus/minus steppers; range inputs use full available width.
+- Project camera offsets are now consistently editable for head, back, top and custom mounts.
+- Physics-enabled bodies can be pushed without a separate collision toggle.
+- Model Studio face transforms now move coincident boundary vertices on adjacent faces to keep topology welded.
+- Fixed screen-stroke cut selection, added sculpt brush feedback and wider radius/strength ranges.
+- Added temporary camera-navigation mode and model grid visibility control.
+- Removed plane and uniform-axis transform buttons; added visible bend-joint markers.
+
+## 0.10.8
+- Customizable workspace panel visibility, swapping and asset dock top/bottom placement, with persisted panel sizing.
+- Fixed new Player camera presets and camera floor clearance; camera mode changes apply stable preset offsets.
+- Ground support now recognizes physics-enabled solid bodies.
+- NumericArray variables accept comma-separated values and Specificarray only lists true numeric arrays.
+
+## 0.10.9
+- Fixed first-person camera height: pitching the view no longer moves the camera anchor down toward the floor.
+- Player camera defaults use a valid third-person offset; changing the mount mode applies stable presets.
+- Player Start ground ring and Model Studio Plane primitive / duplicate axis view controls removed.
+- Bend tool now switches automatically to vertex mode; bevel/sharpen automatically switch to face mode.
+
+## 0.10.10
+- ZeroBox Model and Changeofmodel blocks now include texture tiling controls and apply them when spawning/replacing models.
+
+### 0.10.10 — additional stability fixes
+
+- Dynamic rigid bodies now receive push impulses while the moving body remains at the contact boundary, rather than passing through one another. Collider offsets are optional-safe for physics-only entities.
+- Recognition and Specificarray fields retain their selected condition after reopening the block editor.
+- Range controls use a full-width track with visible end stops, including WebKit and Firefox styling.
+- The editor keeps the common panel workspace on touch and desktop devices; ZeroBox and UI Designer remain dedicated workbenches.
+- On touch devices, Model Studio panels now open independently around the same 3D viewport instead of behaving as mutually exclusive tabs. Assets stay on the left, tools at the upper right and properties at the lower right.
