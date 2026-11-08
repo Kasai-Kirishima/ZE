@@ -41,7 +41,7 @@ const typeOf = name => {
   return 'file';
 };
 const iconFor = type => ({model:'📦',texture:'🖼️',script:'〈〉',zerobox:'◇',audio:'🎵',scene:'🎬',json:'{}',material:'🎨',environmentLight:'☼',binary:'📄',file:'📄',folder:'📁',primitive:'◈',camera:'📷',player:'♟',spawn:'⌖',light:'💡'})[type] || '📄';
-const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: true, objects: [] });
+const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: false, objects: [] });
 
 let db = null;
 let currentProject = null;
@@ -54,7 +54,7 @@ let selectedAssetId = null;
 let sceneObjects = new Map();
 let objectUrls = new Map();
 let renderer, scene, editorCamera, orbit, transform, raycaster, pointer;
-let gridHelper, axesHelper;
+let gridHelper=null, axesHelper=null;
 let selectedConnectionId = null;
 let zeroCanvasPanActive = false;
 let editorReady = false;
@@ -671,10 +671,7 @@ function init3DEditor() {
   orbit.target.set(0, 0.8, 0);
   orbit.minPolarAngle = .04; orbit.maxPolarAngle = Math.PI - .04;
   editorCamera.near = .01; editorCamera.far = 12000; editorCamera.updateProjectionMatrix();
-  gridHelper = new THREE.GridHelper(100, 100, 0x53645b, 0x334139);
-  gridHelper.material.transparent = true; gridHelper.material.opacity = .55;
-  scene.add(gridHelper);
-  axesHelper = new THREE.AxesHelper(2.3); axesHelper.visible=false;
+  gridHelper = null; axesHelper = null;
   transform = new TransformControls(editorCamera, canvas);
   transform.setMode('translate');
   transform.setSize(window.matchMedia?.('(pointer: coarse)').matches?1.9:0.95);
@@ -1468,7 +1465,6 @@ async function loadSceneIntoViewport() {
   const data = activeSceneData();
   scene.background = new THREE.Color(data.background || '#182126');
   applySceneSkybox();
-  gridHelper.visible = data.grid !== false; axesHelper.visible = data.grid !== false;
   for (const entity of data.objects || []) {
     try { await createRuntimeObject(entity); }
     catch (error) { console.warn('Не удалось загрузить объект', entity, error); toast(`Не удалось загрузить «${entity.name}»`, 'error'); }
@@ -1987,9 +1983,10 @@ function renderAssetPanel() {
     const dictionary=I18N[currentLanguage]||{};
     const roughLabel=dictionary['Шероховатость']||'Шероховатость';
     const metalLabel=dictionary['Металличность']||'Металличность';
-    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#ffffff')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
+    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><button class="asset-rename" data-rename-material="${material.id}" title="Переименовать материал">✎</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#ffffff')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
     $('#new-material-card').addEventListener('click',createMaterial);
     $$('[data-remove-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();deleteMaterial(button.dataset.removeMaterial);}));
+    $$('[data-rename-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();renameMaterial(button.dataset.renameMaterial);}));
     $$('[data-export-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();exportMaterial(button.dataset.exportMaterial).catch(error=>{console.error(error);toast('Не удалось экспортировать материал','error');});}));
     $$('[data-apply-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const material=materials.find(m=>m.id===button.dataset.applyMaterial);if(!selectedId){toast('Сначала выбери объект на сцене','error');return;}applyMaterialToEntity(findEntity(selectedId),material);}));
   } else if (currentTab === 'assets') {
@@ -2030,9 +2027,10 @@ function renderAssetPanel() {
   } else if (currentTab === 'scenes') {
     $('#asset-path').textContent = 'Scenes / Project';
     const scenes = currentProject.scenes;
-    content.innerHTML = scenes.map(item => `<div class="asset-card ${item.id === currentProject.activeSceneId ? 'selected' : ''}" data-scene-id="${item.id}"><button class="asset-remove" data-remove-scene="${item.id}">×</button><div class="asset-thumb">🎬</div><div class="asset-name">${escapeHtml(item.name)}</div><div class="asset-meta">${item.data.objects.length} OBJECTS ${item.id === currentProject.activeSceneId ? '· ACTIVE' : ''}</div></div>`).join('') + `<div class="asset-card" id="new-scene-card"><div class="asset-thumb">＋</div><div class="asset-name">Новая сцена</div><div class="asset-meta">CREATE SCENE</div></div>`;
+    content.innerHTML = scenes.map(item => `<div class="asset-card ${item.id === currentProject.activeSceneId ? 'selected' : ''}" data-scene-id="${item.id}"><button class="asset-remove" data-remove-scene="${item.id}" title="Удалить сцену">×</button><button class="asset-rename" data-rename-scene="${item.id}" title="Переименовать сцену">✎</button><div class="asset-thumb">🎬</div><div class="asset-name">${escapeHtml(item.name)}</div><div class="asset-meta">${item.data.objects.length} OBJECTS ${item.id === currentProject.activeSceneId ? '· ACTIVE' : ''}</div></div>`).join('') + `<div class="asset-card" id="new-scene-card"><div class="asset-thumb">＋</div><div class="asset-name">Новая сцена</div><div class="asset-meta">CREATE SCENE</div></div>`;
     $$('[data-scene-id]', content).forEach(card => card.addEventListener('click', (e) => {if(e.target.closest('[data-remove-scene]'))return;switchScene(card.dataset.sceneId);}));
     $$('[data-remove-scene]',content).forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();deleteScene(btn.dataset.removeScene);}));
+    $$('[data-rename-scene]',content).forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();renameScene(btn.dataset.renameScene);}));
     $('#new-scene-card').addEventListener('click', createScene);
   } else {
     if (currentTab === 'zeroboxes') {
@@ -2056,6 +2054,18 @@ function switchScene(id) {
   currentProject.activeSceneId = id; selectedId = null;
   $('#active-scene-name').textContent = activeScene().name; $('#viewport-scene-name').textContent = activeScene().name;
   loadSceneIntoViewport().then(() => { renderAssetPanel(); renderInspector(); scheduleSave(); toast(`Открыта сцена «${activeScene().name}»`, 'success'); });
+}
+function renameScene(id) {
+  const sceneItem=currentProject?.scenes?.find(item=>item.id===id);if(!sceneItem)return;
+  const next=prompt('Новое название сцены',sceneItem.name);if(!next?.trim())return;
+  sceneItem.name=next.trim().slice(0,64);
+  if(currentProject.activeSceneId===id){$('#active-scene-name').textContent=sceneItem.name;$('#viewport-scene-name').textContent=sceneItem.name;}
+  renderAssetPanel();scheduleSave();toast('Сцена переименована','success');
+}
+function renameMaterial(id) {
+  const material=currentProject?.materials?.find(item=>item.id===id);if(!material)return;
+  const next=prompt('Новое название материала',material.name);if(!next?.trim())return;
+  material.name=next.trim().slice(0,64);renderAssetPanel();scheduleSave();toast('Материал переименован','success');
 }
 function createScene() {
   showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE MANAGER</span><h2 id="modal-title">Новая сцена</h2><p>Создай отдельную сцену внутри проекта.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="new-scene-form"><div class="modal-body"><label class="field-label">Название сцены<input class="field-input" id="new-scene-name" placeholder="Например, Level 01" maxlength="48" required /></label></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary">Создать</button></div></form>`);
@@ -2290,7 +2300,7 @@ async function startPlayMode() {
     object.traverse(child=>{if(child.userData?.editorOnly)child.visible=false;});
     const helper=collisionHelpers.get(entity.id);if(helper)helper.visible=false;
   });
-  orbit.enabled=false;transform.detach();gridHelper.visible=false;axesHelper.visible=false;bindPreviewCameraInput();
+  orbit.enabled=false;transform.detach();bindPreviewCameraInput();
   $('#play-overlay').classList.remove('hidden');
   $('#play-hint').textContent='Тестовый режим · изменения не сохраняются · Esc — выйти';
   renderGameUI();
@@ -2305,7 +2315,6 @@ async function stopPlayMode() {
   previewWrap?.classList.remove('play-fullscreen-fallback');
   $('#viewport-wrap')?.classList.remove('preview-camera-active');
   isPlaying=false;previewCamera=null;orbit.enabled=true;heldKeys.clear();heldButtonIds.clear();gameSpeedMultiplier=1;
-  gridHelper.visible=axesHelper.visible=activeSceneData()?.grid!==false;
   $('#play-overlay')?.classList.add('hidden');$('#play-button')?.classList.remove('hidden');
   $('#game-ui-layer').innerHTML='';
   if(playSnapshot){currentProject=playSnapshot;playSnapshot=null;}
@@ -2355,7 +2364,6 @@ function openSpatialEditor(entity, mode='collision') {
   try{
     miniRenderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});miniRenderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));miniScene=new THREE.Scene();miniScene.background=new THREE.Color(document.documentElement.dataset.theme==='light'?'#eeeeee':'#171b1e');
     miniCamera=new THREE.PerspectiveCamera(48,1,.1,500);miniCamera.position.set(4,3,5);miniOrbit=new OrbitControls(miniCamera,canvas);miniOrbit.enableDamping=true;miniOrbit.target.set(0,.7,0);
-    const grid=new THREE.GridHelper(8,16,0x777777,0x444444);miniScene.add(grid);
     objectGroup=new THREE.Group();miniScene.add(objectGroup);
     const source=sceneObjects.get(entity.id);if(source){const copyObj=source.clone(true);copyObj.position.set(0,0,0);copyObj.rotation.set(0,0,0);copyObj.scale.fromArray(entity.scale||[1,1,1]);copyObj.traverse(ch=>{if(ch.isMesh){ch.material=new THREE.MeshBasicMaterial({color:0x9a9a9a,wireframe:true});ch.castShadow=false;ch.receiveShadow=false;}});objectGroup.add(copyObj);}else{const target=new THREE.Mesh(new THREE.CapsuleGeometry(.35,.9,4,10),new THREE.MeshBasicMaterial({color:0x999999,wireframe:true}));target.position.y=.8;objectGroup.add(target);}
     handleGroup=new THREE.Group();objectGroup.add(handleGroup);
@@ -2775,7 +2783,6 @@ function bindUI() {
   $$('[data-sculpt-action]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.action=b.dataset.sculptAction;$$('[data-sculpt-action]').forEach(x=>x.classList.toggle('active',x===b));}));
   $('#model-cut-open-2d').addEventListener('click',openModelCut2DEditor);
   $('#model-camera-orbit-toggle')?.addEventListener('click',()=>setModelCameraNavigation(!modelStudio.cameraNavigation));
-  $('#model-grid-toggle')?.addEventListener('click',()=>{if(!modelStudio.grid)return;modelStudio.grid.visible=!modelStudio.grid.visible;$('#model-grid-toggle').classList.toggle('active',modelStudio.grid.visible);});
   $$('#model-studio [data-model-mirror]').forEach(b=>b.addEventListener('click',()=>mirrorModelObject(Number(b.dataset.modelMirror))));
   $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>({n,i})).filter(item=>item.i!==2).map(({n,i})=>`<button type="button" data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇','♟','○','◌','⌂','⬡','◇','⬟','△','∿','⟲','◩'][i]} ${n}</button>`).join('');
   $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
@@ -2789,11 +2796,10 @@ function bindUI() {
   $('#toggle-inspector').addEventListener('click', () => $('#inspector-panel').classList.toggle('open'));
   $('#close-inspector').addEventListener('click', () => $('#inspector-panel').classList.remove('open'));
   $('#add-object-menu').addEventListener('click', openAddObjectMenu);
-  $('#scene-options').addEventListener('click', () => showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE SETTINGS</span><h2 id="modal-title">Настройки сцены</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Название<input class="field-input" id="scene-setting-name" value="${escapeAttr(activeScene().name)}" /></label><label class="field-label">Цвет фона<input class="field-input" id="scene-setting-bg" type="color" value="${activeSceneData().background || '#182126'}" /></label><label class="check-line"><input type="checkbox" id="scene-setting-grid" ${activeSceneData().grid !== false ? 'checked' : ''}/> Показывать сетку и оси</label></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="save-scene-settings">Применить</button></div>`));
+  $('#scene-options').addEventListener('click', () => showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE SETTINGS</span><h2 id="modal-title">Настройки сцены</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Название<input class="field-input" id="scene-setting-name" value="${escapeAttr(activeScene().name)}" /></label><label class="field-label">Цвет фона<input class="field-input" id="scene-setting-bg" type="color" value="${activeSceneData().background || '#182126'}" /></label></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="save-scene-settings">Применить</button></div>`));
   $('#undo-button').addEventListener('click', undo); $('#redo-button').addEventListener('click', redo);
   $$('[data-transform]').forEach(button => button.addEventListener('click', () => setTransformMode(button.dataset.transform)));
   $('#focus-object').addEventListener('click', focusSelectedObject);
-  $('#grid-toggle').addEventListener('click', () => { activeSceneData().grid = !activeSceneData().grid; gridHelper.visible = axesHelper.visible = activeSceneData().grid; scheduleSave(); });
   $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · СКМ — панорама · ПКМ + перетаскивание — выделение рамкой · Колесо — масштаб'));
   $('#viewport-inspection-toggle')?.addEventListener('click',()=>setViewportInspectionMode(!viewportInspectionMode));
   $$('[data-editor-view]').forEach(button=>button.addEventListener('click',()=>snapEditorView(button.dataset.editorView)));
@@ -2813,8 +2819,8 @@ function bindUI() {
     const apply = $('#save-scene-settings'); if (!apply) return;
     apply.addEventListener('click', () => {
       const name = $('#scene-setting-name').value.trim() || 'Scene';
-      const data = activeSceneData(); data.name = name; data.background = $('#scene-setting-bg').value; data.grid = $('#scene-setting-grid').checked;
-      activeScene().name = name; scene.background = new THREE.Color(data.background); applySceneSkybox(); gridHelper.visible = axesHelper.visible = data.grid;
+      const data = activeSceneData(); data.name = name; data.background = $('#scene-setting-bg').value;
+      activeScene().name = name; scene.background = new THREE.Color(data.background); applySceneSkybox();
       $('#active-scene-name').textContent = $('#viewport-scene-name').textContent = name;
       closeModal(); scheduleSave(); renderAssetPanel();
     });
@@ -2892,6 +2898,7 @@ function deleteScene(sceneId) {
 // ---------- ZeroBox visual logic and camera UI ----------
 const ZEROBOX_CATEGORIES = [
   {name:'События', icon:'⚡', color:'#e4a64c', items:['Straightaway','Buttonclicked','Buttonpressed','ButtonResting']},
+  {name:'Управление игрой', icon:'⏻', color:'#e47d76', items:['ExitGame']},
   {name:'Управление', icon:'✥', color:'#65c6bd', items:['Joystick','JoystickMovement','Side','Speed']},
   {name:'Игрок', icon:'♟', color:'#68b7d8', items:['Squat','Jumpup','Life']},
   {name:'Математика', icon:'∑', color:'#aa91e8', items:['Number','NumericArray','Minus','Plus','Divide','Multiply','Size']},
@@ -2992,7 +2999,7 @@ function zeroBlockFields(block) {
 }
 function zeroPortLayout(block) {
   const isEvent=['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type);
-  const isEnd=block.type==='Close',isBranch=['Branching','ForkYesorno'].includes(block.type);
+  const isEnd=['Close','ExitGame'].includes(block.type),isBranch=['Branching','ForkYesorno'].includes(block.type);
   const isDataSource=['Joystick','JoystickMovement','Text','Asset','Aconcretevision','Specificarray'].includes(block.type);
   return {input:!isEvent&&!isDataSource,outputs:isEnd||isDataSource?[]:isBranch?['yes','no']:['out'],inputLabel:'Вход',outputLabel:'Выход'};
 }
@@ -3034,7 +3041,7 @@ function zeroNodePortTop(block,side,portName){
 }
 function zeroBlockLabel(type) { return type==='JoystickMovement' ? 'Joystick Movement' : ({Changeofmodel:'Change of Model',Specificarray:'Specific Array',Aconcretevision:'A concrete vision'}[type]||type); }
 function zeroBlockIcon(type) {
-  const icons={Model:'▧',Changeofmodel:'⟳',Specificarray:'▤',Recognition:'⌕',Particles:'✧',Aconcretevision:'◎',Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',JoystickMovement:'🕹',Text:'T',Asset:'▧'};
+  const icons={Model:'▧',Changeofmodel:'⟳',Specificarray:'▤',Recognition:'⌕',Particles:'✧',Aconcretevision:'◎',Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',ExitGame:'⏻',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',JoystickMovement:'🕹',Text:'T',Asset:'▧'};
   return icons[type]||'◇';
 }
 function renderZeroBoxPicker() {
@@ -3054,7 +3061,7 @@ function zeroHelpText(type) {
     Squat:'Уменьшает высоту коллайдера объекта.', Jumpup:'Поднимает Player по вертикали.', Life:'Записывает состояние жив/мёртв.',
     Number:'Создаёт числовую переменную.', Yesorno:'Создаёт логическую переменную Да/Нет.', Transparency:'Создаёт переменную прозрачности от 0 до 1.', Color:'Создаёт переменную цвета.',
     Size:'Меняет размер объекта по X, Y и Z.', Minus:'Вычитает указанное число из переменной.', Plus:'Прибавляет число к переменной.', Divide:'Делит переменную на указанное число.', Multiply:'Умножает переменную на указанное число.',
-    Change:'Записывает новое значение в выбранную переменную.', Loop:'Повторяет следующий шаг указанное число раз.', Branching:'Разветвляет выполнение по условию переменной на выходы Yes и No.', ForkYesorno:'Проверяет переменную Да/Нет и выбирает выход Yes или No.', Close:'Останавливает текущую цепочку ZeroBox.',
+    Change:'Записывает новое значение в выбранную переменную.', Loop:'Повторяет следующий шаг указанное число раз.', Branching:'Разветвляет выполнение по условию переменной на выходы Yes и No.', ForkYesorno:'Проверяет переменную Да/Нет и выбирает выход Yes или No.', Close:'Останавливает текущую цепочку ZeroBox.', ExitGame:'Останавливает текущий игровой тест и возвращает в редактор проекта.',
     Writes:'Выводит сообщение или записывает текст в UI Text.', Laser:'Выпускает невидимый луч и записывает результат проверки в переменную.',
     ChangeTransparency:'Меняет прозрачность объекта или UI-элемента.', ChangeColor:'Меняет цвет объекта или UI-элемента.', ChangeTexture:'Назначает объекту текстуру из файлов проекта.', ChangeModel:'Заменяет модель объекта.', Changesound:'Назначает звуковой ресурс объекту.',
     Changinganimation:'Запускает выбранную анимацию модели.', Text:'Передаёт текст в подключённый вход Write или другой текстовый вход.', Asset:'Передаёт выбранный ресурс в подключённый вход текстуры, модели или звука.', Playsound:'Запускает аудиофайл.', "Don'tSound":'Останавливает воспроизведение звука.', Pausesound:'Ставит воспроизведение на паузу.', Twist:'Поворачивает объект.', Collision:'Включает или выключает коллизию.', Physics:'Включает или выключает физический режим объекта или группы объектов.'
@@ -3162,6 +3169,31 @@ function bindWorkbenchMobileTabs() {
   buttons.forEach(button => button.addEventListener('click', () => { workbenchMobilePanel = button.dataset.workbenchPanel; apply(); }));
   apply();
 }
+const UI_SCREEN_TEMPLATES = [
+  {id:'desktop-1080',name:'ПК · Full HD 16:9',width:1920,height:1080,orientation:'landscape'},
+  {id:'desktop-720',name:'ПК · HD 16:9',width:1280,height:720,orientation:'landscape'},
+  {id:'desktop-4-3',name:'Классический 4:3',width:1024,height:768,orientation:'landscape'},
+  {id:'wide-16-10',name:'Широкий 16:10',width:1920,height:1200,orientation:'landscape'},
+  {id:'phone-portrait',name:'Телефон · вертикально',width:390,height:844,orientation:'portrait'},
+  {id:'phone-landscape',name:'Телефон · горизонтально',width:844,height:390,orientation:'landscape'},
+  {id:'tablet-portrait',name:'Планшет · вертикально',width:800,height:1280,orientation:'portrait'},
+  {id:'tablet-landscape',name:'Планшет · горизонтально',width:1280,height:800,orientation:'landscape'}
+];
+function applyUIScreenTemplate(){
+  const screen=getActiveUIScreen(),template=UI_SCREEN_TEMPLATES.find(item=>item.id===$('#ui-screen-template')?.value);if(!screen||!template)return;
+  screen.width=template.width;screen.height=template.height;screen.orientation=template.orientation;screen.templateId=template.id;
+  renderWorkbench();scheduleSave();toast(`Шаблон применён: ${template.width} × ${template.height}`,'success');
+}
+function buildUIHierarchyMarkup(elements,parentId='',depth=0,visited=new Set()){
+  return (elements||[]).filter(item=>(item.parentId||'')===parentId&&!visited.has(item.id)).map(item=>{
+    visited.add(item.id);const label=item.text||item.name||item.type;const children=buildUIHierarchyMarkup(elements,item.id,depth+1,visited);
+    return `<div class="ui-tree-row" style="--ui-tree-depth:${Math.min(depth,12)}"><button type="button" class="ui-tree-select ${selectedUIElementId===item.id?'active':''}" data-select-ui-item="${item.id}"><span>${depth?'↳':'◇'}</span><b>${escapeHtml(label)}</b><small>${escapeHtml(item.type)}</small></button><button type="button" class="ui-tree-add-child" data-ui-add-child-of="${item.id}" title="Добавить дочерний элемент">＋</button></div>${children}`;
+  }).join('');
+}
+function addUIChildElement(parentId,type){
+  const parent=currentProject?.uiElements?.find(item=>item.id===parentId);if(!parent){toast('Сначала выбери родительский элемент','error');return;}
+  addUIElement(type,parentId);
+}
 function renderWorkbench() {
   if (!currentProject || !workbenchMode) return;
   const previousCanvas = $('#zero-node-canvas');
@@ -3235,11 +3267,35 @@ function renderWorkbench() {
     $('#zerobox-help').addEventListener('click',renderZeroBoxHelp);
     renderZeroWires(box);
   } else {
-    body.innerHTML = `<div class="ui-designer-grid"><aside class="ui-palette" data-workbench-role="palette"><div class="workbench-section-title">ИНТЕРФЕЙСЫ</div><select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select><div class="ui-screen-actions"><button id="ui-screen-new" title="Новый экран">＋</button><button id="ui-screen-duplicate" title="Дублировать экран">▢</button><button id="ui-screen-rename" title="Переименовать экран">✎</button><button id="ui-screen-settings" title="Размер и ориентация экрана">⚙</button><button id="ui-screen-delete" title="Удалить экран">×</button></div><div class="screen-size-summary" id="ui-screen-size-summary"></div><div class="workbench-section-title">ЭЛЕМЕНТЫ UI</div>${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['TextInput','⌨ Поле ввода'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай элементы на макете. Размеры и координаты задаются справа.</div></aside><div class="ui-stage-wrap" data-workbench-role="canvas"><div class="ui-design-stage" id="ui-design-stage"></div></div><aside class="ui-property-panel" id="ui-property-panel" data-workbench-role="properties"></aside></div>`;
+    const activeScreen=getActiveUIScreen();
+    const hierarchyMarkup=buildUIHierarchyMarkup(currentProject.uiElements||[]);
+    body.innerHTML = `<div class="ui-designer-grid">
+      <aside class="ui-palette" data-workbench-role="palette">
+        <div class="workbench-section-title">ЭКРАН</div>
+        <select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select>
+        <div class="ui-screen-actions"><button id="ui-screen-new" title="Новый экран">＋</button><button id="ui-screen-duplicate" title="Дублировать экран">▢</button><button id="ui-screen-rename" title="Переименовать экран">✎</button><button id="ui-screen-settings" title="Размер и ориентация экрана">⚙</button><button id="ui-screen-delete" title="Удалить экран">×</button></div>
+        <label class="field-label ui-template-label">Шаблон экрана<select class="field-select" id="ui-screen-template">${UI_SCREEN_TEMPLATES.map(template=>`<option value="${template.id}" ${(activeScreen?.templateId===template.id)?'selected':''}>${escapeHtml(template.name)}</option>`).join('')}</select></label>
+        <button class="button button-quiet button-small" id="ui-screen-apply-template">Применить шаблон</button>
+        <div class="screen-size-summary" id="ui-screen-size-summary"></div>
+        <div class="workbench-section-title">ДОБАВИТЬ ЭЛЕМЕНТ</div>
+        ${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['TextInput','⌨ Поле ввода'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}
+        <div class="workbench-section-title ui-tree-title">ИЕРАРХИЯ ЭЛЕМЕНТОВ</div>
+        <div class="ui-element-tree" id="ui-element-tree">${hierarchyMarkup||'<div class="modal-note">Экран пока пуст.</div>'}</div>
+        <label class="field-label">Тип дочернего элемента<select class="field-select" id="ui-child-type">${[['Button','Кнопка'],['ScreenButton','Переход на экран'],['Text','Текст'],['TextInput','Поле ввода'],['Scale','Шкала'],['Slider','Ползунок'],['Background','Фон'],['CameraControlArea','Зона камеры'],['Joystick','Джойстик']].map(([type,label])=>`<option value="${type}">${label}</option>`).join('')}</select></label>
+        <button class="button button-quiet button-small" id="ui-add-child" ${selectedUIElementId?'':'disabled'}>＋ Добавить внутрь выбранного</button>
+        <div class="workbench-toolbar-tip">Выбирай элементы в дереве, меняй порядок слоёв и добавляй вложенные элементы. Размеры на макете можно менять перетаскиванием.</div>
+      </aside>
+      <div class="ui-stage-wrap" data-workbench-role="canvas"><div class="ui-design-stage" id="ui-design-stage"></div></div>
+      <aside class="ui-property-panel" id="ui-property-panel" data-workbench-role="properties"></aside>
+    </div>`;
     const stage=$('#ui-design-stage'); renderUIStage(stage,true);
     updateUIScreenSizeSummary();
     $('#ui-screen-select').addEventListener('change',e=>switchUIScreen(e.target.value));
     $('#ui-screen-new').addEventListener('click',createUIScreen);$('#ui-screen-duplicate').addEventListener('click',duplicateUIScreen);$('#ui-screen-rename').addEventListener('click',renameUIScreen);$('#ui-screen-settings').addEventListener('click',editUIScreenSettings);$('#ui-screen-delete').addEventListener('click',deleteUIScreen);
+    $('#ui-screen-apply-template')?.addEventListener('click',applyUIScreenTemplate);
+    $('#ui-add-child')?.addEventListener('click',()=>{if(!selectedUIElementId){toast('Выбери родительский элемент в иерархии','error');return;}addUIChildElement(selectedUIElementId,$('#ui-child-type')?.value||'Button');});
+    $$('[data-select-ui-item]').forEach(button=>button.addEventListener('click',()=>{selectedUIElementId=button.dataset.selectUiItem;renderWorkbench();}));
+    $$('[data-ui-add-child-of]').forEach(button=>button.addEventListener('click',()=>{const parentId=button.dataset.uiAddChildOf;selectedUIElementId=parentId;addUIChildElement(parentId,$('#ui-child-type')?.value||'Button');}));
     $$('[data-add-ui]').forEach(b=>b.addEventListener('click',()=>addUIElement(b.dataset.addUi)));
     renderUIProperties();
   }
@@ -3251,7 +3307,7 @@ function createCustomVariable() {
   $('#variable-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#variable-name').value.trim();const type=$('#variable-type').value;if(!name)return;if(currentProject.variables.some(v=>v.name===name)){toast('Переменная с таким именем уже существует','error');return;}let value=$('#variable-value').value;if(type==='NumericArray'){value=String(value).split(/[,;\s]+/).map(part=>Number(part.trim())).filter(Number.isFinite);if(!value.length)value=[0];}else if(type==='Number'||type==='Transparency')value=Number(value)||0;else if(type==='Yesorno')value=value==='true'||value==='1';box.variables||=[];box.variables.push({id:uid(),name,type,value});currentProject.variables||=[];currentProject.variables.push({id:uid(),name,type,value});closeModal();renderWorkbench();scheduleSave();});
 }
 function defaultUIElement(type) {
-  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':type==='TextInput'?'Введите текст':'',value:60,max:100,color:'#ffffff',opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:''};
+  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':type==='TextInput'?'Введите текст':'',value:60,max:100,color:'#ffffff',buttonColor:'#292929',borderColor:'#999999',borderWidth:2,buttonTextureAssetId:'',buttonTextureFit:'cover',layer:2,opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:'',parentId:''};
   if(type==='Scale')Object.assign(base,{x:8,y:82,w:28,h:6});
   if(type==='Slider')Object.assign(base,{x:62,y:82,w:28,h:7});
   if(type==='Background')Object.assign(base,{x:0,y:0,w:100,h:100,imageAssetId:'',fit:'cover'});
@@ -3261,8 +3317,8 @@ function defaultUIElement(type) {
   if(type==='ScreenButton')base.targetScreenId=currentProject.uiScreens.find(screen=>screen.id!==currentProject.activeUIScreenId)?.id||'';
   return base;
 }
-function addUIElement(type) {
-  const el=defaultUIElement(type);currentProject.uiElements||=[];currentProject.uiElements.push(el);
+function addUIElement(type,parentId=null) {
+  const el=defaultUIElement(type);if(parentId){const parent=currentProject.uiElements?.find(item=>item.id===parentId);if(parent){el.parentId=parentId;el.x=6;el.y=6;el.w=60;el.h=26;el.layer=(Number(parent.layer)||1)+1;}}currentProject.uiElements||=[];currentProject.uiElements.push(el);
   if(type==='Joystick'){currentProject.variables||=[];const existing=[...new Map([...(currentProject.uiElements||[]),...(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[])].filter(item=>item.type==='Joystick').map(item=>[item.id,item])).values()];let index=existing.length;let prefix=index===1?'Joystick':`Joystick${index}`;while(currentProject.variables.some(v=>v.name===`${prefix}X`||v.name===`${prefix}Y`)){index++;prefix=`Joystick${index}`;}el.xVariable=`${prefix}X`;el.yVariable=`${prefix}Y`;for(const name of [el.xVariable,el.yVariable])if(!currentProject.variables.some(v=>v.name===name))currentProject.variables.push({id:uid(),name,type:'Number',value:0,system:true});}
   selectedUIElementId=el.id;renderWorkbench();scheduleSave();
 }
@@ -3285,12 +3341,12 @@ function editUIScreenSettings(){
   updatePreview();
 }
 function renderUIStage(host, design=false) {
-  if(!host)return;host.innerHTML='';
+  if(!host)return;host.innerHTML='';const uiNodeMap=new Map(),uiPendingNodes=[];
   if(design){const size=getUIScreenResolution();host.style.aspectRatio=`${size.width} / ${size.height}`;host.style.setProperty('--ui-device-aspect',`${size.width} / ${size.height}`);host.dataset.resolution=`${size.width}x${size.height}`;}
   (currentProject.uiElements||[]).forEach(el=>{
     const node=document.createElement('div');node.className=`ui-element ${el.type==='Text'?'text-element':''} ${el.type==='Background'?'background-element':''} ${design&&selectedUIElementId===el.id?'selected':''}`;
-    node.dataset.uiId=el.id;node.style.left=`${el.x}%`;node.style.top=`${el.y}%`;node.style.width=`${el.w}%`;node.style.height=`${el.h}%`;node.style.zIndex=el.type==='Background'?'0':'2';node.style.opacity=String(el.opacity??1);
-    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');if(el.color)b.style.background=el.color;b.style.color='#171717';if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
+    node.dataset.uiId=el.id;node.style.left=`${el.x}%`;node.style.top=`${el.y}%`;node.style.width=`${el.w}%`;node.style.height=`${el.h}%`;node.style.zIndex=String(Number.isFinite(Number(el.layer))?Number(el.layer):(el.type==='Background'?0:2));node.style.opacity=String(el.opacity??1);
+    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');b.style.backgroundColor=el.buttonColor||el.color||'#292929';b.style.color=el.textColor||'#ffffff';b.style.borderColor=el.borderColor||'#999999';b.style.borderWidth=`${Math.max(0,Math.min(16,Number(el.borderWidth??2)))}px`;const texture=(currentProject.assets||[]).find(a=>a.id===el.buttonTextureAssetId&&a.type==='texture');if(texture){b.style.backgroundImage=`url("${getAssetUrl(texture)}")`;b.style.backgroundSize=el.buttonTextureFit==='contain'?'contain':el.buttonTextureFit==='repeat'?'auto':'cover';b.style.backgroundRepeat=el.buttonTextureFit==='repeat'?'repeat':'no-repeat';b.style.backgroundPosition='center';}if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
     else if(el.type==='Text'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);node.textContent=String(el.text||'Text').replaceAll('{value}',String(v?.value??''));node.style.fontSize=`${el.fontSize||22}px`;node.style.color=el.color||'#ffffff';}
     else if(el.type==='TextInput'){const input=document.createElement('input');input.type='text';input.placeholder=el.text||el.placeholder||'Введите текст';input.value=String(el.valueText||'');input.style.width='100%';input.style.height='100%';input.style.boxSizing='border-box';input.style.background=el.color||'#ffffff';input.style.color='#171717';input.style.border='1px solid #999';input.style.borderRadius='6px';if(!design)input.addEventListener('input',()=>{el.valueText=input.value;const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);if(v)v.value=input.value;});node.appendChild(input);}
     else if(el.type==='Scale'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);const current=v?Number(v.value):Number(el.value)||0;const track=document.createElement('div');track.className='ui-scale-track';const fill=document.createElement('div');fill.className='ui-scale-fill';fill.style.width=`${Math.max(0,Math.min(100,current/(Number(el.max)||100)*100))}%`;fill.style.background=el.color||'#ffffff';track.appendChild(fill);node.appendChild(track);}
@@ -3306,8 +3362,14 @@ function renderUIStage(host, design=false) {
       const release=()=>{if(!el.sticky){el.pressed=false;heldButtonIds.delete(el.id);button.classList.remove('sticky-on');dispatchZeroBoxEvent('ButtonResting',el.id);dispatchZeroBoxEvent('Buttonclicked',el.id);if(el.type==='ScreenButton'&&el.targetScreenId)switchUIScreen(el.targetScreenId);}};
       button.addEventListener('pointerdown',e=>{button.setPointerCapture?.(e.pointerId);press();});button.addEventListener('pointerup',release);button.addEventListener('pointercancel',release);button.addEventListener('lostpointercapture',release);
     }
-    host.appendChild(node);
+    uiNodeMap.set(el.id,node);uiPendingNodes.push({el,node});
   });
+  // Parent/child UI elements are real nested DOM nodes; child coordinates are relative to the parent box.
+  for(const item of uiPendingNodes){
+    const parentId=item.el.parentId,parentNode=parentId?uiNodeMap.get(parentId):null;
+    const safeParent=parentNode&&parentNode!==item.node&&!item.node.contains(parentNode)?parentNode:null;
+    if(safeParent){safeParent.style.overflow='visible';item.node.style.overflow='visible';safeParent.appendChild(item.node);}else host.appendChild(item.node);
+  }
   if(design){
     host.style.touchAction='none';
     host.onpointerdown=event=>{
@@ -3347,13 +3409,21 @@ function renderUIStage(host, design=false) {
     };
   }
 }
+function isUIElementDescendant(candidateId,ancestorId,items=currentProject?.uiElements||[]){
+  let current=items.find(item=>item.id===candidateId),guard=0;
+  while(current?.parentId&&guard++<items.length+1){if(current.parentId===ancestorId)return true;current=items.find(item=>item.id===current.parentId);}
+  return false;
+}
 function renderUIProperties() {
   const panel=$('#ui-property-panel');if(!panel)return;
   const el=currentProject.uiElements.find(item=>item.id===selectedUIElementId);
   if(!el){panel.innerHTML='<div class="workbench-section-title">СВОЙСТВА</div><div class="modal-note">Выбери элемент на макете или добавь новый.</div>';return;}
   const field=(key,label,type='number',value=el[key])=>`<label class="field-label">${label}<input class="field-input" data-ui-field="${key}" type="${type}" value="${escapeAttr(value??'')}" /></label>`;
-  panel.innerHTML=`<div class="workbench-section-title">СВОЙСТВА ЭЛЕМЕНТА</div><b>${el.type}</b><div class="ui-property-grid">${field('x','X, %')}${field('y','Y, %')}${field('w','Ширина, %')}${field('h','Высота, %')}</div>${field('text','Текст / placeholder','text')}${field('color','Цвет','color')}${el.type==='Text'?field('fontSize','Размер текста'):''}${el.type==='Background'?`<label class="field-label">Фоновое изображение<select class="field-select" id="ui-background-image"><option value="">Без изображения</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${el.imageAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Вписывание<select class="field-select" id="ui-background-fit"><option value="cover" ${el.fit!=='contain'?'selected':''}>Заполнить</option><option value="contain" ${el.fit==='contain'?'selected':''}>Вписать целиком</option></select></label>`:''}${['Scale','Slider'].includes(el.type)?field('value','Значение'):''}${['Scale','Slider'].includes(el.type)?field('max','Максимум'):''}${['Text','TextInput','Scale','Slider'].includes(el.type)?`<label class="field-label">Связать с переменной<select class="field-select" id="ui-variable"><option value="">Без связи</option>${(currentProject.variables||[]).map(v=>`<option value="${escapeAttr(v.name)}" ${el.variableName===v.name?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}</select></label>`:''}${el.type==='Text'?'<div class="modal-note">В тексте используй {value}, чтобы вывести текущее значение связанной переменной.</div>':''}${['Button','ScreenButton'].includes(el.type)?`<label class="check-line"><input type="checkbox" id="ui-sticky" ${el.sticky?'checked':''}/> Залипающая кнопка</label><label class="field-label">Назначить клавишу <span>${escapeHtml(el.keyLabel||el.key||'не назначена')}</span><button class="button button-quiet" id="ui-assign-key">Нажми клавишу на клавиатуре</button></label><label class="field-label">Запуск ZeroBox<select class="field-select" id="ui-zerobox"><option value="">Нет</option>${currentProject.zeroBoxes.map(b=>`<option value="${b.id}" ${el.zeroBoxId===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}</select></label>${el.type==='ScreenButton'?`<label class="field-label">Открыть интерфейс<select class="field-select" id="ui-target-screen">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${el.targetScreenId===screen.id?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select></label>`:''}`:''}${el.type==='Joystick'?`<div class="modal-note">Джойстик записывает оси в NumericArray/Number переменные для блока Moving.</div>${field('xVariable','Переменная X','text')}${field('yVariable','Переменная Y','text')}`:''}${el.type==='CameraControlArea'?'<div class="modal-note">Прозрачная сенсорная область для вращения игровой камеры. Размещай поверх свободного участка экрана.</div>':''}<button class="button button-danger" id="ui-delete-element">Удалить элемент</button><div class="modal-note">Координаты и размеры задаются в процентах от разрешения активного экрана.</div>`;
+  panel.innerHTML=`<div class="workbench-section-title">СВОЙСТВА ЭЛЕМЕНТА</div><b>${el.type}</b><div class="ui-property-grid">${field('x','X, %')}${field('y','Y, %')}${field('w','Ширина, %')}${field('h','Высота, %')}${field('layer','Слой (больше = выше)')}</div><label class="field-label">Родительский элемент<select class="field-select" id="ui-parent-element"><option value="">Корневой элемент</option>${currentProject.uiElements.filter(item=>item.id!==el.id&&!isUIElementDescendant(item.id,el.id)).map(item=>`<option value="${item.id}" ${el.parentId===item.id?'selected':''}>${escapeHtml(item.text||item.type)}</option>`).join('')}</select></label>${field('text','Текст / placeholder','text')}${field('color','Цвет','color')}${el.type==='Text'?field('fontSize','Размер текста'):''}${['Button','ScreenButton'].includes(el.type)?`<div class="workbench-section-title">ОФОРМЛЕНИЕ КНОПКИ</div>${field('buttonColor','Цвет поверхности','color',el.buttonColor||el.color||'#292929')}${field('borderColor','Цвет грани / рамки','color',el.borderColor||'#999999')}${field('borderWidth','Толщина грани, px','number',el.borderWidth??2)}<label class="field-label">Текстура кнопки<select class="field-select" id="ui-button-texture"><option value="">Без текстуры</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${el.buttonTextureAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Режим текстуры<select class="field-select" id="ui-button-texture-fit"><option value="cover" ${el.buttonTextureFit==='cover'?'selected':''}>Заполнить</option><option value="contain" ${el.buttonTextureFit==='contain'?'selected':''}>Вписать</option><option value="repeat" ${el.buttonTextureFit==='repeat'?'selected':''}>Повторять (tiling)</option></select></label>`:''}${el.type==='Background'?`<label class="field-label">Фоновое изображение<select class="field-select" id="ui-background-image"><option value="">Без изображения</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${el.imageAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Вписывание<select class="field-select" id="ui-background-fit"><option value="cover" ${el.fit!=='contain'?'selected':''}>Заполнить</option><option value="contain" ${el.fit==='contain'?'selected':''}>Вписать целиком</option></select></label>`:''}${['Scale','Slider'].includes(el.type)?field('value','Значение'):''}${['Scale','Slider'].includes(el.type)?field('max','Максимум'):''}${['Text','TextInput','Scale','Slider'].includes(el.type)?`<label class="field-label">Связать с переменной<select class="field-select" id="ui-variable"><option value="">Без связи</option>${(currentProject.variables||[]).map(v=>`<option value="${escapeAttr(v.name)}" ${el.variableName===v.name?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}</select></label>`:''}${el.type==='Text'?'<div class="modal-note">В тексте используй {value}, чтобы вывести текущее значение связанной переменной.</div>':''}${['Button','ScreenButton'].includes(el.type)?`<label class="check-line"><input type="checkbox" id="ui-sticky" ${el.sticky?'checked':''}/> Залипающая кнопка</label><label class="field-label">Назначить клавишу <span>${escapeHtml(el.keyLabel||el.key||'не назначена')}</span><button class="button button-quiet" id="ui-assign-key">Нажми клавишу на клавиатуре</button></label><label class="field-label">Запуск ZeroBox<select class="field-select" id="ui-zerobox"><option value="">Нет</option>${currentProject.zeroBoxes.map(b=>`<option value="${b.id}" ${el.zeroBoxId===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}</select></label>${el.type==='ScreenButton'?`<label class="field-label">Открыть интерфейс<select class="field-select" id="ui-target-screen">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${el.targetScreenId===screen.id?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select></label>`:''}`:''}${el.type==='Joystick'?`<div class="modal-note">Джойстик записывает оси в NumericArray/Number переменные для блока Moving.</div>${field('xVariable','Переменная X','text')}${field('yVariable','Переменная Y','text')}`:''}${el.type==='CameraControlArea'?'<div class="modal-note">Прозрачная сенсорная область для вращения игровой камеры. Размещай поверх свободного участка экрана.</div>':''}<button class="button button-danger" id="ui-delete-element">Удалить элемент</button><div class="modal-note">Координаты и размеры задаются в процентах от разрешения активного экрана.</div>`;
   $$('[data-ui-field]').forEach(input=>input.addEventListener('change',()=>{el[input.dataset.uiField]=input.type==='number'?Number(input.value):input.value;renderWorkbench();scheduleSave();}));
+  $('#ui-parent-element')?.addEventListener('change',e=>{el.parentId=e.target.value||'';renderWorkbench();scheduleSave();});
+  $('#ui-button-texture')?.addEventListener('change',e=>{el.buttonTextureAssetId=e.target.value||'';renderWorkbench();scheduleSave();});
+  $('#ui-button-texture-fit')?.addEventListener('change',e=>{el.buttonTextureFit=e.target.value;renderWorkbench();scheduleSave();});
   $('#ui-background-image')?.addEventListener('change',e=>{el.imageAssetId=e.target.value;renderWorkbench();scheduleSave();});
   $('#ui-background-fit')?.addEventListener('change',e=>{el.fit=e.target.value;renderWorkbench();scheduleSave();});
   $('#ui-variable')?.addEventListener('change',e=>{el.variableName=e.target.value||'';renderWorkbench();scheduleSave();});
@@ -3361,7 +3431,7 @@ function renderUIProperties() {
   $('#ui-assign-key')?.addEventListener('click',()=>{uiKeyCaptureId=el.id;toast('Нажми нужную клавишу на клавиатуре', 'success');});
   $('#ui-zerobox')?.addEventListener('change',e=>{el.zeroBoxId=e.target.value;scheduleSave();});
   $('#ui-target-screen')?.addEventListener('change',e=>{el.targetScreenId=e.target.value;scheduleSave();});
-  $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
+  $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements.forEach(item=>{if(item.parentId===el.id)item.parentId=el.parentId||'';});currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
 }
 let gameUIRenderQueued=false;
 function queueGameUIRender(){if(!isPlaying||gameUIRenderQueued)return;gameUIRenderQueued=true;requestAnimationFrame(()=>{gameUIRenderQueued=false;if(isPlaying)renderGameUI();});}
@@ -3557,6 +3627,7 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     const visits=(visited.get(current)||0)+1;visited.set(current,visits);if(visits>Math.max(1,Math.min(30,Number(c.repeat)||1)))break;
     executed++;
     if(b.type==='Close')break;
+    if(b.type==='ExitGame'){if(isPlaying)stopPlayMode();else toast('ExitGame работает во время игрового теста','success');break;}
     if(eventTypes.includes(b.type)){if(eventName==='manual'){current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}break;}
     if(b.type==='Model'){executeModelBlock(c);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
     if(b.type==='Particles'){executeParticlesBlock(c);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
@@ -3758,7 +3829,7 @@ function openModelStudio(){
     if(r.orbit.touches&&THREE.TOUCH){r.orbit.touches.ONE=THREE.TOUCH.ROTATE;r.orbit.touches.TWO=THREE.TOUCH.DOLLY_PAN;}
     r.orbit.rotateSpeed=1.05;r.orbit.zoomSpeed=1.1;r.orbit.panSpeed=0.9;r.orbit.mouseButtons={LEFT:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.ROTATE};
     r.scene.add(new THREE.HemisphereLight(0xffffff,0x555b65,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,5);r.scene.add(key);
-    r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);const modelGrid=new THREE.GridHelper(200,200,0x555b5b,0x343a3d);modelGrid.rotation.x=Math.PI/2;modelGrid.position.z=0;r.grid=modelGrid;r.scene.add(modelGrid);
+    r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);r.grid=null;
     r.transform=new TransformControls(r.camera,canvas);r.transform.setSize((window.matchMedia?.('(max-width: 850px)').matches||window.matchMedia?.('(pointer: coarse)').matches)?0.82:1.15);
     r.componentPivot=new THREE.Object3D();r.scene.add(r.componentPivot);
     r.transform.addEventListener('dragging-changed',event=>{
@@ -3793,7 +3864,7 @@ function openModelStudio(){
     $('#model-selection-info').textContent='Объект не выбран';
   }
   if(!r.history.length)r.history.push([]);
-  r.resize();r.orbit.update();if(r.grid){r.grid.visible=true;$('#model-grid-toggle')?.classList.add('active');}cancelAnimationFrame(r.raf);r.tick();renderModelObjectList();renderModelFields();setModelMobilePanel('viewport');requestAnimationFrame(()=>r.resize?.());
+  r.resize();r.orbit.update();cancelAnimationFrame(r.raf);r.tick();renderModelObjectList();renderModelFields();setModelMobilePanel('viewport');requestAnimationFrame(()=>r.resize?.());
 }
 async function closeModelStudio(){
   clearModelCreationPreview();clearModelTopologyOverlay();if(modelStudio.transform)modelStudio.transform.detach();cancelAnimationFrame(modelStudio.raf);

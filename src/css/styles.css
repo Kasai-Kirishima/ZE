@@ -1047,3 +1047,29 @@ input[type="range"]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;b
 .node-card-head .node-kind{color:var(--category-color,#77838c)!important;}
 :root[data-theme="light"] .zero-category-group .node-palette button{background:color-mix(in srgb,var(--block-color,#77838c) 10%,#fff);}
 :root[data-theme="light"] .node-card-head{background:color-mix(in srgb,var(--category-color,#77838c) 12%,#fff)!important;}
+
+
+/* ZeroEngine 0.10.15: numeric inputs show only the custom minus/plus controls. */
+input[type="number"]{-moz-appearance:textfield!important;appearance:textfield!important;}
+input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none!important;appearance:none!important;margin:0!important;display:none!important;}
+/* No visual alignment grid in scene, model studio or node workspaces. */
+.node-canvas,.zero-node-surface{background-image:none!important;background-color:var(--bg)!important;}
+.model-viewport,.viewport-wrap{background-image:none!important;}
+
+/* ZeroEngine 0.10.16 — no grid overlays; UI Designer tree, templates and layers. */
+.art-grid{display:none!important;background-image:none!important}
+.node-canvas,.zero-node-surface,.model-viewport,.viewport-wrap,.ui-stage-wrap{background-image:none!important}
+.ui-element-tree{display:flex;flex-direction:column;gap:3px;max-height:clamp(150px,34vh,420px);overflow:auto;padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.ui-tree-row{display:flex;align-items:center;gap:3px;padding-left:calc(min(var(--ui-tree-depth,0),12)*9px);min-width:0}
+.ui-tree-select{display:flex;align-items:center;gap:6px;min-width:0;flex:1;padding:6px 7px;border:1px solid transparent;border-radius:5px;background:var(--panel2);color:var(--text);text-align:left;font-size:9px}
+.ui-tree-select b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
+.ui-tree-select small{margin-left:auto;color:var(--muted);font-size:8px;white-space:nowrap}
+.ui-tree-select.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,var(--panel2))}
+.ui-tree-add-child,.ui-screen-actions button{flex:0 0 27px;width:27px;height:27px;padding:0;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);font-size:14px}
+.ui-tree-add-child:hover,.ui-screen-actions button:hover{border-color:var(--accent)}
+.ui-screen-actions{display:flex;gap:4px;margin:6px 0 10px;flex-wrap:wrap}
+.ui-template-label{margin-top:8px}
+.ui-tree-title{margin-top:16px}
+.ui-element{isolation:isolate}
+.ui-element button{background-color:var(--ui-button-color,#292929)}
+.ui-element-tree .modal-note{padding:7px}
