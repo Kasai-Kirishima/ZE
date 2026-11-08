@@ -2907,6 +2907,7 @@ function bindUI() {
   $('#model-import-open').addEventListener('click',()=>$('#model-import-input').click());
   $('#model-import-input').addEventListener('change',e=>importModelStudioFile(e.target.files?.[0]));
   $('#model-save').addEventListener('click', saveModelStudioAsset);
+  $('#model-download-device')?.addEventListener('click', downloadModelStudioToDevice);
   $('#model-join-selected').addEventListener('click', joinSelectedModelObjects);
   $('#model-separate-selected').addEventListener('click', separateSelectedModelGroup);
   $$('#model-studio [data-model-view]').forEach(button=>button.addEventListener('click',()=>snapModelView(button.dataset.modelView)));
@@ -3351,8 +3352,44 @@ function applyUIScreenTemplate(){
 function buildUIHierarchyMarkup(elements,parentId='',depth=0,visited=new Set()){
   return (elements||[]).filter(item=>(item.parentId||'')===parentId&&!visited.has(item.id)).map(item=>{
     visited.add(item.id);const label=item.text||item.name||item.type;const children=buildUIHierarchyMarkup(elements,item.id,depth+1,visited);
-    return `<div class="ui-tree-row" style="--ui-tree-depth:${Math.min(depth,12)}"><button type="button" class="ui-tree-select ${selectedUIElementId===item.id?'active':''}" data-select-ui-item="${item.id}"><span>${depth?'↳':'◇'}</span><b>${escapeHtml(label)}</b><small>${escapeHtml(item.type)}</small></button><button type="button" class="ui-tree-add-child" data-ui-add-child-of="${item.id}" title="Добавить дочерний элемент">＋</button></div>${children}`;
+    return `<div class="ui-tree-row" draggable="true" data-ui-tree-row="${item.id}" data-ui-parent="${item.parentId||''}" style="--ui-tree-depth:${Math.min(depth,12)}"><button type="button" class="ui-tree-select ${selectedUIElementId===item.id?'active':''}" data-select-ui-item="${item.id}"><span class="ui-tree-grip" title="Перетащить">⋮⋮</span><b>${escapeHtml(label)}</b><small>${escapeHtml(item.type)}</small></button><span class="ui-tree-order"><button type="button" data-ui-order="up" data-ui-order-id="${item.id}" title="Выше">↑</button><button type="button" data-ui-order="down" data-ui-order-id="${item.id}" title="Ниже">↓</button></span><button type="button" class="ui-tree-add-child" data-ui-add-child-of="${item.id}" title="Добавить дочерний элемент">＋</button></div>${children}`;
   }).join('');
+}
+function bindUIHierarchyReorder(){
+  const tree=$('#ui-element-tree');if(!tree||tree.dataset.reorderBound==='1')return;tree.dataset.reorderBound='1';
+  const move=(id,direction)=>{const el=currentProject.uiElements.find(x=>x.id===id);if(!el)return;const siblings=currentProject.uiElements.filter(x=>(x.parentId||'')===(el.parentId||''));const index=siblings.findIndex(x=>x.id===id),next=index+(direction==='up'?-1:1);if(next<0||next>=siblings.length)return;const a=currentProject.uiElements.indexOf(el),other=currentProject.uiElements.indexOf(siblings[next]);[currentProject.uiElements[a],currentProject.uiElements[other]]=[currentProject.uiElements[other],currentProject.uiElements[a]];renderWorkbench();scheduleSave();};
+  tree.querySelectorAll('[data-ui-order]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();move(b.dataset.uiOrderId,b.dataset.uiOrder);}));
+  let dragged=null;
+  tree.querySelectorAll('[data-ui-tree-row]').forEach(row=>{
+    row.addEventListener('dragstart',e=>{dragged=row.dataset.uiTreeRow;e.dataTransfer?.setData('text/plain',dragged);if(e.dataTransfer)e.dataTransfer.effectAllowed='move';});
+    row.addEventListener('dragover',e=>{if(dragged&&dragged!==row.dataset.uiTreeRow){e.preventDefault();row.classList.add('drop-target');}});
+    row.addEventListener('dragleave',()=>row.classList.remove('drop-target'));
+    row.addEventListener('drop',e=>{e.preventDefault();row.classList.remove('drop-target');const from=dragged||e.dataTransfer?.getData('text/plain'),to=row.dataset.uiTreeRow;if(!from||from===to)return;const source=currentProject.uiElements.find(x=>x.id===from),target=currentProject.uiElements.find(x=>x.id===to);if(!source||!target||isUIElementDescendant(to,from)){toast('Нельзя вложить элемент в самого себя или его потомка','error');return;}const rect=row.getBoundingClientRect(),before=e.clientY<rect.top+rect.height*.33,after=e.clientY>rect.bottom-rect.height*.33;if(before||after){source.parentId=target.parentId||'';const siblings=currentProject.uiElements.filter(x=>(x.parentId||'')===(source.parentId||''));const ordered=siblings.filter(x=>x.id!==source.id);const targetIndex=ordered.findIndex(x=>x.id===to);ordered.splice(Math.max(0,targetIndex+(after?1:0)),0,source);const rest=currentProject.uiElements.filter(x=>(x.parentId||'')!==(source.parentId||''));currentProject.uiElements=[...rest,...ordered];}else{source.parentId=target.id;}dragged=null;renderWorkbench();scheduleSave();});
+  });
+  tree.addEventListener('dragend',()=>{dragged=null;tree.querySelectorAll('.drop-target').forEach(x=>x.classList.remove('drop-target'));});
+}
+function downloadModelStudioToDevice(){
+  if(!modelStudio.root?.children.some(o=>!o.userData.reference)){toast('Добавь объект перед экспортом','error');return;}
+  const exporter=new GLTFExporter(),root=new THREE.Group();root.rotation.x=-Math.PI/2;modelStudio.root.updateMatrixWorld(true);modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(cloneModelObjectDeep(o)));
+  exporter.parseAsync(root,{binary:true,onlyVisible:true}).then(result=>{const name=($('#model-name')?.value.trim()||'New_Model').replace(/\.(glb|gltf)$/i,'');downloadBlob(new Blob([result],{type:'model/gltf-binary'}),`${safeName(name)}.glb`);toast('GLB сохранён на устройство','success');}).catch(error=>{console.error(error);toast('Не удалось экспортировать GLB','error');});
+}
+function solidifySelectedModel(){
+  const object=modelStudio.selected;if(!object){toast('Выбери объект или меш','error');return;}
+  const thickness=Math.max(.001,Number(prompt('Толщина оболочки (в единицах модели)','0.08'))||.08);let changed=0;
+  const meshes=modelMeshesWithin(object);
+  for(const mesh of meshes){
+    const source=mesh.geometry;if(!source?.attributes?.position)continue;
+    const geometry=source.index?source.toNonIndexed():source.clone();geometry.computeVertexNormals();
+    const pos=geometry.attributes.position,normal=geometry.attributes.normal,count=pos.count;
+    const positions=new Float32Array(count*2*3),normals=new Float32Array(count*2*3),uv=geometry.attributes.uv?new Float32Array(count*2*2):null;
+    for(let i=0;i<count;i++){const x=pos.getX(i),y=pos.getY(i),z=pos.getZ(i),nx=normal.getX(i),ny=normal.getY(i),nz=normal.getZ(i),outer=i*2,inner=outer+1;positions.set([x,y,z],outer*3);positions.set([x-nx*thickness,y-ny*thickness,z-nz*thickness],inner*3);normals.set([nx,ny,nz],outer*3);normals.set([-nx,-ny,-nz],inner*3);if(uv){uv[outer*2]=uv[inner*2]=geometry.attributes.uv.getX(i);uv[outer*2+1]=uv[inner*2+1]=geometry.attributes.uv.getY(i);}}
+    const indices=[];for(let i=0;i<count;i+=3){const a=i*2,b=(i+1)*2,c=(i+2)*2;indices.push(a,b,c,c+1,b+1,a+1);}
+    // Connect boundary edges of the original triangulated surface to the inset shell.
+    const edgeMap=new Map(),vertexKey=i=>`${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;for(let i=0;i<count;i+=3){for(const [a,b] of [[i,i+1],[i+1,i+2],[i+2,i]]){const ka=vertexKey(a),kb=vertexKey(b),key=ka<kb?`${ka}|${kb}`:`${kb}|${ka}`;const rec=edgeMap.get(key)||{a,b,n:0};rec.n++;edgeMap.set(key,rec);}}
+    for(const edge of edgeMap.values())if(edge.n===1){const a=edge.a*2,b=edge.b*2,ai=a+1,bi=b+1;indices.push(a,b,bi,a,bi,ai);}
+    const out=new THREE.BufferGeometry();out.setAttribute('position',new THREE.BufferAttribute(positions,3));out.setAttribute('normal',new THREE.BufferAttribute(normals,3));if(uv)out.setAttribute('uv',new THREE.BufferAttribute(uv,2));out.setIndex(indices);out.computeBoundingSphere();mesh.geometry.dispose();mesh.geometry=out;changed++;
+  }
+  if(changed){pushModelHistory();renderModelFields();toast(`Создана внутренняя оболочка: ${changed} меш(ей)`,'success');}else toast('Не удалось создать толщину для этой геометрии','error');
 }
 function addUIChildElement(parentId,type){
   const parent=currentProject?.uiElements?.find(item=>item.id===parentId);if(!parent){toast('Сначала выбери родительский элемент','error');return;}
@@ -3435,6 +3472,7 @@ function renderWorkbench() {
     const hierarchyMarkup=buildUIHierarchyMarkup(currentProject.uiElements||[]);
     body.innerHTML = `<div class="ui-designer-grid">
       <aside class="ui-palette" data-workbench-role="palette">
+        <div class="workbench-section-title">ВКЛАДКИ ЭКРАНОВ</div><div class="ui-screen-tabs" id="ui-screen-tabs">${currentProject.uiScreens.map(screen=>`<div class="ui-screen-tab ${screen.id===currentProject.activeUIScreenId?'active':''}"><button type="button" data-ui-screen-tab="${screen.id}">${escapeHtml(screen.name)}</button><button type="button" data-ui-screen-close="${screen.id}" title="Закрыть вкладку">×</button></div>`).join('')}<button type="button" class="ui-screen-tab-add" id="ui-screen-tab-add" title="Добавить вкладку">＋</button></div>
         <div class="workbench-section-title">ЭКРАН</div>
         <select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select>
         <div class="ui-screen-actions"><button id="ui-screen-new" title="Новый экран">＋</button><button id="ui-screen-duplicate" title="Дублировать экран">▢</button><button id="ui-screen-rename" title="Переименовать экран">✎</button><button id="ui-screen-settings" title="Размер и ориентация экрана">⚙</button><button id="ui-screen-delete" title="Удалить экран">×</button></div>
@@ -3455,10 +3493,12 @@ function renderWorkbench() {
     const stage=$('#ui-design-stage'); renderUIStage(stage,true);
     updateUIScreenSizeSummary();
     $('#ui-screen-select').addEventListener('change',e=>switchUIScreen(e.target.value));
+    $('#ui-screen-tab-add')?.addEventListener('click',createUIScreen);$$('[data-ui-screen-tab]').forEach(button=>button.addEventListener('click',()=>switchUIScreen(button.dataset.uiScreenTab)));$$('[data-ui-screen-close]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.uiScreenClose;if(currentProject.activeUIScreenId!==id){const screen=currentProject.uiScreens.find(x=>x.id===id);if(!screen)return;if(currentProject.uiScreens.length<=1)return;currentProject.uiScreens=currentProject.uiScreens.filter(x=>x.id!==id);renderWorkbench();scheduleSave();}else deleteUIScreen();}));
     $('#ui-screen-new').addEventListener('click',createUIScreen);$('#ui-screen-duplicate').addEventListener('click',duplicateUIScreen);$('#ui-screen-rename').addEventListener('click',renameUIScreen);$('#ui-screen-settings').addEventListener('click',editUIScreenSettings);$('#ui-screen-delete').addEventListener('click',deleteUIScreen);
     $('#ui-screen-apply-template')?.addEventListener('click',applyUIScreenTemplate);
     $('#ui-add-child')?.addEventListener('click',()=>{if(!selectedUIElementId){toast('Выбери родительский элемент в иерархии','error');return;}addUIChildElement(selectedUIElementId,$('#ui-child-type')?.value||'Button');});
     $$('[data-select-ui-item]').forEach(button=>button.addEventListener('click',()=>{selectedUIElementId=button.dataset.selectUiItem;renderWorkbench();}));
+    bindUIHierarchyReorder();
     $$('[data-ui-add-child-of]').forEach(button=>button.addEventListener('click',()=>{const parentId=button.dataset.uiAddChildOf;selectedUIElementId=parentId;addUIChildElement(parentId,$('#ui-child-type')?.value||'Button');}));
     $$('[data-add-ui]').forEach(b=>b.addEventListener('click',()=>addUIElement(b.dataset.addUi)));
     renderUIProperties();
@@ -4880,7 +4920,7 @@ function setModelTool(tool){
   if(tool==='merge'){joinSelectedModelObjects();return;}
 }
 
-function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}setModelTool(tool);}
+function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}if(tool==='solidify'){solidifySelectedModel();return;}setModelTool(tool);}
 function copyModelObject(){if(modelStudio.selected)modelStudio.clipboard=cloneModelObjectDeep(modelStudio.selected);}
 function pasteModelObject(){if(!modelStudio.clipboard)return;const copy=cloneModelObjectDeep(modelStudio.clipboard);copy.position.x+=1;copy.name=`${copy.name||'Object'} Copy`;modelStudio.root.add(copy);selectModelMesh(copy);pushModelHistory();}
 function cloneModelObjectDeep(object){const copy=object.clone(true);copy.traverse(child=>{if(child.isMesh){child.geometry=child.geometry?.clone?.()||child.geometry;if(Array.isArray(child.material))child.material=child.material.map(material=>material?.clone?.()||material);else child.material=child.material?.clone?.()||child.material;}});return copy;}
