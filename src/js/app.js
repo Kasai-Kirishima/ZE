@@ -49,6 +49,8 @@ let currentTab = 'assets';
 let assetFolderFilter = 'All';
 let selectedId = null;
 let selectedIds = new Set();
+let hierarchyDragState = null;
+let hierarchySuppressClickUntil = 0;
 let selectionHelpers = new Map();
 let selectedAssetId = null;
 let sceneObjects = new Map();
@@ -1183,13 +1185,168 @@ function setEntityEditorLock(id,locked){
   renderHierarchy();if(selectedId===id)renderInspector();scheduleSave();
   toast(entity.editorLocked?`«${entity.name}» заблокирован от выбора на сцене`:`«${entity.name}» снова доступен для выбора`,'success');
 }
+function getSceneEntityParent(entity, entities = activeSceneData()?.objects || []) {
+  if (!entity?.parentId) return null;
+  return entities.find(item => item.id === entity.parentId && item.id !== entity.id) || null;
+}
+function isSceneEntityDescendant(candidateId, ancestorId, entities = activeSceneData()?.objects || []) {
+  let current = entities.find(item => item.id === candidateId);
+  const visited = new Set();
+  while (current?.parentId && !visited.has(current.id)) {
+    if (current.parentId === ancestorId) return true;
+    visited.add(current.id);
+    current = entities.find(item => item.id === current.parentId);
+  }
+  return false;
+}
+function syncEntityLocalTransform(entity, object) {
+  if (!entity || !object) return;
+  entity.position = object.position.toArray();
+  entity.rotation = [THREE.MathUtils.radToDeg(object.rotation.x), THREE.MathUtils.radToDeg(object.rotation.y), THREE.MathUtils.radToDeg(object.rotation.z)];
+  entity.scale = object.scale.toArray();
+}
+function restoreSceneObjectHierarchy(entities = []) {
+  const validIds = new Set(entities.map(item => item.id));
+  for (const entity of entities) {
+    if (!entity.parentId || !validIds.has(entity.parentId) || entity.parentId === entity.id || isSceneEntityDescendant(entity.parentId, entity.id, entities)) {
+      if (entity.parentId && (entity.parentId === entity.id || !validIds.has(entity.parentId) || isSceneEntityDescendant(entity.parentId, entity.id, entities))) entity.parentId = '';
+      continue;
+    }
+    const parent = sceneObjects.get(entity.parentId);
+    const child = sceneObjects.get(entity.id);
+    if (parent && child && child.parent !== parent) parent.add(child);
+  }
+  scene?.updateMatrixWorld(true);
+}
+function moveSceneObjectInHierarchy(sourceId, targetId = null, placement = 'root') {
+  const entities = activeSceneData()?.objects;
+  if (!entities) return false;
+  const source = entities.find(item => item.id === sourceId);
+  const target = targetId ? entities.find(item => item.id === targetId) : null;
+  if (!source || (targetId && !target) || sourceId === targetId) return false;
+  let nextParentId = '';
+  if (placement === 'inside') nextParentId = target.id;
+  else if ((placement === 'before' || placement === 'after') && target?.parentId) nextParentId = target.parentId;
+  if (nextParentId && (nextParentId === sourceId || isSceneEntityDescendant(nextParentId, sourceId, entities))) {
+    toast('Нельзя переместить объект внутрь собственного потомка', 'error');
+    return false;
+  }
+  if (placement === 'inside' && isSceneEntityDescendant(target.id, sourceId, entities)) {
+    toast('Нельзя создать циклическую иерархию', 'error');
+    return false;
+  }
+  const sourceObject = sceneObjects.get(sourceId);
+  let destinationObject = scene;
+  if (placement === 'inside') destinationObject = sceneObjects.get(target.id) || scene;
+  else if (nextParentId) destinationObject = sceneObjects.get(nextParentId) || scene;
+  if (sourceObject && destinationObject && (sourceObject === destinationObject || sourceObject.getObjectById?.(destinationObject.id))) {
+    toast('Нельзя переместить объект внутрь собственного потомка', 'error');
+    return false;
+  }
+  snapshotHistory();
+  const oldIndex = entities.indexOf(source);
+  if (oldIndex >= 0) entities.splice(oldIndex, 1);
+  if (placement === 'before' && target) entities.splice(Math.max(0, entities.indexOf(target)), 0, source);
+  else if (placement === 'after' && target) entities.splice(Math.max(0, entities.indexOf(target)) + 1, 0, source);
+  else entities.push(source);
+  source.parentId = nextParentId || '';
+  if (sourceObject && destinationObject) {
+    destinationObject.attach(sourceObject);
+    syncEntityLocalTransform(source, sourceObject);
+    sourceObject.updateMatrixWorld(true);
+  }
+  if (transform && selectedId === sourceId && sourceObject && !isPlaying && !viewportInspectionMode && !isEntityEditorLocked(sourceId)) transform.attach(sourceObject);
+  renderHierarchy();
+  renderInspector();
+  updateSelectedStatus();
+  scheduleSave();
+  const label = placement === 'inside' ? `«${target.name}»` : placement === 'root' ? 'корень сцены' : `рядом с «${target?.name || ''}»`;
+  toast(`«${source.name}» перемещён: ${label}`, 'success');
+  return true;
+}
+function bindHierarchyDragAndDrop(list) {
+  if (!list || list.dataset.hierarchyDragBound === 'true') return;
+  list.dataset.hierarchyDragBound = 'true';
+  const clearMarks = () => list.querySelectorAll('.drop-inside,.drop-before,.drop-after,.drag-source').forEach(node => node.classList.remove('drop-inside','drop-before','drop-after','drag-source'));
+  list.addEventListener('pointerdown', event => {
+    const handle = event.target.closest('[data-tree-drag-handle]');
+    if (!handle || event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    hierarchyDragState = { id: handle.dataset.treeDragHandle, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, targetId: null, placement: 'root' };
+  });
+  document.addEventListener('pointermove', event => {
+    const state = hierarchyDragState;
+    if (!state || state.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
+    if (!state.active && distance < 6) return;
+    if (!state.active) {
+      state.active = true;
+      list.querySelector(`[data-tree-id="${CSS.escape(state.id)}"]`)?.classList.add('drag-source');
+      document.body.classList.add('hierarchy-dragging');
+    }
+    event.preventDefault();
+    clearMarks();
+    list.querySelector(`[data-tree-id="${CSS.escape(state.id)}"]`)?.classList.add('drag-source');
+    const pointed = document.elementFromPoint(event.clientX, event.clientY);
+    const row = pointed?.closest?.('[data-tree-id]');
+    if (row && list.contains(row) && row.dataset.treeId !== state.id) {
+      const rect = row.getBoundingClientRect();
+      const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
+      state.targetId = row.dataset.treeId;
+      state.placement = ratio < .24 ? 'before' : ratio > .76 ? 'after' : 'inside';
+      row.classList.add(state.placement === 'inside' ? 'drop-inside' : state.placement === 'before' ? 'drop-before' : 'drop-after');
+    } else if (list.contains(pointed)) {
+      state.targetId = null; state.placement = 'root';
+      list.classList.add('drop-root');
+    } else {
+      state.targetId = null; state.placement = 'outside';
+      list.classList.remove('drop-root');
+    }
+  }, { passive: false });
+  const finish = event => {
+    const state = hierarchyDragState;
+    if (!state || (event.pointerId != null && state.pointerId !== event.pointerId)) return;
+    hierarchyDragState = null;
+    document.body.classList.remove('hierarchy-dragging');
+    list.classList.remove('drop-root');
+    clearMarks();
+    if (!state.active) return;
+    hierarchySuppressClickUntil = Date.now() + 350;
+    if (state.placement !== 'outside') moveSceneObjectInHierarchy(state.id, state.targetId, state.placement);
+  };
+  document.addEventListener('pointerup', finish);
+  document.addEventListener('pointercancel', finish);
+}
 function renderHierarchy() {
   if (!currentProject) return;
   const list = $('#hierarchy-list');
   const entities = activeSceneData()?.objects || [];
+  bindHierarchyDragAndDrop(list);
   if (!entities.length) list.innerHTML = '<div class="asset-empty">Сцена пока пустая.</div>';
-  else list.innerHTML = entities.map(item => `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''} ${item.editorLocked?'editor-locked':''}" data-tree-id="${item.id}" draggable="true"><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span><button type="button" class="tree-lock-button ${item.editorLocked?'active':''}" data-tree-lock="${item.id}" title="${item.editorLocked?'Разблокировать выбор в сцене':'Не выбирать и не двигать в сцене'}">${item.editorLocked?'🔒':'◇'}</button></div>`).join('');
-  $$('[data-tree-id]', list).forEach(row => {row.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-object',row.dataset.treeId);event.dataTransfer.effectAllowed='copy';});row.addEventListener('click', event => {if(event.target.closest('[data-tree-lock]'))return;selectObject(row.dataset.treeId,{additive:event.shiftKey||event.ctrlKey||event.metaKey,toggle:event.shiftKey||event.ctrlKey||event.metaKey});});});
+  else {
+    const validIds = new Set(entities.map(item => item.id));
+    const children = new Map();
+    for (const item of entities) {
+      const parentId = item.parentId && validIds.has(item.parentId) && item.parentId !== item.id ? item.parentId : '';
+      if (!children.has(parentId)) children.set(parentId, []);
+      children.get(parentId).push(item);
+    }
+    const visited = new Set();
+    const renderNode = (item, depth = 0) => {
+      if (visited.has(item.id)) return '';
+      visited.add(item.id);
+      const row = `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''} ${item.editorLocked?'editor-locked':''}" data-tree-id="${escapeAttr(item.id)}" style="--tree-depth:${depth}" title="Перетащи за значок ⋮⋮: на объект — вложить, к краю строки — изменить порядок"><button type="button" class="tree-drag-handle" data-tree-drag-handle="${escapeAttr(item.id)}" aria-label="Переместить в иерархии" title="Перетащить объект">⋮⋮</button><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span><button type="button" class="tree-lock-button ${item.editorLocked?'active':''}" data-tree-lock="${escapeAttr(item.id)}" title="${item.editorLocked?'Разблокировать выбор в сцене':'Не выбирать и не двигать в сцене'}">${item.editorLocked?'🔒':'◇'}</button></div>`;
+      return row + (children.get(item.id) || []).map(child => renderNode(child, depth + 1)).join('');
+    };
+    let markup = (children.get('') || []).map(item => renderNode(item, 0)).join('');
+    // Recover malformed/cyclic legacy hierarchies by showing each unreachable item as a root.
+    for (const item of entities) if (!visited.has(item.id)) markup += renderNode(item, 0);
+    list.innerHTML = markup;
+  }
+  $$('[data-tree-id]', list).forEach(row => row.addEventListener('click', event => {
+    if (Date.now() < hierarchySuppressClickUntil || event.target.closest('[data-tree-lock],[data-tree-drag-handle]')) return;
+    selectObject(row.dataset.treeId,{additive:event.shiftKey||event.ctrlKey||event.metaKey,toggle:event.shiftKey||event.ctrlKey||event.metaKey});
+  }));
   $$('[data-tree-lock]',list).forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();setEntityEditorLock(button.dataset.treeLock,!isEntityEditorLocked(button.dataset.treeLock));}));
   $('#object-count').textContent = localizedCount(entities.length,'objects');
   updateViewportHint();
@@ -1469,6 +1626,7 @@ async function loadSceneIntoViewport() {
     try { await createRuntimeObject(entity); }
     catch (error) { console.warn('Не удалось загрузить объект', entity, error); toast(`Не удалось загрузить «${entity.name}»`, 'error'); }
   }
+  restoreSceneObjectHierarchy(data.objects || []);
   isRestoring = false;
   selectObject(null);
   renderHierarchy();
@@ -1478,7 +1636,13 @@ function removeSceneObject(id, takeSnapshot = true) {
   const entity = findEntity(id); if (!entity) return null;
   if (takeSnapshot && !isPlaying) snapshotHistory();
   const object = sceneObjects.get(id);
-  if (object) { scene.remove(object); object.traverse(child=>{child.geometry?.dispose?.(); if(child.material) for(const m of (Array.isArray(child.material)?child.material:[child.material])) m?.dispose?.();}); }
+  for (const childEntity of activeSceneData().objects.filter(item => item.parentId === id)) {
+    const childObject = sceneObjects.get(childEntity.id);
+    childEntity.parentId = entity.parentId || '';
+    const nextParent = childEntity.parentId ? sceneObjects.get(childEntity.parentId) : scene;
+    if (childObject && nextParent) { nextParent.attach(childObject); syncEntityLocalTransform(childEntity, childObject); }
+  }
+  if (object) { object.parent?.remove(object); object.traverse(child=>{child.geometry?.dispose?.(); if(child.material) for(const m of (Array.isArray(child.material)?child.material:[child.material])) m?.dispose?.();}); }
   sceneObjects.delete(id); collisionHelpers.delete(id); activeSceneData().objects = activeSceneData().objects.filter(item=>item.id!==id);
   selectedIds.delete(id); if(selectedId===id)selectedId=[...selectedIds].at(-1)||null;
   if(transform){const active=selectedId?sceneObjects.get(selectedId):null;if(active)transform.attach(active);else transform.detach();}
@@ -1502,7 +1666,7 @@ function duplicateSelectedObject() {
   snapshotHistory();
   const duplicate = clone(entity); duplicate.id = uid(); duplicate.name = `${entity.name} Copy`; duplicate.position[0] += 1.2;
   activeSceneData().objects.push(duplicate);
-  createRuntimeObject(duplicate).then(() => { selectObject(duplicate.id); renderHierarchy(); scheduleSave(); });
+  createRuntimeObject(duplicate).then(() => { const duplicateObject=sceneObjects.get(duplicate.id);const parentObject=duplicate.parentId?sceneObjects.get(duplicate.parentId):null;if(duplicateObject&&parentObject)parentObject.add(duplicateObject);selectObject(duplicate.id); renderHierarchy(); scheduleSave(); });
 }
 function applyEntityAppearance(entity, object) {
   const savedMaterial=(currentProject.materials||[]).find(m=>m.id===entity.material?.materialId);

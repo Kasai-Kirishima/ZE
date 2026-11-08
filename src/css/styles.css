@@ -1073,3 +1073,27 @@ input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-ou
 .ui-element{isolation:isolate}
 .ui-element button{background-color:var(--ui-button-color,#292929)}
 .ui-element-tree .modal-note{padding:7px}
+
+
+/* ZeroEngine 0.10.17 — draggable scene hierarchy for mouse and touch. */
+.hierarchy-list{position:relative;overscroll-behavior:contain}
+.tree-item{padding-left:calc(7px + var(--tree-depth,0)*15px)!important;min-width:0;gap:6px;transition:background .08s,border-color .08s;}
+.tree-item[style*="--tree-depth"]{border-left:1px solid transparent}
+.tree-drag-handle{flex:0 0 18px;width:18px;height:22px;min-width:18px;margin:0;padding:0;border:0;border-radius:3px;background:transparent;color:#718087;font-size:12px;letter-spacing:-3px;line-height:1;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;display:grid;place-items:center}
+.tree-drag-handle:hover,.tree-drag-handle:active{background:#34433a;color:var(--accent,#a7d66e)}
+.tree-item:hover .tree-drag-handle{color:#b9c9c0}
+.tree-item.drag-source{opacity:.36;background:#26352c}
+.tree-item.drop-inside{background:#354a37!important;outline:1px solid #9bce6c;outline-offset:-1px}
+.tree-item.drop-before{box-shadow:inset 0 2px 0 #a7d66e}
+.tree-item.drop-after{box-shadow:inset 0 -2px 0 #a7d66e}
+.hierarchy-list.drop-root{outline:1px dashed #a7d66e;outline-offset:-4px;background:#a7d66e0b}
+.hierarchy-dragging,.hierarchy-dragging *{cursor:grabbing!important;user-select:none!important;-webkit-user-select:none!important}
+.hierarchy-dragging #viewport-canvas{pointer-events:none}
+@media(max-width:850px),(pointer:coarse){
+  .tree-item{height:38px;min-height:38px;padding-right:4px!important;gap:6px}
+  .tree-drag-handle{width:25px;height:30px;min-width:25px;font-size:14px}
+  .tree-name{font-size:12px;min-width:0;flex:1}
+  .tree-kind{font-size:8px;max-width:60px;overflow:hidden;text-overflow:ellipsis}
+  .tree-lock-button{flex-basis:27px;width:27px;min-width:27px;height:27px}
+  .hierarchy-footer{font-size:8px}
+}

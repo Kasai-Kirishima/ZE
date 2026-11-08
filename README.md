@@ -19,3 +19,15 @@ Serve this folder from a local HTTP server (ES modules and imported assets requi
 ## Notes
 
 This remains an iterative prototype. Browser and device runtime behavior should be tested in the target browser, especially texture loading and touch interactions.
+
+
+## 0.10.17 — Scene hierarchy drag & drop
+
+- Drag an object by the `⋮⋮` handle in the Hierarchy panel.
+- Drop on the center of another row to parent the object under it.
+- Drop near the top or bottom edge of a row to reorder it before or after that sibling.
+- Drop on empty space inside the Hierarchy panel to move the object to the scene root.
+- Reparenting preserves the object's world transform and stores its local transform relative to the new parent.
+- Parent-child relationships are restored when a scene is loaded and are included in project saves and undo snapshots.
+- Cyclic parenting is rejected. Deleting a parent moves its children to the deleted object's parent while preserving their world transforms.
+- Supports mouse and touch dragging via Pointer Events.
