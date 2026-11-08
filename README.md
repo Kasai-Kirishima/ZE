@@ -1,4 +1,4 @@
-# ZeroEngine 0.10.13
+# ZeroEngine 0.10.14
 
 ZeroEngine is a browser-based scene and game-editor prototype. Extract the ZIP and serve the folder using a local static server or web host. Three.js and JSZip are loaded from CDNs, so an internet connection is required for the editor runtime.
 
@@ -23,3 +23,21 @@ ZeroEngine is a browser-based scene and game-editor prototype. Extract the ZIP a
 ## Run
 
 Open `index.html` through a local static server or publish the repository root with GitHub Pages. Extract the ZIP before running the project.
+
+
+## Changes in 0.10.14 — UI access, ZeroBox categories, numeric controls, bevel and preview skybox
+
+- Restored all ZeroBox and UI Designer panels on touch devices. The library, node canvas / UI preview, and properties now form one vertically scrollable workspace instead of being hidden behind removed mobile tabs.
+- Kept UI screens in a dropdown selector, with per-screen orientation and resolution controls. The preview stage uses the selected screen's actual aspect ratio on mobile and desktop.
+- Fixed numeric steppers: they now advance to the next or previous valid step using the correct step base, respect minimum and maximum values, and dispatch the change event before input so state-saving listeners can persist edits even when a render replaces the field.
+- Fixed the test Skybox dome size so it remains inside the preview camera's far clipping range.
+- Removed the unused Bend tool from Model Studio.
+- Rebuilt bevel/sharpen face operations in the original mesh and added multiple connected rings for a smoother bevel profile; no separate rim/cap objects are created.
+- Added category-specific colors to ZeroBox block library groups and the blocks placed on the graph.
+- Removed duplicate UI resolution preset entries and made project orientation follow the selected base resolution by default.
+- Kept material/texture controls hidden for light entities and kept Player Start out of the scene object creation palette.
+
+## Notes and limitations
+
+- Bevel/sharpen now rebuild selected face regions as connected mesh geometry; complex multi-loop selections and imported meshes with non-manifold topology may still need additional validation.
+- A complete interactive browser and physical Android device test is not available in this build environment; JavaScript, HTML/CSS structure, and archive integrity are checked before delivery.
