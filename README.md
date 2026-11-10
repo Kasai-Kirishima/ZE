@@ -1,33 +1,64 @@
-# ZeroEngine 0.10.16
+# ZeroEngine 0.10.18
 
-Browser-based game engine and editor prototype.
+Единое приложение ZeroEngine с двумя типами проектов в одном главном меню:
 
-## Changes in 0.10.16
+- **Игровые проекты** — сцены, ассеты, физика, игровой режим, ZeroBox и UI Designer.
+- **3D-модели** — отдельные проекты для создания и редактирования геометрии, материалов и экспорта моделей.
 
-- Removed the decorative and workspace alignment grids from the home screen, scene viewport, Model Studio and node workspaces.
-- Numeric inputs hide browser-native up/down spinners; custom `−` and `+` buttons remain.
-- Scene and material assets can be renamed from the asset panel.
-- UI Designer includes screen templates for desktop, tablet and phone aspect ratios, with portrait/landscape dimensions and custom screen settings.
-- UI elements support layer ordering, parent assignment and nested child elements in a hierarchy tree.
-- UI buttons support face color, edge/border color and an imported texture with cover/contain/repeat modes.
-- ZeroBox includes an `ExitGame` terminal block that stops the active play test and returns to the editor.
+Оба типа проектов хранятся в одном локальном хранилище браузера и отображаются на одной главной странице в двух раздельных секциях. Для каждого типа сохранён собственный рабочий режим: игровой проект открывается в игровом редакторе, проект модели — в Model Studio. Отдельных приложений и отдельных стартовых меню больше нет.
 
-## Run
+## Запуск
 
-Serve this folder from a local HTTP server (ES modules and imported assets require HTTP(S)); do not open `index.html` directly as a `file://` URL.
+1. Распакуй ZIP полностью.
+2. Открой папку через локальный HTTP-сервер или размести её на статическом хостинге.
+3. Открой `index.html` через адрес локального сервера.
+4. Для работы 3D-сцен браузеру нужен доступ к CDN Three.js и JSZip.
 
-## Notes
+Не рекомендуется открывать HTML напрямую через `file://`, поскольку браузеры блокируют загрузку ES-модулей и импортов.
 
-This remains an iterative prototype. Browser and device runtime behavior should be tested in the target browser, especially texture loading and touch interactions.
+## Работа с проектами
+
+- Нажми **Новый проект**, чтобы создать игровую сцену.
+- Нажми **Новая 3D-модель**, чтобы создать отдельный проект моделирования.
+- Все игровые проекты собраны в секции **Игровые проекты**.
+- Все модельные проекты собраны в секции **3D-модели**.
+- Импорт ZIP сохраняет тип проекта из архива. Старые проекты без типа остаются в разделе игровых проектов, чтобы не переносить их автоматически в неподходящий режим.
+- Модель из Model Studio можно экспортировать и затем импортировать в игровой проект как ассет.
+
+## Изменения 0.10.15
+
+- Игровой редактор и 3D Model Studio объединены в одно приложение и одно главное меню.
+- Удалён отдельный экран главного меню 3D Editor.
+- В главном меню добавлены независимые секции **Игровые проекты** и **3D-модели**.
+- Карточки игровых проектов открывают игровой редактор; карточки моделей — Model Studio.
+- Кнопка **Новая 3D-модель** создаёт модельный проект без перехода на отдельный стартовый экран.
+- Проекты обоих типов продолжают храниться в одной локальной базе и экспортироваться в ZIP с указанием `projectType`.
+
+## Структура
+
+- `index.html` — единое главное меню и оба рабочих режима.
+- `src/js/` — логика игрового редактора, Model Studio и управления.
+- `src/css/` — общие стили приложения.
+- `assets/` — каталоги для моделей, текстур, материалов, аудио и skybox.
+- `docs/THIRD-PARTY-NOTICES.md` — сторонние зависимости и уведомления.
 
 
-## 0.10.17 — Scene hierarchy drag & drop
+## Изменения 0.10.17
 
-- Drag an object by the `⋮⋮` handle in the Hierarchy panel.
-- Drop on the center of another row to parent the object under it.
-- Drop near the top or bottom edge of a row to reorder it before or after that sibling.
-- Drop on empty space inside the Hierarchy panel to move the object to the scene root.
-- Reparenting preserves the object's world transform and stores its local transform relative to the new parent.
-- Parent-child relationships are restored when a scene is loaded and are included in project saves and undo snapshots.
-- Cyclic parenting is rejected. Deleting a parent moves its children to the deleted object's parent while preserving their world transforms.
-- Supports mouse and touch dragging via Pointer Events.
+- Назначение текстуры теперь регистрируется в истории отмены до изменения данных объекта.
+- Восстановление сцены ожидает асинхронную загрузку текстур; устаревшие запросы текстур больше не перезаписывают более новые назначения.
+- `Ctrl+S` и кнопка «Сохранить проект» записывают проект в локальное рабочее пространство. ZIP-экспорт остаётся отдельной командой.
+- 3D-модель сохраняется в проект как GLB-ресурс и автоматически восстанавливается в Model Studio при повторном открытии. Выход, Ctrl+S и ZIP-экспорт сохраняют текущую геометрию; после завершённых операций моделирования работает отложенное автосохранение.
+- Вид сверху/снизу приведён к точному ортографическому направлению; камера остаётся свободной для вращения, панорамирования и масштабирования после выбора ракурса.
+- Для ZeroBox добавлена настройка ширины и высоты рабочего поля.
+- Добавлен блок ZeroBox `ChangeScene` для переключения активной игровой сцены.
+
+
+## Изменения 0.10.18
+
+- Главная страница визуально разделена на два последовательных списка: сначала игровые проекты, ниже 3D-модели; у каждого списка есть своя кнопка создания проекта соответствующего типа.
+- Нижняя панель ресурсов получила пользовательские вкладки. Можно добавлять вкладку, выбирать её содержимое (файлы, материалы, сцены, ZeroScript или ZeroBox), задавать своё название и создавать несколько вкладок одного типа.
+- Каждую вкладку можно переименовать или удалить. Есть отдельная команда удаления всех вкладок; данные проекта при этом не удаляются.
+- Если вкладок не осталось, панель показывает пустое состояние и предлагает создать новую вкладку. Системные действия автоматически создают нужную вкладку, если она ранее была удалена.
+- Список и выбранная вкладка сохраняются в составе проекта и переносятся через ZIP-экспорт/импорт.
+- Режимы выбора геометрии и категории блоков ZeroBox оставлены рабочими селекторами инструментов/категорий, а не пользовательскими страницами: их удаление отключило бы соответствующие функции.

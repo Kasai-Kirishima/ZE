@@ -41,22 +41,22 @@ const typeOf = name => {
   return 'file';
 };
 const iconFor = type => ({model:'📦',texture:'🖼️',script:'〈〉',zerobox:'◇',audio:'🎵',scene:'🎬',json:'{}',material:'🎨',environmentLight:'☼',binary:'📄',file:'📄',folder:'📁',primitive:'◈',camera:'📷',player:'♟',spawn:'⌖',light:'💡'})[type] || '📄';
-const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: false, objects: [] });
+const DEFAULT_SCENE = () => ({ id: uid(), name: 'Main Scene', background: '#171717', grid: true, objects: [] });
 
 let db = null;
 let currentProject = null;
+let homeProjectRenderToken = 0;
 let currentTab = 'assets';
+let currentDockTabId = null;
 let assetFolderFilter = 'All';
 let selectedId = null;
 let selectedIds = new Set();
-let hierarchyDragState = null;
-let hierarchySuppressClickUntil = 0;
 let selectionHelpers = new Map();
 let selectedAssetId = null;
 let sceneObjects = new Map();
 let objectUrls = new Map();
 let renderer, scene, editorCamera, orbit, transform, raycaster, pointer;
-let gridHelper=null, axesHelper=null;
+let gridHelper, axesHelper;
 let selectedConnectionId = null;
 let zeroCanvasPanActive = false;
 let editorReady = false;
@@ -103,6 +103,7 @@ let workspaceLayout = { hierarchy:true, inspector:true, assets:true, swapped:fal
 let numericStepperObserver = null;
 let universalResizeObserver = null;
 let runtimeParticleSystems = new Map();
+let modelProjectSaveTimer=0;
 let modelStudio = { renderer:null, scene:null, camera:null, orbit:null, transform:null, transformHelper:null, root:null, selected:null, selectedObjects:new Set(), topologyOverlay:null, creationPreview:null, creationWorldPoints:[], componentHelper:null, componentTarget:null, componentPivot:null, componentSelection:null, componentStart:null, mode:'object', activeTool:null, transformTool:'move', toolScope:'all', cameraNavigation:false, grid:null, sculptHelper:null, creationPoints:[], creationTarget:null, raycaster:null, pointer:null, clipboard:null, history:[], future:[], reference:null, paintTexture:null, raf:0, projectId:null, resizeObserver:null, lastToolAction:null, lastToolActionAt:0, historyLimited:false, sculptSettings:{radius:.65,strength:.45,shape:'circle',action:'dent',profile:'flat'}, sculptStroke:null, sculptRaf:0, cutStroke:null, cutSettings:{count:3,spacing:.28,angle:90,offset:0} };
 let deviceSettings = { profile:'auto', width:window.innerWidth||1280, height:window.innerHeight||720 };
 const MODEL_PRIMITIVES = ['Cube','UV Sphere','Plane','Cylinder','Cone','Capsule','Torus','Torus Knot','Icosphere','Monkey','Circle','Ring','Pyramid','Hexagonal Prism','Octahedron','Dodecahedron','Tetrahedron','Tube','Spring','Wedge'];
@@ -308,13 +309,137 @@ const getAllProjects = () => dbRequest('readonly', store => store.getAll());
 const putProject = project => dbRequest('readwrite', store => store.put(project));
 const deleteProjectRecord = id => dbRequest('readwrite', store => store.delete(id));
 
+const WORKSPACE_TAB_TYPES = {
+  assets: { label: 'Файлы', icon: '▤' },
+  materials: { label: 'Материалы', icon: '🎨' },
+  scenes: { label: 'Сцены', icon: '▧' },
+  scripts: { label: 'ZeroScript', icon: '〈〉' },
+  zeroboxes: { label: 'ZeroBox', icon: '◇' }
+};
+function createDefaultWorkspaceTabs() {
+  return Object.entries(WORKSPACE_TAB_TYPES).map(([type, meta]) => ({ id: uid(), type, name: meta.label, icon: meta.icon }));
+}
+function ensureWorkspaceTabs(project) {
+  if (!Array.isArray(project.workspaceTabs)) project.workspaceTabs = createDefaultWorkspaceTabs();
+  const seen = new Set();
+  project.workspaceTabs = project.workspaceTabs
+    .filter(tab => tab && WORKSPACE_TAB_TYPES[tab.type])
+    .map(tab => {
+      let id = String(tab.id || uid());
+      if (seen.has(id)) id = uid();
+      seen.add(id);
+      const meta = WORKSPACE_TAB_TYPES[tab.type];
+      return { id, type: tab.type, name: String(tab.name || meta.label).slice(0, 32), icon: String(tab.icon || meta.icon).slice(0, 4) };
+    });
+  if (!project.workspaceTabs.some(tab => tab.id === project.activeWorkspaceTabId)) {
+    project.activeWorkspaceTabId = project.workspaceTabs[0]?.id || null;
+  }
+  return project.workspaceTabs;
+}
+function getActiveWorkspaceTab() {
+  return currentProject?.workspaceTabs?.find(tab => tab.id === currentDockTabId) || null;
+}
+function renderWorkspaceTabs() {
+  const host = $('#asset-tabs');
+  if (!host) return;
+  const tabs = currentProject ? ensureWorkspaceTabs(currentProject) : [];
+  host.innerHTML = tabs.map(tab => `
+    <div class="asset-tab-item ${tab.id === currentDockTabId ? 'active' : ''}" data-workspace-tab-item="${escapeAttr(tab.id)}">
+      <button class="asset-tab ${tab.id === currentDockTabId ? 'active' : ''}" type="button" data-asset-tab-id="${escapeAttr(tab.id)}" title="${escapeAttr(tab.name)} · Двойной щелчок — переименовать">
+        <span class="asset-tab-icon">${escapeHtml(tab.icon || WORKSPACE_TAB_TYPES[tab.type].icon)}</span><span>${escapeHtml(tab.name)}</span>
+      </button>
+      <button class="asset-tab-edit" type="button" data-rename-workspace-tab="${escapeAttr(tab.id)}" title="Переименовать вкладку" aria-label="Переименовать вкладку ${escapeAttr(tab.name)}">✎</button>
+      <button class="asset-tab-delete" type="button" data-delete-workspace-tab="${escapeAttr(tab.id)}" title="Удалить вкладку" aria-label="Удалить вкладку ${escapeAttr(tab.name)}">×</button>
+    </div>`).join('');
+  host.querySelectorAll('[data-asset-tab-id]').forEach(button => {
+    const activate = () => setAssetTabById(button.dataset.assetTabId);
+    button.addEventListener('click', activate);
+    button.addEventListener('dblclick', event => { event.preventDefault(); event.stopPropagation(); openRenameWorkspaceTab(button.dataset.assetTabId); });
+  });
+  host.querySelectorAll('[data-rename-workspace-tab]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); openRenameWorkspaceTab(button.dataset.renameWorkspaceTab); }));
+  host.querySelectorAll('[data-delete-workspace-tab]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); deleteWorkspaceTab(button.dataset.deleteWorkspaceTab); }));
+  const clearButton = $('#clear-workspace-tabs');
+  if (clearButton) clearButton.disabled = tabs.length === 0;
+}
+function openCreateWorkspaceTabModal() {
+  if (!currentProject) return;
+  const options = Object.entries(WORKSPACE_TAB_TYPES).map(([type, meta]) => `<option value="${type}">${escapeHtml(meta.label)}</option>`).join('');
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">WORKSPACE TABS</span><h2 id="modal-title">Новая вкладка</h2><p>Выбери содержимое и задай собственное название. Можно создавать несколько вкладок одного типа.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="workspace-tab-create-form"><div class="modal-body"><label class="field-label">Название вкладки<input class="field-input" id="workspace-tab-name" maxlength="32" placeholder="Например, Мои текстуры" required></label><label class="field-label">Содержимое<select class="field-select" id="workspace-tab-type">${options}</select></label></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" type="submit">Создать вкладку</button></div></form>`);
+  $('#workspace-tab-create-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const type = $('#workspace-tab-type').value;
+    const meta = WORKSPACE_TAB_TYPES[type];
+    if (!meta) return;
+    const name = $('#workspace-tab-name').value.trim() || meta.label;
+    const tab = { id: uid(), type, name: name.slice(0, 32), icon: meta.icon };
+    currentProject.workspaceTabs ||= [];
+    currentProject.workspaceTabs.push(tab);
+    closeModal();
+    setAssetTabById(tab.id);
+    scheduleSave();
+    toast(`Вкладка «${tab.name}» добавлена`, 'success');
+  });
+  $('#workspace-tab-name').focus();
+}
+function openRenameWorkspaceTab(tabId) {
+  const tab = currentProject?.workspaceTabs?.find(item => item.id === tabId);
+  if (!tab) return;
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">WORKSPACE TABS</span><h2 id="modal-title">Переименовать вкладку</h2></div><button class="modal-close" data-close-modal>×</button></div><form id="workspace-tab-rename-form"><div class="modal-body"><label class="field-label">Название<input class="field-input" id="workspace-tab-rename" maxlength="32" value="${escapeAttr(tab.name)}" required></label></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button type="submit" class="button button-primary">Сохранить</button></div></form>`);
+  $('#workspace-tab-rename-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const name = $('#workspace-tab-rename').value.trim();
+    if (!name) return;
+    tab.name = name.slice(0, 32);
+    closeModal(); renderAssetPanel(); scheduleSave();
+  });
+}
+function deleteWorkspaceTab(tabId) {
+  if (!currentProject) return;
+  const tabs = currentProject.workspaceTabs || [];
+  const index = tabs.findIndex(tab => tab.id === tabId);
+  if (index < 0) return;
+  const [removed] = tabs.splice(index, 1);
+  if (currentDockTabId === tabId) {
+    const next = tabs[Math.min(index, tabs.length - 1)] || tabs[index - 1] || null;
+    currentDockTabId = next?.id || null;
+    currentTab = next?.type || null;
+    currentProject.activeWorkspaceTabId = currentDockTabId;
+    selectedAssetId = null;
+  }
+  renderAssetPanel(); scheduleSave();
+  toast(`Вкладка «${removed.name}» удалена`, 'success');
+}
+function clearWorkspaceTabs() {
+  if (!currentProject) return;
+  const count = currentProject.workspaceTabs?.length || 0;
+  if (!count) return;
+  if (!confirm(`Удалить все ${count} вкладок рабочего пространства? Содержимое проекта (файлы, сцены, материалы и скрипты) не удалится.`)) return;
+  currentProject.workspaceTabs = [];
+  currentProject.activeWorkspaceTabId = null;
+  currentDockTabId = null;
+  currentTab = null;
+  selectedAssetId = null;
+  renderAssetPanel(); scheduleSave();
+  toast('Все вкладки удалены. Данные проекта сохранены.', 'success');
+}
+function setAssetTabById(tabId) {
+  const tab = currentProject?.workspaceTabs?.find(item => item.id === tabId);
+  if (!tab) return;
+  currentDockTabId = tab.id;
+  currentProject.activeWorkspaceTabId = tab.id;
+  currentTab = tab.type;
+  selectedAssetId = null;
+  if (tab.type === 'assets') assetFolderFilter = 'All';
+  renderAssetPanel(); scheduleSave();
+}
+
 function makeProject(name, description, targetPlatform='cross-platform', baseResolution={width:1920,height:1080}) {
   const sceneData = DEFAULT_SCENE();
   return {
-    id: uid(), name: name.trim(), description: description.trim(), targetPlatform, baseResolution: {width:Number(baseResolution.width)||1920,height:Number(baseResolution.height)||1080,orientation:baseResolution.orientation||((Number(baseResolution.width)||1920)>=(Number(baseResolution.height)||1080)?'landscape':'portrait')},
+    id: uid(), name: name.trim(), description: description.trim(), projectType: 'game', targetPlatform, baseResolution: {width:Number(baseResolution.width)||1920,height:Number(baseResolution.height)||1080},
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     activeSceneId: sceneData.id, scenes: [{ id: sceneData.id, name: sceneData.name, data: sceneData }],
-    assets: [], materials: [], scripts: [], assetFolders: [], zeroBoxes: [], uiElements: [], variables: [{id:uid(),name:'Value',type:'Number',value:0,system:true}]
+    assets: [], materials: [], scripts: [], assetFolders: [], zeroBoxes: [], workspaceTabs: createDefaultWorkspaceTabs(), activeWorkspaceTabId: null, uiElements: [], variables: [{id:uid(),name:'Value',type:'Number',value:0,system:true}]
   };
 }
 function activeScene() { return currentProject?.scenes.find(item => item.id === currentProject.activeSceneId) || currentProject?.scenes[0]; }
@@ -324,7 +449,6 @@ function normalizeProject(project) {
   project.baseResolution ||= {width:1920,height:1080};
   project.baseResolution.width = Math.max(240, Number(project.baseResolution.width)||1920);
   project.baseResolution.height = Math.max(240, Number(project.baseResolution.height)||1080);
-  project.baseResolution.orientation = ['portrait','landscape'].includes(project.baseResolution.orientation) ? project.baseResolution.orientation : (project.baseResolution.width>=project.baseResolution.height?'landscape':'portrait');
   if (!project.scenes?.length) {
     const data = project.scene || DEFAULT_SCENE();
     project.scenes = [{ id: data.id || uid(), name: data.name || 'Main Scene', data }];
@@ -342,10 +466,10 @@ function normalizeProject(project) {
   project.scripts ||= [];
   project.assetFolders ||= [];
   project.zeroBoxes ||= [];
+  ensureWorkspaceTabs(project);
   project.uiElements ||= [];
   project.uiScreens ||= [];
-  if (!project.uiScreens.length) project.uiScreens.push({id:uid(),name:'Главный экран',width:project.baseResolution.width,height:project.baseResolution.height,orientation:project.baseResolution.orientation,elements:clone(project.uiElements)});
-  project.uiScreens.forEach(screen=>{screen.width=Math.max(240,Number(screen.width)||project.baseResolution.width);screen.height=Math.max(240,Number(screen.height)||project.baseResolution.height);screen.orientation=['portrait','landscape'].includes(screen.orientation)?screen.orientation:(screen.width>=screen.height?'landscape':'portrait');if(screen.orientation==='portrait'&&screen.width>screen.height)[screen.width,screen.height]=[screen.height,screen.width];if(screen.orientation==='landscape'&&screen.height>screen.width)[screen.width,screen.height]=[screen.height,screen.width];});
+  if (!project.uiScreens.length) project.uiScreens.push({id:uid(),name:'Главный экран',elements:clone(project.uiElements)});
   project.activeUIScreenId ||= project.uiScreens[0].id;
   const activeScreen=project.uiScreens.find(screen=>screen.id===project.activeUIScreenId)||project.uiScreens[0];
   if(activeScreen)project.activeUIScreenId=activeScreen.id;
@@ -354,7 +478,7 @@ function normalizeProject(project) {
   if (!project.variables.some(v => v.name === 'Value')) project.variables.unshift({id:uid(),name:'Value',type:'Number',value:0,system:true});
   const activeScreenForLoad=project.uiScreens.find(screen=>screen.id===project.activeUIScreenId)||project.uiScreens[0];
   if(activeScreenForLoad) project.uiElements=clone(activeScreenForLoad.elements||project.uiElements||[]);
-  project.zeroBoxes.forEach(box => { box.blocks ||= []; box.blocks=box.blocks.filter(block=>block.type!=='Walking'); box.variables ||= []; box.connections ||= []; box.blocks.forEach((block,index)=>{ block.config ||= {...ZEROBOX_DEFAULTS}; if(block.config.variableY===undefined&&block.config.variableZ!==undefined)block.config.variableY=block.config.variableZ; if(!Number.isFinite(block.x)) block.x=360+(index%3)*330; if(!Number.isFinite(block.y)) block.y=130+Math.floor(index/3)*250; }); box.connections=box.connections.filter(c=>box.blocks.some(b=>b.id===c.from?.nodeId)&&box.blocks.some(b=>b.id===c.to?.nodeId)); });
+  project.zeroBoxes.forEach(box => { box.blocks ||= []; box.blocks=box.blocks.filter(block=>block.type!=='Walking'); box.variables ||= []; box.connections ||= []; box.canvasSize ||= {width:26000,height:18000}; box.canvasSize.width=Math.max(1200,Math.min(60000,Number(box.canvasSize.width)||26000)); box.canvasSize.height=Math.max(900,Math.min(40000,Number(box.canvasSize.height)||18000)); box.blocks.forEach((block,index)=>{ block.config ||= {...ZEROBOX_DEFAULTS}; if(block.config.variableY===undefined&&block.config.variableZ!==undefined)block.config.variableY=block.config.variableZ; if(!Number.isFinite(block.x)) block.x=360+(index%3)*330; if(!Number.isFinite(block.y)) block.y=130+Math.floor(index/3)*250; }); box.connections=box.connections.filter(c=>box.blocks.some(b=>b.id===c.from?.nodeId)&&box.blocks.some(b=>b.id===c.to?.nodeId)); });
   project.scenes.forEach(sceneItem => {
     (sceneItem.data.objects || []).forEach(entity => {
     if (entity.type === 'skybox') {
@@ -437,39 +561,81 @@ function localizedCount(count, kind) {
 
 // ---------- Home / projects ----------
 async function renderProjectList() {
-  const list = $('#project-list');
+  const gameList = $('#game-project-list');
+  const modelList = $('#model-project-list');
+  if (!gameList || !modelList) return;
+  const token = ++homeProjectRenderToken;
   try {
-    const projects = (await getAllProjects()).sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-    $('#project-count').textContent = localizedCount(projects.length,'projects');
-    if (!projects.length) {
-      list.innerHTML = '<div class="empty-projects"><div class="empty-icon">▱</div><strong>Пока нет проектов</strong><span>Создай новый проект или импортируй существующий ZIP.</span></div>';
-      return;
-    }
-    list.innerHTML = projects.map(project => `
-      <article class="project-card" data-open-project="${project.id}">
-        <div class="project-card-top"><span class="project-symbol">◈</span><button class="delete-project" data-delete-project="${project.id}" title="Удалить проект">×</button></div>
-        <h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.description || 'Без описания')}</p>
-        <div class="project-card-foot"><span>${(project.assets || []).length} ASSETS</span><span>${new Date(project.updatedAt).toLocaleDateString('ru-RU')}</span></div>
-      </article>`).join('');
-    $$('[data-open-project]', list).forEach(card => card.addEventListener('click', event => {
-      if (event.target.closest('[data-delete-project]')) return;
-      const project = projects.find(item => item.id === card.dataset.openProject);
-      if (project) openProject(project);
-    }));
-    $$('[data-delete-project]', list).forEach(button => button.addEventListener('click', async event => {
-      event.stopPropagation();
-      const id = button.dataset.deleteProject;
-      const project = projects.find(item => item.id === id);
-      if (!project || !confirm(`Удалить проект «${project.name}» из браузера?`)) return;
-      await deleteProjectRecord(id);
-      renderProjectList();
-      toast('Проект удалён из браузера', 'success');
-    }));
+    const allProjects = await getAllProjects();
+    if (token !== homeProjectRenderToken) return;
+    // Projects created before project typing remain in the game section by default.
+    const gameProjects = allProjects.filter(project => project.projectType !== 'model').sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    const modelProjects = allProjects.filter(project => project.projectType === 'model').sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    $('#project-count').textContent = localizedCount(allProjects.length, 'projects');
+    $('#game-project-count').textContent = gameProjects.length;
+    $('#model-project-count').textContent = modelProjects.length;
+
+    const renderCards = (projects, kind) => {
+      if (!projects.length) {
+        const isModel = kind === 'model';
+        return `<div class="empty-projects"><div class="empty-icon">${isModel ? '⬡' : '▱'}</div><strong>${isModel ? 'Пока нет проектов моделей' : 'Пока нет игровых проектов'}</strong><span>${isModel ? 'Нажми «Новая 3D-модель» или импортируй проект с типом model.' : 'Нажми «Новый проект» или импортируй игровой ZIP.'}</span></div>`;
+      }
+      return projects.map(project => `
+        <article class="project-card ${kind === 'model' ? 'project-card-model' : 'project-card-game'}" data-open-project="${escapeAttr(project.id)}" data-project-kind="${kind}" tabindex="0" role="button" aria-label="Открыть проект ${escapeAttr(project.name)}">
+          <div class="project-card-top"><span class="project-symbol">${kind === 'model' ? '⬡' : '◈'}</span><button class="delete-project" data-delete-project="${escapeAttr(project.id)}" title="Удалить проект" aria-label="Удалить проект ${escapeAttr(project.name)}">×</button></div>
+          <h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.description || 'Без описания')}</p>
+          <div class="project-card-foot"><span>${kind === 'model' ? '3D MODEL' : `${(project.assets || []).length} ASSETS`}</span><span>${new Date(project.updatedAt).toLocaleDateString('ru-RU')}</span></div>
+        </article>`).join('');
+    };
+    gameList.innerHTML = renderCards(gameProjects, 'game');
+    modelList.innerHTML = renderCards(modelProjects, 'model');
+
+    [gameList, modelList].forEach(list => {
+      list.querySelectorAll('[data-open-project]').forEach(card => {
+        const open = async event => {
+          if (event.target.closest('[data-delete-project]')) return;
+          const project = allProjects.find(item => item.id === card.dataset.openProject);
+          if (!project) return;
+          if (project.projectType === 'model') await enterModelStudio(project);
+          else await openProject(project);
+        };
+        card.addEventListener('click', open);
+        card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(event); } });
+      });
+      list.querySelectorAll('[data-delete-project]').forEach(button => button.addEventListener('click', async event => {
+        event.preventDefault(); event.stopPropagation();
+        const id = button.dataset.deleteProject;
+        const project = allProjects.find(item => item.id === id);
+        if (!project || !confirm(`Удалить проект «${project.name}» из браузера?`)) return;
+        await deleteProjectRecord(id);
+        await renderProjectList();
+        toast('Проект удалён из браузера', 'success');
+      }));
+    });
   } catch (error) {
-    list.innerHTML = '<div class="empty-projects"><strong>Не удалось прочитать проекты</strong><span>Проверь, что браузер разрешает локальное хранилище.</span></div>';
+    gameList.innerHTML = modelList.innerHTML = '<div class="empty-projects"><strong>Не удалось прочитать проекты</strong><span>Проверь, что браузер разрешает локальное хранилище.</span></div>';
     console.error(error);
   }
 }
+async function renderModelHomeProjectList(){
+  const host=$('#model-home-projects');if(!host)return;
+  try{
+    const all=await getAllProjects();
+    const projects=all.filter(project=>project.projectType==='model').sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
+    const legacy=all.filter(project=>!project.projectType).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
+    const projectCards=projects.map(project=>`<button type="button" class="model-home-project" data-model-home-project="${escapeAttr(project.id)}"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.description||'Без описания')}</small></button>`).join('');
+    const legacyCards=legacy.map(project=>`<div class="model-home-legacy-row"><div><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.description||'Старый проект без типа')}</small></div><button type="button" class="button button-secondary" data-model-home-legacy="${escapeAttr(project.id)}">Перенести в 3D Editor</button></div>`).join('');
+    host.innerHTML=(projectCards||'')+(legacy.length?`<section class="model-home-legacy"><h3>Старые проекты предыдущих версий</h3><p>Эти проекты ещё не разделены на игровой движок и 3D-редактор. Переноси сюда только те, которые создавались для моделирования.</p>${legacyCards}</section>`:'')||'<div class="model-home-empty">Пока нет 3D-проектов. Создай новый проект, чтобы начать.</div>';
+    host.querySelectorAll('[data-model-home-project]').forEach(button=>button.addEventListener('click',async()=>{const project=projects.find(item=>item.id===button.dataset.modelHomeProject);if(project)await enterModelStudio(project);}));
+    host.querySelectorAll('[data-model-home-legacy]').forEach(button=>button.addEventListener('click',async()=>{const project=legacy.find(item=>item.id===button.dataset.modelHomeLegacy);if(project)await migrateLegacyModelProject(project);}));
+  }catch(error){console.error(error);host.textContent='Не удалось загрузить 3D-проекты';}
+}
+async function migrateLegacyModelProject(project){
+  if(!project||project.projectType)return;
+  try{project.projectType='model';project.updatedAt=new Date().toISOString();await putProject(project);toast(`«${project.name}» перенесён в 3D Editor`,'success');await enterModelStudio(project);}
+  catch(error){console.error(error);toast('Не удалось перенести старый проект','error');}
+}
+
 function showHome() {
   stopPlayMode();
   $('#editor-screen').classList.add('hidden');
@@ -486,7 +652,7 @@ function createProjectModal() {
     <form id="create-project-form"><div class="modal-body">
       <label class="field-label">Название проекта<input class="field-input" id="new-project-name" maxlength="48" placeholder="Например, My First World" required /></label>
       <label class="field-label">Описание<textarea class="field-textarea" id="new-project-description" maxlength="240" placeholder="О чём будет твой проект? (необязательно)"></textarea></label>
-      <div class="field-row three"><label class="field-label">Основная платформа<select class="field-select" id="new-project-platform"><option value="cross-platform">Кроссплатформенная</option><option value="pc">ПК</option><option value="mobile">Мобильные устройства</option><option value="tablet">Планшеты</option><option value="web">Браузер / Web</option></select></label><label class="field-label">Ориентация<select class="field-select" id="new-project-orientation"><option value="landscape">Горизонтальная</option><option value="portrait">Вертикальная</option></select></label><label class="field-label">Базовое разрешение<select class="field-select" id="new-project-resolution"><option value="1920x1080">1920 × 1080 (ПК)</option><option value="1600x900">1600 × 900</option><option value="2560x1440">2560 × 1440</option><option value="1280x720">1280 × 720</option><option value="390x844">390 × 844 (телефон)</option><option value="360x800">360 × 800</option><option value="844x390">844 × 390 (телефон, альбомная)</option><option value="1024x768">1024 × 768 (планшет)</option><option value="1280x800">1280 × 800</option><option value="custom">Своё</option></select></label></div>
+      <div class="field-row two"><label class="field-label">Основная платформа<select class="field-select" id="new-project-platform"><option value="cross-platform">Кроссплатформенная</option><option value="pc">ПК</option><option value="mobile">Мобильные устройства</option><option value="tablet">Планшеты</option><option value="web">Браузер / Web</option></select></label><label class="field-label">Базовое разрешение<select class="field-select" id="new-project-resolution"><option value="1920x1080">1920 × 1080 (ПК)</option><option value="1600x900">1600 × 900</option><option value="2560x1440">2560 × 1440</option><option value="1280x720">1280 × 720</option><option value="390x844">390 × 844 (телефон)</option><option value="360x800">360 × 800</option><option value="844x390">844 × 390 (телефон, альбомная)</option><option value="1024x768">1024 × 768 (планшет)</option><option value="1280x800">1280 × 800</option><option value="custom">Своё</option></select></label></div>
       <div class="field-row two hidden" id="new-project-custom-resolution"><label class="field-label">Ширина<input class="field-input" type="number" id="new-project-width" min="240" max="7680" step="1" value="1920"></label><label class="field-label">Высота<input class="field-input" type="number" id="new-project-height" min="240" max="7680" step="1" value="1080"></label></div>
       <div class="modal-note">Проект будет сохранён локально. Платформа и разрешение станут стартовыми настройками проекта и UI Designer.</div>
     </div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" type="submit">Создать проект</button></div></form>`);
@@ -495,16 +661,13 @@ function createProjectModal() {
     const name = $('#new-project-name').value.trim();
     if (!name) return;
     const platform = $('#new-project-platform').value;
-    const orientation=$('#new-project-orientation')?.value||'landscape';
     let [width,height] = $('#new-project-resolution').value==='custom' ? [Number($('#new-project-width').value),Number($('#new-project-height').value)] : $('#new-project-resolution').value.split('x').map(Number);
-    width=Math.max(240,Math.min(7680,width||1920));height=Math.max(240,Math.min(7680,height||1080));
-    if(orientation==='portrait'&&width>height)[width,height]=[height,width];else if(orientation==='landscape'&&height>width)[width,height]=[height,width];
-    const project = makeProject(name, $('#new-project-description').value, platform, {width,height,orientation});
+    const project = makeProject(name, $('#new-project-description').value, platform, {width:Math.max(240,Math.min(7680,width||1920)),height:Math.max(240,Math.min(7680,height||1080))});
     await putProject(project);
     closeModal();
     openProject(project);
   });
-  $('#new-project-resolution')?.addEventListener('change',e=>{const custom=e.target.value==='custom';$('#new-project-custom-resolution').classList.toggle('hidden',!custom);if(!custom){const [w,h]=e.target.value.split('x').map(Number);$('#new-project-orientation').value=w>=h?'landscape':'portrait';}});
+  $('#new-project-resolution')?.addEventListener('change',e=>$('#new-project-custom-resolution').classList.toggle('hidden',e.target.value!=='custom'));
   $('#new-project-name').focus();
 }
 async function openProject(project) {
@@ -512,7 +675,9 @@ async function openProject(project) {
   selectedId = null; selectedIds = new Set();
   selectedBlockId = null; selectedBlockIds = new Set(); pendingZeroPort = null;
   selectedAssetId = null;
-  currentTab = 'assets'; assetFolderFilter = 'All';
+  ensureWorkspaceTabs(currentProject);
+  currentDockTabId = currentProject.activeWorkspaceTabId || currentProject.workspaceTabs[0]?.id || null;
+  currentTab = currentProject.workspaceTabs.find(tab => tab.id === currentDockTabId)?.type || null; assetFolderFilter = 'All';
   undoStack = []; redoStack = [];
   releaseObjectUrls();
   $('#home-screen').classList.add('hidden');
@@ -582,8 +747,8 @@ async function exportProjectZip() {
     return {asset,archivePath};
   });
   const projectJson = {
-    format: 'ZeroEngineProject', version: 2, targetPlatform:exportingProject.targetPlatform||'cross-platform', baseResolution:exportingProject.baseResolution||{width:1920,height:1080},
-    id: exportingProject.id, name: exportingProject.name, description: exportingProject.description,
+    format: 'ZeroEngineProject', version: 2, projectType:exportingProject.projectType||'game', targetPlatform:exportingProject.targetPlatform||'cross-platform', baseResolution:exportingProject.baseResolution||{width:1920,height:1080},
+    id: exportingProject.id, name: exportingProject.name, description: exportingProject.description, modelStudioAssetId:exportingProject.modelStudioAssetId||null, modelStudioName:exportingProject.modelStudioName||null,
     createdAt: exportingProject.createdAt, updatedAt: exportingProject.updatedAt,
     activeSceneId: exportingProject.activeSceneId,
     scenes: exportingProject.scenes.map(({id,name,data}) => ({id,name,data})),
@@ -632,7 +797,9 @@ async function importProjectZip(file) {
     await putProject(project);
     $('#project-import-input').value = '';
     toast('Проект импортирован', 'success');
-    openProject(project);
+    if(project.projectType==='model') await enterModelStudio(project);
+    else await openProject(project);
+    await renderProjectList();
   } catch (error) {
     console.error(error);
     toast(error.message || 'Не удалось импортировать проект', 'error');
@@ -671,9 +838,12 @@ function init3DEditor() {
   orbit.enableZoom = true; orbit.zoomSpeed = 1.15; orbit.minDistance = 1.25; orbit.maxDistance = 2500;
   orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: undefined };
   orbit.target.set(0, 0.8, 0);
-  orbit.minPolarAngle = .04; orbit.maxPolarAngle = Math.PI - .04;
+  orbit.minPolarAngle = 0; orbit.maxPolarAngle = Math.PI;
   editorCamera.near = .01; editorCamera.far = 12000; editorCamera.updateProjectionMatrix();
-  gridHelper = null; axesHelper = null;
+  gridHelper = new THREE.GridHelper(100, 100, 0x53645b, 0x334139);
+  gridHelper.material.transparent = true; gridHelper.material.opacity = .55;
+  scene.add(gridHelper);
+  axesHelper = new THREE.AxesHelper(2.3); axesHelper.visible=false;
   transform = new TransformControls(editorCamera, canvas);
   transform.setMode('translate');
   transform.setSize(window.matchMedia?.('(pointer: coarse)').matches?1.9:0.95);
@@ -839,7 +1009,7 @@ function renderFrame(now) {
   if (!renderer || !scene) return;
   const delta = Math.min((now - lastFrame) / 1000, .05); lastFrame = now;
   if (!isPlaying) orbit?.update();
-  const skybox=scene?.userData?.zeroEngineSkybox;if(skybox){const activeCamera=isPlaying&&previewCamera?previewCamera:editorCamera;skybox.position.copy(activeCamera.position);skybox.visible=true;}
+  const skybox=scene?.userData?.zeroEngineSkybox;if(skybox){const activeCamera=isPlaying&&previewCamera?previewCamera:editorCamera;skybox.position.copy(activeCamera.position);}
   const scaledDelta=delta*(isPlaying?gameSpeedMultiplier:1);
   for (const mixer of animationMixers.values()) mixer.update(scaledDelta);
   updateCustomAnimations(scaledDelta);
@@ -1069,9 +1239,9 @@ function onKeyDown(event) {
   const editing = ['INPUT','TEXTAREA','SELECT'].includes(tag) || document.activeElement?.isContentEditable;
   const inModelStudio = !$('#model-studio')?.classList.contains('hidden');
   if (inModelStudio) {
-    if (editing) return;
     const key=event.key.toLowerCase();
-    if ((event.ctrlKey||event.metaKey)&&key==='s') { event.preventDefault(); saveModelStudioAsset(); return; }
+    if ((event.ctrlKey||event.metaKey)&&key==='s') { event.preventDefault(); if(event.shiftKey) saveModelStudioAsset(); else saveModelProject(); return; }
+    if (editing) return;
     if ((event.ctrlKey||event.metaKey)&&key==='z') { event.preventDefault(); undoModelStudio(); return; }
     if ((event.ctrlKey||event.metaKey)&&key==='y') { event.preventDefault(); redoModelStudio(); return; }
     if ((event.ctrlKey||event.metaKey)&&key==='c') { event.preventDefault(); copyModelObject(); return; }
@@ -1083,7 +1253,7 @@ function onKeyDown(event) {
     if (event.key==='Escape') { if(modelStudio.activeTool){modelStudio.activeTool=null;modelStudio.creationPoints=[];modelStudio.creationTarget=null;clearModelCreationPreview();modelStudio.mode='object';$$('[data-model-mode]').forEach(button=>button.classList.toggle('active',button.dataset.modelMode===modelStudio.mode));$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.remove('active'));modelStudio.transform.enabled=true;if(modelStudio.selected)modelStudio.transform.attach(modelStudio.selected);$('#model-selection-info').textContent='Инструмент отменён';return;} closeModelStudio(); return; }
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); exportProjectZip(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveProject(true); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !editing) { event.preventDefault(); undo(); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y' && !editing) { event.preventDefault(); redo(); return; }
   if (!editing && workbenchMode==='zerobox' && (event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='a') { event.preventDefault(); const box=currentProject?.zeroBoxes.find(item=>item.id===selectedZeroBoxId); if(box){selectedBlockIds=new Set(box.blocks.map(b=>b.id));selectedBlockId=box.blocks[0]?.id||null;renderWorkbench();} return; }
@@ -1170,8 +1340,9 @@ function snapEditorView(view){
   const target=orbit.target.clone();const distance=THREE.MathUtils.clamp(editorCamera.position.distanceTo(target)||8,2,2500);
   const directions={front:new THREE.Vector3(0,0,1),back:new THREE.Vector3(0,0,-1),left:new THREE.Vector3(-1,0,0),right:new THREE.Vector3(1,0,0),top:new THREE.Vector3(0,1,0),bottom:new THREE.Vector3(0,-1,0)};
   const dir=directions[view]||directions.front;
-  editorCamera.up.copy((view==='top'||view==='bottom')?new THREE.Vector3(0,0,-1):new THREE.Vector3(0,1,0));
-  orbit.object.up.copy(editorCamera.up);editorCamera.position.copy(target).addScaledVector(dir,distance);editorCamera.lookAt(target);editorCamera.updateProjectionMatrix();orbit.update();activeEditorView=view;
+  const wasDamping=orbit.enableDamping;orbit.enableDamping=false;orbit.enabled=true;orbit.enableRotate=true;orbit.enablePan=true;orbit.enableZoom=true;
+  editorCamera.up.copy(view==='top'?new THREE.Vector3(0,0,-1):view==='bottom'?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0));
+  orbit.object.up.copy(editorCamera.up);orbit.target.copy(target);editorCamera.position.copy(target).addScaledVector(dir,distance);editorCamera.lookAt(target);editorCamera.updateProjectionMatrix();orbit.update();orbit.enableDamping=wasDamping;activeEditorView=view;
   $$('[data-editor-view]').forEach(button=>button.classList.toggle('active',button.dataset.editorView===view));
 }
 function setViewportInspectionMode(enabled){viewportInspectionMode=!!enabled;const button=$('#viewport-inspection-toggle');button?.classList.toggle('active',viewportInspectionMode);button?.setAttribute('aria-pressed',String(viewportInspectionMode));if(button){button.title=viewportInspectionMode?'Осмотр включён: выбор и изменение объектов заблокированы':'Осмотр: заблокировать выбор и трансформации объектов';button.setAttribute('aria-label',button.title);}if(transform)transform.enabled=!viewportInspectionMode&&!isPlaying;if(viewportInspectionMode){viewportTouchGesture=null;viewportTouchPointers.clear();orbit.enabled=!isPlaying;toast('Режим осмотра: выбор и перемещение объектов заблокированы');}else{if(transform&&selectedId&&!isPlaying&&!isEntityEditorLocked(selectedId))transform.attach(sceneObjects.get(selectedId));toast('Режим редактирования объектов включён');}}
@@ -1185,168 +1356,13 @@ function setEntityEditorLock(id,locked){
   renderHierarchy();if(selectedId===id)renderInspector();scheduleSave();
   toast(entity.editorLocked?`«${entity.name}» заблокирован от выбора на сцене`:`«${entity.name}» снова доступен для выбора`,'success');
 }
-function getSceneEntityParent(entity, entities = activeSceneData()?.objects || []) {
-  if (!entity?.parentId) return null;
-  return entities.find(item => item.id === entity.parentId && item.id !== entity.id) || null;
-}
-function isSceneEntityDescendant(candidateId, ancestorId, entities = activeSceneData()?.objects || []) {
-  let current = entities.find(item => item.id === candidateId);
-  const visited = new Set();
-  while (current?.parentId && !visited.has(current.id)) {
-    if (current.parentId === ancestorId) return true;
-    visited.add(current.id);
-    current = entities.find(item => item.id === current.parentId);
-  }
-  return false;
-}
-function syncEntityLocalTransform(entity, object) {
-  if (!entity || !object) return;
-  entity.position = object.position.toArray();
-  entity.rotation = [THREE.MathUtils.radToDeg(object.rotation.x), THREE.MathUtils.radToDeg(object.rotation.y), THREE.MathUtils.radToDeg(object.rotation.z)];
-  entity.scale = object.scale.toArray();
-}
-function restoreSceneObjectHierarchy(entities = []) {
-  const validIds = new Set(entities.map(item => item.id));
-  for (const entity of entities) {
-    if (!entity.parentId || !validIds.has(entity.parentId) || entity.parentId === entity.id || isSceneEntityDescendant(entity.parentId, entity.id, entities)) {
-      if (entity.parentId && (entity.parentId === entity.id || !validIds.has(entity.parentId) || isSceneEntityDescendant(entity.parentId, entity.id, entities))) entity.parentId = '';
-      continue;
-    }
-    const parent = sceneObjects.get(entity.parentId);
-    const child = sceneObjects.get(entity.id);
-    if (parent && child && child.parent !== parent) parent.add(child);
-  }
-  scene?.updateMatrixWorld(true);
-}
-function moveSceneObjectInHierarchy(sourceId, targetId = null, placement = 'root') {
-  const entities = activeSceneData()?.objects;
-  if (!entities) return false;
-  const source = entities.find(item => item.id === sourceId);
-  const target = targetId ? entities.find(item => item.id === targetId) : null;
-  if (!source || (targetId && !target) || sourceId === targetId) return false;
-  let nextParentId = '';
-  if (placement === 'inside') nextParentId = target.id;
-  else if ((placement === 'before' || placement === 'after') && target?.parentId) nextParentId = target.parentId;
-  if (nextParentId && (nextParentId === sourceId || isSceneEntityDescendant(nextParentId, sourceId, entities))) {
-    toast('Нельзя переместить объект внутрь собственного потомка', 'error');
-    return false;
-  }
-  if (placement === 'inside' && isSceneEntityDescendant(target.id, sourceId, entities)) {
-    toast('Нельзя создать циклическую иерархию', 'error');
-    return false;
-  }
-  const sourceObject = sceneObjects.get(sourceId);
-  let destinationObject = scene;
-  if (placement === 'inside') destinationObject = sceneObjects.get(target.id) || scene;
-  else if (nextParentId) destinationObject = sceneObjects.get(nextParentId) || scene;
-  if (sourceObject && destinationObject && (sourceObject === destinationObject || sourceObject.getObjectById?.(destinationObject.id))) {
-    toast('Нельзя переместить объект внутрь собственного потомка', 'error');
-    return false;
-  }
-  snapshotHistory();
-  const oldIndex = entities.indexOf(source);
-  if (oldIndex >= 0) entities.splice(oldIndex, 1);
-  if (placement === 'before' && target) entities.splice(Math.max(0, entities.indexOf(target)), 0, source);
-  else if (placement === 'after' && target) entities.splice(Math.max(0, entities.indexOf(target)) + 1, 0, source);
-  else entities.push(source);
-  source.parentId = nextParentId || '';
-  if (sourceObject && destinationObject) {
-    destinationObject.attach(sourceObject);
-    syncEntityLocalTransform(source, sourceObject);
-    sourceObject.updateMatrixWorld(true);
-  }
-  if (transform && selectedId === sourceId && sourceObject && !isPlaying && !viewportInspectionMode && !isEntityEditorLocked(sourceId)) transform.attach(sourceObject);
-  renderHierarchy();
-  renderInspector();
-  updateSelectedStatus();
-  scheduleSave();
-  const label = placement === 'inside' ? `«${target.name}»` : placement === 'root' ? 'корень сцены' : `рядом с «${target?.name || ''}»`;
-  toast(`«${source.name}» перемещён: ${label}`, 'success');
-  return true;
-}
-function bindHierarchyDragAndDrop(list) {
-  if (!list || list.dataset.hierarchyDragBound === 'true') return;
-  list.dataset.hierarchyDragBound = 'true';
-  const clearMarks = () => list.querySelectorAll('.drop-inside,.drop-before,.drop-after,.drag-source').forEach(node => node.classList.remove('drop-inside','drop-before','drop-after','drag-source'));
-  list.addEventListener('pointerdown', event => {
-    const handle = event.target.closest('[data-tree-drag-handle]');
-    if (!handle || event.button !== 0) return;
-    event.preventDefault(); event.stopPropagation();
-    hierarchyDragState = { id: handle.dataset.treeDragHandle, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, targetId: null, placement: 'root' };
-  });
-  document.addEventListener('pointermove', event => {
-    const state = hierarchyDragState;
-    if (!state || state.pointerId !== event.pointerId) return;
-    const distance = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
-    if (!state.active && distance < 6) return;
-    if (!state.active) {
-      state.active = true;
-      list.querySelector(`[data-tree-id="${CSS.escape(state.id)}"]`)?.classList.add('drag-source');
-      document.body.classList.add('hierarchy-dragging');
-    }
-    event.preventDefault();
-    clearMarks();
-    list.querySelector(`[data-tree-id="${CSS.escape(state.id)}"]`)?.classList.add('drag-source');
-    const pointed = document.elementFromPoint(event.clientX, event.clientY);
-    const row = pointed?.closest?.('[data-tree-id]');
-    if (row && list.contains(row) && row.dataset.treeId !== state.id) {
-      const rect = row.getBoundingClientRect();
-      const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
-      state.targetId = row.dataset.treeId;
-      state.placement = ratio < .24 ? 'before' : ratio > .76 ? 'after' : 'inside';
-      row.classList.add(state.placement === 'inside' ? 'drop-inside' : state.placement === 'before' ? 'drop-before' : 'drop-after');
-    } else if (list.contains(pointed)) {
-      state.targetId = null; state.placement = 'root';
-      list.classList.add('drop-root');
-    } else {
-      state.targetId = null; state.placement = 'outside';
-      list.classList.remove('drop-root');
-    }
-  }, { passive: false });
-  const finish = event => {
-    const state = hierarchyDragState;
-    if (!state || (event.pointerId != null && state.pointerId !== event.pointerId)) return;
-    hierarchyDragState = null;
-    document.body.classList.remove('hierarchy-dragging');
-    list.classList.remove('drop-root');
-    clearMarks();
-    if (!state.active) return;
-    hierarchySuppressClickUntil = Date.now() + 350;
-    if (state.placement !== 'outside') moveSceneObjectInHierarchy(state.id, state.targetId, state.placement);
-  };
-  document.addEventListener('pointerup', finish);
-  document.addEventListener('pointercancel', finish);
-}
 function renderHierarchy() {
   if (!currentProject) return;
   const list = $('#hierarchy-list');
   const entities = activeSceneData()?.objects || [];
-  bindHierarchyDragAndDrop(list);
   if (!entities.length) list.innerHTML = '<div class="asset-empty">Сцена пока пустая.</div>';
-  else {
-    const validIds = new Set(entities.map(item => item.id));
-    const children = new Map();
-    for (const item of entities) {
-      const parentId = item.parentId && validIds.has(item.parentId) && item.parentId !== item.id ? item.parentId : '';
-      if (!children.has(parentId)) children.set(parentId, []);
-      children.get(parentId).push(item);
-    }
-    const visited = new Set();
-    const renderNode = (item, depth = 0) => {
-      if (visited.has(item.id)) return '';
-      visited.add(item.id);
-      const row = `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''} ${item.editorLocked?'editor-locked':''}" data-tree-id="${escapeAttr(item.id)}" style="--tree-depth:${depth}" title="Перетащи за значок ⋮⋮: на объект — вложить, к краю строки — изменить порядок"><button type="button" class="tree-drag-handle" data-tree-drag-handle="${escapeAttr(item.id)}" aria-label="Переместить в иерархии" title="Перетащить объект">⋮⋮</button><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span><button type="button" class="tree-lock-button ${item.editorLocked?'active':''}" data-tree-lock="${escapeAttr(item.id)}" title="${item.editorLocked?'Разблокировать выбор в сцене':'Не выбирать и не двигать в сцене'}">${item.editorLocked?'🔒':'◇'}</button></div>`;
-      return row + (children.get(item.id) || []).map(child => renderNode(child, depth + 1)).join('');
-    };
-    let markup = (children.get('') || []).map(item => renderNode(item, 0)).join('');
-    // Recover malformed/cyclic legacy hierarchies by showing each unreachable item as a root.
-    for (const item of entities) if (!visited.has(item.id)) markup += renderNode(item, 0);
-    list.innerHTML = markup;
-  }
-  $$('[data-tree-id]', list).forEach(row => row.addEventListener('click', event => {
-    if (Date.now() < hierarchySuppressClickUntil || event.target.closest('[data-tree-lock],[data-tree-drag-handle]')) return;
-    selectObject(row.dataset.treeId,{additive:event.shiftKey||event.ctrlKey||event.metaKey,toggle:event.shiftKey||event.ctrlKey||event.metaKey});
-  }));
+  else list.innerHTML = entities.map(item => `<div class="tree-item ${selectedIds.has(item.id) || selectedId === item.id ? 'selected' : ''} ${item.editorLocked?'editor-locked':''}" data-tree-id="${item.id}" draggable="true"><span class="tree-icon">${iconFor(item.type === 'model' ? 'model' : item.type)}</span><span class="tree-name">${escapeHtml(item.name)}</span><span class="tree-kind">${item.type === 'primitive' ? item.primitive?.toUpperCase() || 'MESH' : item.type.toUpperCase()}</span><button type="button" class="tree-lock-button ${item.editorLocked?'active':''}" data-tree-lock="${item.id}" title="${item.editorLocked?'Разблокировать выбор в сцене':'Не выбирать и не двигать в сцене'}">${item.editorLocked?'🔒':'◇'}</button></div>`).join('');
+  $$('[data-tree-id]', list).forEach(row => {row.addEventListener('dragstart',event=>{event.dataTransfer.setData('application/x-zeroengine-object',row.dataset.treeId);event.dataTransfer.effectAllowed='copy';});row.addEventListener('click', event => {if(event.target.closest('[data-tree-lock]'))return;selectObject(row.dataset.treeId,{additive:event.shiftKey||event.ctrlKey||event.metaKey,toggle:event.shiftKey||event.ctrlKey||event.metaKey});});});
   $$('[data-tree-lock]',list).forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();setEntityEditorLock(button.dataset.treeLock,!isEntityEditorLocked(button.dataset.treeLock));}));
   $('#object-count').textContent = localizedCount(entities.length,'objects');
   updateViewportHint();
@@ -1510,9 +1526,8 @@ function updateCollisionHelper(entity) {
   const old = collisionHelpers.get(entity.id); if (old) { object.remove(old); old.geometry.dispose(); old.material.dispose(); collisionHelpers.delete(entity.id); }
   attachCollisionHelper(entity, object);
 }
-let skyboxLoadPromise=null;
 function applySceneSkybox() {
-  if (!scene || !activeSceneData()) return Promise.resolve(false);
+  if (!scene || !activeSceneData()) return;
   const data=activeSceneData();
   const entity=(data.objects||[]).find(item=>item.type==='skybox');
   const cfg=entity?.skybox||{};
@@ -1520,47 +1535,38 @@ function applySceneSkybox() {
   const asset=entity?.visible!==false?currentProject?.assets.find(item=>item.id===assetId&&item.type==='texture'):null;
   const old=scene.userData.zeroEngineSkybox;
   if (!asset?.blob) {
-    scene.userData.zeroEngineSkyboxPendingKey=null;
     if(old){scene.remove(old);old.geometry?.dispose?.();old.material?.map?.dispose?.();old.material?.dispose?.();scene.userData.zeroEngineSkybox=null;scene.userData.zeroEngineSkyboxKey=null;}
     scene.background=new THREE.Color(data.background||'#182126');
     scene.environment=null;
-    return Promise.resolve(false);
+    return;
   }
   const key=[asset.id,cfg.shape||'sphere',cfg.tileX||1,cfg.tileY||1,cfg.smoothing!==false,cfg.rotationY||0,cfg.brightness??1].join('|');
-  if(scene.userData.zeroEngineSkyboxKey===key&&old){old.visible=true;return Promise.resolve(true);}
-  if(scene.userData.zeroEngineSkyboxPendingKey===key&&skyboxLoadPromise)return skyboxLoadPromise;
-  scene.userData.zeroEngineSkyboxPendingKey=key;
+  if(scene.userData.zeroEngineSkyboxKey===key&&old)return;
   const url=getAssetUrl(asset);
-  skyboxLoadPromise=new Promise(resolve=>{
-    new THREE.TextureLoader().load(url,texture=>{
-      const current=(activeSceneData()?.objects||[]).find(item=>item.type==='skybox');
-      const currentCfg=current?.skybox||{};
-      const currentKey=[current?.assetId||null,currentCfg.shape||'sphere',currentCfg.tileX||1,currentCfg.tileY||1,currentCfg.smoothing!==false,currentCfg.rotationY||0,currentCfg.brightness??1].join('|');
-      if(currentKey!==key||!scene){texture.dispose();if(scene?.userData)scene.userData.zeroEngineSkyboxPendingKey=null;resolve(false);return;}
-      if(scene.userData.zeroEngineSkybox){const prev=scene.userData.zeroEngineSkybox;scene.remove(prev);prev.geometry?.dispose?.();prev.material?.map?.dispose?.();prev.material?.dispose?.();}
-      texture.colorSpace=THREE.SRGBColorSpace;
-      texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
-      texture.repeat.set(Math.max(.05,Number(cfg.tileX)||1),Math.max(.05,Number(cfg.tileY)||1));
-      texture.magFilter=cfg.smoothing===false?THREE.NearestFilter:THREE.LinearFilter;
-      texture.minFilter=cfg.smoothing===false?THREE.NearestMipmapNearestFilter:THREE.LinearMipmapLinearFilter;
-      texture.generateMipmaps=true;
-      texture.anisotropy=renderer?.capabilities?.getMaxAnisotropy?.()||1;
-      texture.needsUpdate=true;
-      const geometry=cfg.shape==='box'?new THREE.BoxGeometry(1800,1800,1800):new THREE.SphereGeometry(900,64,40);
-      const brightness=Math.max(0,Math.min(3,Number(cfg.brightness??1)));
-      const material=new THREE.MeshBasicMaterial({map:texture,color:new THREE.Color().setScalar(brightness),side:THREE.BackSide,depthWrite:false,depthTest:false,fog:false});
-      const dome=new THREE.Mesh(geometry,material);dome.name='ZeroEngine Skybox Image';dome.frustumCulled=false;dome.renderOrder=-1000;dome.visible=true;
-      dome.rotation.y=THREE.MathUtils.degToRad(Number(cfg.rotationY)||0);
-      scene.add(dome);scene.userData.zeroEngineSkybox=dome;scene.userData.zeroEngineSkyboxKey=key;scene.userData.zeroEngineSkyboxPendingKey=null;
-      scene.background=new THREE.Color(data.background||'#182126');scene.environment=null;
-      resolve(true);
-    },undefined,error=>{
-      console.warn('Skybox image failed',error);
-      if(scene?.userData)scene.userData.zeroEngineSkyboxPendingKey=null;
-      toast('Не удалось загрузить картинку Skybox','error');resolve(false);
-    });
-  }).finally(()=>{skyboxLoadPromise=null;});
-  return skyboxLoadPromise;
+  new THREE.TextureLoader().load(url,texture=>{
+    // Ignore late loads when the user has already selected another image/configuration.
+    const current=(activeSceneData()?.objects||[]).find(item=>item.type==='skybox');
+    const currentCfg=current?.skybox||{};
+    const currentKey=[current?.assetId||null,currentCfg.shape||'sphere',currentCfg.tileX||1,currentCfg.tileY||1,currentCfg.smoothing!==false,currentCfg.rotationY||0,currentCfg.brightness??1].join('|');
+    if(currentKey!==key){texture.dispose();return;}
+    if(scene.userData.zeroEngineSkybox){const prev=scene.userData.zeroEngineSkybox;scene.remove(prev);prev.geometry?.dispose?.();prev.material?.map?.dispose?.();prev.material?.dispose?.();}
+    texture.colorSpace=THREE.SRGBColorSpace;
+    texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
+    texture.repeat.set(Math.max(.05,Number(cfg.tileX)||1),Math.max(.05,Number(cfg.tileY)||1));
+    texture.magFilter=cfg.smoothing===false?THREE.NearestFilter:THREE.LinearFilter;
+    texture.minFilter=cfg.smoothing===false?THREE.NearestMipmapNearestFilter:THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps=true;
+    texture.anisotropy=renderer?.capabilities?.getMaxAnisotropy?.()||1;
+    texture.needsUpdate=true;
+    const geometry=cfg.shape==='box'?new THREE.BoxGeometry(18000,18000,18000):new THREE.SphereGeometry(9000,64,40);
+    const brightness=Math.max(0,Math.min(3,Number(cfg.brightness??1)));
+    const material=new THREE.MeshBasicMaterial({map:texture,color:new THREE.Color().setScalar(brightness),side:THREE.BackSide,depthWrite:false,depthTest:false,fog:false});
+    const dome=new THREE.Mesh(geometry,material);dome.name='ZeroEngine Skybox Image';dome.frustumCulled=false;dome.renderOrder=-1000;
+    dome.rotation.y=THREE.MathUtils.degToRad(Number(cfg.rotationY)||0);
+    scene.add(dome);scene.userData.zeroEngineSkybox=dome;scene.userData.zeroEngineSkyboxKey=key;
+    scene.background=new THREE.Color(data.background||'#182126');
+    scene.environment=null;
+  },undefined,error=>{console.warn('Skybox image failed',error);toast('Не удалось загрузить картинку Skybox','error');});
 }
 
 async function createRuntimeObject(entity) {
@@ -1601,7 +1607,7 @@ async function createRuntimeObject(entity) {
   }
   object.scale.fromArray(entity.scale || [1,1,1]);
   object.visible = entity.visible !== false;
-  applyEntityAppearance(entity, object);
+  await applyEntityAppearance(entity, object);
   object.traverse(child => { if (child.isMesh) normalizeImportedMaterials(child); });
   if (entity.type === 'model' && object.userData.animationClips?.length) entity.availableAnimations = object.userData.animationClips.map(clip => clip.name);
   attachStoredRig(entity, object);
@@ -1622,11 +1628,11 @@ async function loadSceneIntoViewport() {
   const data = activeSceneData();
   scene.background = new THREE.Color(data.background || '#182126');
   applySceneSkybox();
+  gridHelper.visible = data.grid !== false; axesHelper.visible = data.grid !== false;
   for (const entity of data.objects || []) {
     try { await createRuntimeObject(entity); }
     catch (error) { console.warn('Не удалось загрузить объект', entity, error); toast(`Не удалось загрузить «${entity.name}»`, 'error'); }
   }
-  restoreSceneObjectHierarchy(data.objects || []);
   isRestoring = false;
   selectObject(null);
   renderHierarchy();
@@ -1636,13 +1642,7 @@ function removeSceneObject(id, takeSnapshot = true) {
   const entity = findEntity(id); if (!entity) return null;
   if (takeSnapshot && !isPlaying) snapshotHistory();
   const object = sceneObjects.get(id);
-  for (const childEntity of activeSceneData().objects.filter(item => item.parentId === id)) {
-    const childObject = sceneObjects.get(childEntity.id);
-    childEntity.parentId = entity.parentId || '';
-    const nextParent = childEntity.parentId ? sceneObjects.get(childEntity.parentId) : scene;
-    if (childObject && nextParent) { nextParent.attach(childObject); syncEntityLocalTransform(childEntity, childObject); }
-  }
-  if (object) { object.parent?.remove(object); object.traverse(child=>{child.geometry?.dispose?.(); if(child.material) for(const m of (Array.isArray(child.material)?child.material:[child.material])) m?.dispose?.();}); }
+  if (object) { scene.remove(object); object.traverse(child=>{child.geometry?.dispose?.(); if(child.material) for(const m of (Array.isArray(child.material)?child.material:[child.material])) m?.dispose?.();}); }
   sceneObjects.delete(id); collisionHelpers.delete(id); activeSceneData().objects = activeSceneData().objects.filter(item=>item.id!==id);
   selectedIds.delete(id); if(selectedId===id)selectedId=[...selectedIds].at(-1)||null;
   if(transform){const active=selectedId?sceneObjects.get(selectedId):null;if(active)transform.attach(active);else transform.detach();}
@@ -1666,11 +1666,12 @@ function duplicateSelectedObject() {
   snapshotHistory();
   const duplicate = clone(entity); duplicate.id = uid(); duplicate.name = `${entity.name} Copy`; duplicate.position[0] += 1.2;
   activeSceneData().objects.push(duplicate);
-  createRuntimeObject(duplicate).then(() => { const duplicateObject=sceneObjects.get(duplicate.id);const parentObject=duplicate.parentId?sceneObjects.get(duplicate.parentId):null;if(duplicateObject&&parentObject)parentObject.add(duplicateObject);selectObject(duplicate.id); renderHierarchy(); scheduleSave(); });
+  createRuntimeObject(duplicate).then(() => { selectObject(duplicate.id); renderHierarchy(); scheduleSave(); });
 }
-function applyEntityAppearance(entity, object) {
+async function applyEntityAppearance(entity, object) {
   const savedMaterial=(currentProject.materials||[]).find(m=>m.id===entity.material?.materialId);
   const appearance=savedMaterial?{...savedMaterial,...entity.material}:entity.material||{};
+  const textureLoads=[];
   object.traverse(child => {
     if (!child.isMesh || !child.material) return;
     const apply = material => {
@@ -1680,11 +1681,12 @@ function applyEntityAppearance(entity, object) {
       if (appearance?.roughness != null && 'roughness' in mat) mat.roughness = Number(appearance.roughness);
       if (appearance?.metalness != null && 'metalness' in mat) mat.metalness = Number(appearance.metalness);
       if (appearance?.opacity != null) { mat.opacity = Number(appearance.opacity); mat.transparent = mat.opacity < 1; }
-      if (appearance?.textureAssetId) applyTextureToMaterial(mat, appearance.textureAssetId, appearance.tileX || 1, appearance.tileY || 1, appearance.seamless===true, appearance.seamWidth??.12);
+      if (appearance?.textureAssetId) textureLoads.push(applyTextureToMaterial(mat, appearance.textureAssetId, appearance.tileX || 1, appearance.tileY || 1, appearance.seamless===true, appearance.seamWidth??.12));
       return mat;
     };
     child.material = Array.isArray(child.material) ? child.material.map(apply) : apply(child.material);
   });
+  await Promise.all(textureLoads);
 }
 async function loadModelAsset(assetId) {
   const asset = currentProject.assets.find(item => item.id === assetId);
@@ -1824,24 +1826,36 @@ function buildSeamlessTextureCanvas(image,strength=.12) {
   blendAxis(true);blendAxis(false);context.putImageData(frame,0,0);return canvas;
 }
 function applyTextureToMaterial(material, assetId, tileX = 1, tileY = 1, seamless = false, seamWidth = .12) {
-  const asset = currentProject.assets.find(item => item.id === assetId);
-  if (!asset?.blob) return;
+  const asset = currentProject?.assets?.find(item => item.id === assetId);
+  if (!asset?.blob) return Promise.resolve(false);
   const url = getAssetUrl(asset);
   const textureLoader = extOf(asset.name) === 'tga' ? new TGALoader() : new THREE.TextureLoader();
-  textureLoader.load(url, texture => {
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(Math.max(.01, Number(tileX) || 1), Math.max(.01, Number(tileY) || 1));
-    texture.anisotropy=Math.min(8,renderer?.capabilities?.getMaxAnisotropy?.()||1);
-    if(seamless&&texture.image){const canvas=buildSeamlessTextureCanvas(texture.image,seamWidth);if(canvas)texture.image=canvas;}
-    texture.needsUpdate = true;
-    material.map = texture; material.needsUpdate = true;
-    // Edge blending is an opt-in texture preprocessing step; the source asset is kept intact.
+  // TextureLoader is asynchronous. Returning a promise lets undo/redo and scene restore
+  // wait until the material's visual state matches the serialized entity data.
+  const requestId=(material.userData?._zeroTextureRequest||0)+1;
+  material.userData ||= {};
+  material.userData._zeroTextureRequest=requestId;
+  return new Promise(resolve => {
+    textureLoader.load(url, texture => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(Math.max(.01, Number(tileX) || 1), Math.max(.01, Number(tileY) || 1));
+      texture.anisotropy=Math.min(8,renderer?.capabilities?.getMaxAnisotropy?.()||1);
+      if(seamless&&texture.image){const canvas=buildSeamlessTextureCanvas(texture.image,seamWidth);if(canvas)texture.image=canvas;}
+      texture.needsUpdate = true;
+      // Undo/redo may start another load while this image is still decoding. Only
+      // the most recent request may update this material. Never dispose the old map:
+      // cloned Three.js materials can share it with other scene objects.
+      if(material.userData?._zeroTextureRequest!==requestId){texture.dispose?.();resolve(false);return;}
+      material.map = texture; material.needsUpdate = true;
+      resolve(true);
+    }, undefined, error => { console.warn('Texture load failed', asset.name, error); resolve(false); });
   });
 }
 function applyTextureToSelection(assetId) {
   const entity = findEntity(selectedId), object = sceneObjects.get(selectedId);
   if (!entity || !object) { toast('Сначала выбери объект на сцене', 'error'); return; }
+  snapshotHistory();
   entity.material ||= {};
   entity.material.textureAssetId = assetId;
   entity.material.tileX ||= 1; entity.material.tileY ||= 1;
@@ -1870,6 +1884,7 @@ function createMaterial() {
 }
 function applyMaterialToEntity(entity, material) {
   if(!entity||!material)return;
+  snapshotHistory();
   entity.material={...clone(material),materialId:material.id,overrideColor:true};
   const object=sceneObjects.get(entity.id);if(!object)return;
   object.traverse(child=>{if(!child.isMesh||!child.material)return;const apply=mat=>{const copy=mat.clone();if(copy.color)copy.color.set(material.color||'#ffffff');if('roughness' in copy)copy.roughness=Number(material.roughness??.72);if('metalness' in copy)copy.metalness=Number(material.metalness??0);copy.opacity=Number(material.opacity??1);copy.transparent=copy.opacity<1;if(material.textureAssetId)applyTextureToMaterial(copy,material.textureAssetId,material.tileX||1,material.tileY||1,material.seamless===true,material.seamWidth??.12);return copy;};child.material=Array.isArray(child.material)?child.material.map(apply):apply(child.material);});
@@ -1948,7 +1963,7 @@ function renderInspector() {
     ${entity.type === 'skybox' ? (()=>{const cfg=entity.skybox||{shape:'sphere',tileX:1,tileY:1,smoothing:true,rotationY:0,brightness:1};return `<section class="inspector-section"><div class="inspector-section-title">Skybox <span>IMAGE ENVIRONMENT</span></div><div class="inspector-section-body"><label class="field-label">Картинка Skybox<select class="field-select" id="skybox-image"><option value="">Не выбрана</option>${currentProject.assets.filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${entity.assetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Форма окружения<select class="field-select" id="skybox-shape"><option value="sphere" ${(cfg.shape||'sphere')==='sphere'?'selected':''}>Круг / сфера</option><option value="box" ${cfg.shape==='box'?'selected':''}>Квадрат / куб</option></select></label><div class="field-row two"><label class="field-label">Tiling X<input class="field-input" id="skybox-tile-x" type="number" min="0.05" max="100" step="0.1" value="${Number(cfg.tileX??1)}"></label><label class="field-label">Tiling Y<input class="field-input" id="skybox-tile-y" type="number" min="0.05" max="100" step="0.1" value="${Number(cfg.tileY??1)}"></label></div><label class="field-label">Поворот изображения по Y<input class="field-input" id="skybox-rotation" type="number" min="-360" max="360" step="1" value="${Number(cfg.rotationY||0)}"></label><label class="field-label">Яркость <span id="skybox-brightness-value">${Number(cfg.brightness??1).toFixed(2)}</span><input class="field-input" id="skybox-brightness" type="range" min="0" max="3" step="0.05" value="${Number(cfg.brightness??1)}"></label><label class="check-line"><input type="checkbox" id="skybox-smoothing" ${cfg.smoothing!==false?'checked':''}> Сглаживание изображения</label><div class="modal-note">Skybox управляется только этим объектом. Выбери изображение из ресурсов проекта; материал и отдельная текстура здесь не назначаются.</div></div></section>`;})() : ''}
     ${entity.type === 'model' ? `<section class="inspector-section"><div class="inspector-section-title">Масштаб модели <span>MODEL UNITS</span></div><div class="inspector-section-body"><label class="field-label">Единицы исходной модели<select class="field-select" id="model-unit-mode"><option value="auto" ${(entity.unitMode||'auto')==='auto'?'selected':''}>Автоопределение</option><option value="meters" ${entity.unitMode==='meters'?'selected':''}>Метры (×1)</option><option value="centimeters" ${entity.unitMode==='centimeters'?'selected':''}>Сантиметры (×0.01)</option><option value="millimeters" ${entity.unitMode==='millimeters'?'selected':''}>Миллиметры (×0.001)</option></select></label><button class="button" id="apply-model-units">Применить единицы</button><div class="modal-note">Автоопределение исправляет типичные FBX/Blender расхождения. Для точного размера можно выбрать единицы вручную; окончательный масштаб также регулируется выше в Transform.</div></div></section><section class="inspector-section"><div class="inspector-section-title">Анимации и скелет <span>ANIMATION</span></div><div class="inspector-section-body"><label class="field-label">Клип GLTF/FBX<select class="field-select" id="model-animation-select"><option value="">Выбери анимацию</option>${(entity.availableAnimations||[]).map(name=>`<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join('')}</select></label><div class="inspector-actions"><button class="button" id="play-model-animation">▶ Проиграть</button><button class="button" id="stop-model-animation">■ Стоп</button></div><div class="modal-note" id="skeleton-info">${countSkinnedBones(sceneObjects.get(entity.id))} костей в импортированном скелете · клипы GLTF/FBX доступны выше.</div><button class="button" id="create-basic-rig">＋ Создать базовый скелет</button><div class="modal-note">${entity.rig?.bones?.map(b=>escapeHtml(b.name)).join(' · ')||'Собственный скелет ещё не создан.'}</div></div></section>` : ''}
     ${!['camera','spawn','light','skybox'].includes(entity.type) ? `<section class="inspector-section"><div class="inspector-section-title">Анимация объекта <span>KEYFRAMES</span></div><div class="inspector-section-body"><div class="inspector-actions"><button class="button" id="add-transform-key">＋ Записать ключ</button><button class="button" id="play-custom-animation">▶ Проиграть</button><button class="button" id="stop-custom-animation">■ Стоп</button></div><div id="custom-animation-list" class="modal-note">${(entity.animations||[]).map(a=>`${escapeHtml(a.name)} — ${a.keys?.length||0} ключей`).join('<br>') || 'Пользовательских анимаций пока нет.'}</div></div></section>` : ''}
-    ${!['skybox','light','environmentLight','camera','spawn'].includes(entity.type) ? `<section class="inspector-section"><div class="inspector-section-title">Материал <span>MATERIAL</span></div><div class="inspector-section-body">
+    ${entity.type!=='skybox' ? `<section class="inspector-section"><div class="inspector-section-title">Материал <span>MATERIAL</span></div><div class="inspector-section-body">
       <label class="field-label">Основной цвет<input class="field-input" id="ins-color" type="color" value="${escapeAttr(material.color || '#ffffff')}" /></label>
       <label class="field-label">Шероховатость <span id="roughness-value">${Number(material.roughness ?? .72).toFixed(2)}</span><input class="field-input" id="ins-roughness" type="range" min="0" max="1" step=".01" value="${Number(material.roughness ?? .72)}" /></label>
       <label class="field-label">Текстура ${textureAsset ? `<span>${escapeHtml(textureAsset.name)}</span>` : ''}<button class="button button-quiet" id="choose-texture-button">${textureAsset ? 'Заменить текстуру' : 'Назначить из файлов'}</button></label><label class="field-label">Библиотека материалов<select class="field-select" id="ins-material-select"><option value="">Выбери сохранённый материал</option>${(currentProject.materials||[]).map(m=>`<option value="${m.id}" ${material.materialId===m.id?'selected':''}>${escapeHtml(m.name)}</option>`).join('')}</select></label><button class="button" id="apply-library-material">Применить материал</button><button class="button button-quiet" id="save-material-to-library">＋ Сохранить материал в библиотеку</button>
@@ -2017,11 +2032,13 @@ function renderInspector() {
     const obj = sceneObjects.get(entity.id); obj?.traverse(child => { if (child.isMesh && child.material) eachEntityMaterial(child, mat => { if ('roughness' in mat) mat.roughness = Number(event.target.value); }); }); scheduleSave();
   });
   ['tile-x','tile-y'].forEach(id => $(`#${id}`)?.addEventListener('change', () => {
+    snapshotHistory();
     entity.material ||= {}; entity.material.tileX = Math.max(.01, Number($('#tile-x').value) || 1); entity.material.tileY = Math.max(.01, Number($('#tile-y').value) || 1);
     if (entity.material.textureAssetId) applyTextureToEntity(entity);
     scheduleSave();
   }));
   const updateSeamlessTexture=()=>{
+    snapshotHistory();
     entity.material ||= {};entity.material.seamless=$('#texture-seamless')?.checked===true;entity.material.seamWidth=Number($('#texture-seam-width')?.value)||.12;
     const label=$('#texture-seam-value');if(label)label.textContent=`${Math.round(entity.material.seamWidth*100)}%`;
     if(entity.material.textureAssetId)applyTextureToEntity(entity);scheduleSave();
@@ -2139,18 +2156,26 @@ async function addAssetsFromFiles(files) {
 function renderAssetPanel() {
   if (!currentProject) return;
   const content = $('#asset-content');
-  $$('.asset-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.assetTab === currentTab));
+  renderWorkspaceTabs();
+  const hasActiveTab = Boolean(getActiveWorkspaceTab() && currentTab);
   $('#export-current-scene-button').hidden = currentTab !== 'scenes';
+  $('#create-asset-button').disabled = !hasActiveTab;
+  $('#create-asset-button').title = hasActiveTab ? 'Создать в активной вкладке' : 'Сначала добавь вкладку';
+  if (!hasActiveTab) {
+    $('#asset-path').textContent = 'Рабочее пространство';
+    content.innerHTML = `<div class="asset-tab-empty"><div class="asset-tab-empty-icon">＋</div><strong>Вкладок пока нет</strong><span>Ты можешь удалить все вкладки и создать собственные. Добавь вкладку, выбери тип содержимого и назови её.</span><button type="button" class="button button-primary" id="asset-tab-empty-create">＋ Создать вкладку</button></div>`;
+    $('#asset-tab-empty-create')?.addEventListener('click', openCreateWorkspaceTabModal);
+    return;
+  }
   if (currentTab === 'materials') {
     $('#asset-path').textContent = 'Materials / Library';
     const materials=currentProject.materials||[];
     const dictionary=I18N[currentLanguage]||{};
     const roughLabel=dictionary['Шероховатость']||'Шероховатость';
     const metalLabel=dictionary['Металличность']||'Металличность';
-    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><button class="asset-rename" data-rename-material="${material.id}" title="Переименовать материал">✎</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#ffffff')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
+    content.innerHTML=(materials.length?materials.map(material=>`<div class="asset-card material-card" data-material-id="${material.id}"><button class="asset-remove" data-remove-material="${material.id}" title="Удалить материал">×</button><div class="material-swatch" style="background:${escapeAttr(material.color||'#ffffff')}">${material.textureAssetId?'▧':'◈'}</div><div class="asset-name">${escapeHtml(material.name)}</div><div class="asset-meta">${escapeHtml(roughLabel)} ${Number(material.roughness??.72).toFixed(2)} · ${escapeHtml(metalLabel)} ${Number(material.metalness??0).toFixed(2)}</div><div class="material-card-actions"><button class="asset-add" data-apply-material="${material.id}" title="Применить">✓</button><button class="material-export" data-export-material="${material.id}" title="Экспортировать .zemat">↓</button></div></div>`).join(''):'<div class="asset-empty">Материалов пока нет. Создай материал или сохрани его из свойств выбранного объекта.</div>')+`<button class="asset-card material-new-card" id="new-material-card"><div class="asset-thumb">＋</div><div class="asset-name">Новый материал</div><div class="asset-meta">CREATE MATERIAL</div></button>`;
     $('#new-material-card').addEventListener('click',createMaterial);
     $$('[data-remove-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();deleteMaterial(button.dataset.removeMaterial);}));
-    $$('[data-rename-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();renameMaterial(button.dataset.renameMaterial);}));
     $$('[data-export-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();exportMaterial(button.dataset.exportMaterial).catch(error=>{console.error(error);toast('Не удалось экспортировать материал','error');});}));
     $$('[data-apply-material]',content).forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const material=materials.find(m=>m.id===button.dataset.applyMaterial);if(!selectedId){toast('Сначала выбери объект на сцене','error');return;}applyMaterialToEntity(findEntity(selectedId),material);}));
   } else if (currentTab === 'assets') {
@@ -2191,10 +2216,9 @@ function renderAssetPanel() {
   } else if (currentTab === 'scenes') {
     $('#asset-path').textContent = 'Scenes / Project';
     const scenes = currentProject.scenes;
-    content.innerHTML = scenes.map(item => `<div class="asset-card ${item.id === currentProject.activeSceneId ? 'selected' : ''}" data-scene-id="${item.id}"><button class="asset-remove" data-remove-scene="${item.id}" title="Удалить сцену">×</button><button class="asset-rename" data-rename-scene="${item.id}" title="Переименовать сцену">✎</button><div class="asset-thumb">🎬</div><div class="asset-name">${escapeHtml(item.name)}</div><div class="asset-meta">${item.data.objects.length} OBJECTS ${item.id === currentProject.activeSceneId ? '· ACTIVE' : ''}</div></div>`).join('') + `<div class="asset-card" id="new-scene-card"><div class="asset-thumb">＋</div><div class="asset-name">Новая сцена</div><div class="asset-meta">CREATE SCENE</div></div>`;
+    content.innerHTML = scenes.map(item => `<div class="asset-card ${item.id === currentProject.activeSceneId ? 'selected' : ''}" data-scene-id="${item.id}"><button class="asset-remove" data-remove-scene="${item.id}">×</button><div class="asset-thumb">🎬</div><div class="asset-name">${escapeHtml(item.name)}</div><div class="asset-meta">${item.data.objects.length} OBJECTS ${item.id === currentProject.activeSceneId ? '· ACTIVE' : ''}</div></div>`).join('') + `<div class="asset-card" id="new-scene-card"><div class="asset-thumb">＋</div><div class="asset-name">Новая сцена</div><div class="asset-meta">CREATE SCENE</div></div>`;
     $$('[data-scene-id]', content).forEach(card => card.addEventListener('click', (e) => {if(e.target.closest('[data-remove-scene]'))return;switchScene(card.dataset.sceneId);}));
     $$('[data-remove-scene]',content).forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();deleteScene(btn.dataset.removeScene);}));
-    $$('[data-rename-scene]',content).forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();renameScene(btn.dataset.renameScene);}));
     $('#new-scene-card').addEventListener('click', createScene);
   } else {
     if (currentTab === 'zeroboxes') {
@@ -2212,24 +2236,23 @@ function renderAssetPanel() {
     $('#new-script-card').addEventListener('click', () => createScript());
   }
 }
-function setAssetTab(tab) { currentTab = tab; selectedAssetId = null; if (tab === 'assets') assetFolderFilter = 'All'; renderAssetPanel(); }
+function setAssetTab(tab, preferredId = null) {
+  if (!currentProject) return;
+  let target = preferredId ? currentProject.workspaceTabs?.find(item => item.id === preferredId && item.type === tab) : currentProject.workspaceTabs?.find(item => item.type === tab);
+  if (!target) {
+    const meta = WORKSPACE_TAB_TYPES[tab];
+    if (!meta) { currentTab = null; currentDockTabId = null; renderAssetPanel(); return; }
+    currentProject.workspaceTabs ||= [];
+    target = { id: uid(), type: tab, name: meta.label, icon: meta.icon };
+    currentProject.workspaceTabs.push(target);
+  }
+  setAssetTabById(target.id);
+}
 function switchScene(id) {
   if (!currentProject.scenes.some(item => item.id === id)) return;
   currentProject.activeSceneId = id; selectedId = null;
   $('#active-scene-name').textContent = activeScene().name; $('#viewport-scene-name').textContent = activeScene().name;
   loadSceneIntoViewport().then(() => { renderAssetPanel(); renderInspector(); scheduleSave(); toast(`Открыта сцена «${activeScene().name}»`, 'success'); });
-}
-function renameScene(id) {
-  const sceneItem=currentProject?.scenes?.find(item=>item.id===id);if(!sceneItem)return;
-  const next=prompt('Новое название сцены',sceneItem.name);if(!next?.trim())return;
-  sceneItem.name=next.trim().slice(0,64);
-  if(currentProject.activeSceneId===id){$('#active-scene-name').textContent=sceneItem.name;$('#viewport-scene-name').textContent=sceneItem.name;}
-  renderAssetPanel();scheduleSave();toast('Сцена переименована','success');
-}
-function renameMaterial(id) {
-  const material=currentProject?.materials?.find(item=>item.id===id);if(!material)return;
-  const next=prompt('Новое название материала',material.name);if(!next?.trim())return;
-  material.name=next.trim().slice(0,64);renderAssetPanel();scheduleSave();toast('Материал переименован','success');
 }
 function createScene() {
   showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE MANAGER</span><h2 id="modal-title">Новая сцена</h2><p>Создай отдельную сцену внутри проекта.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="new-scene-form"><div class="modal-body"><label class="field-label">Название сцены<input class="field-input" id="new-scene-name" placeholder="Например, Level 01" maxlength="48" required /></label></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary">Создать</button></div></form>`);
@@ -2428,8 +2451,6 @@ async function startPlayMode() {
   const saved=await saveProject(false);
   if(!saved){toast('Тест недоступен: не удалось сохранить ZeroBox и проект', 'error');return;}
   if((currentProject.zeroBoxes||[]).some(box=>!Array.isArray(box.blocks)||!Array.isArray(box.connections))){toast('Тест недоступен: сначала исправь и сохрани ZeroBox', 'error');return;}
-  // Ensure the image dome is ready before entering preview; otherwise the first test frames can render without it.
-  await applySceneSkybox();
   playSnapshot = clone(currentProject);
   playSnapshot.assets = (currentProject.assets || []).map((asset, index) => ({...playSnapshot.assets[index], blob: asset.blob}));
   isPlaying = true;
@@ -2464,7 +2485,7 @@ async function startPlayMode() {
     object.traverse(child=>{if(child.userData?.editorOnly)child.visible=false;});
     const helper=collisionHelpers.get(entity.id);if(helper)helper.visible=false;
   });
-  orbit.enabled=false;transform.detach();bindPreviewCameraInput();
+  orbit.enabled=false;transform.detach();gridHelper.visible=false;axesHelper.visible=false;bindPreviewCameraInput();
   $('#play-overlay').classList.remove('hidden');
   $('#play-hint').textContent='Тестовый режим · изменения не сохраняются · Esc — выйти';
   renderGameUI();
@@ -2479,6 +2500,7 @@ async function stopPlayMode() {
   previewWrap?.classList.remove('play-fullscreen-fallback');
   $('#viewport-wrap')?.classList.remove('preview-camera-active');
   isPlaying=false;previewCamera=null;orbit.enabled=true;heldKeys.clear();heldButtonIds.clear();gameSpeedMultiplier=1;
+  gridHelper.visible=axesHelper.visible=activeSceneData()?.grid!==false;
   $('#play-overlay')?.classList.add('hidden');$('#play-button')?.classList.remove('hidden');
   $('#game-ui-layer').innerHTML='';
   if(playSnapshot){currentProject=playSnapshot;playSnapshot=null;}
@@ -2528,6 +2550,7 @@ function openSpatialEditor(entity, mode='collision') {
   try{
     miniRenderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});miniRenderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));miniScene=new THREE.Scene();miniScene.background=new THREE.Color(document.documentElement.dataset.theme==='light'?'#eeeeee':'#171b1e');
     miniCamera=new THREE.PerspectiveCamera(48,1,.1,500);miniCamera.position.set(4,3,5);miniOrbit=new OrbitControls(miniCamera,canvas);miniOrbit.enableDamping=true;miniOrbit.target.set(0,.7,0);
+    const grid=new THREE.GridHelper(8,16,0x777777,0x444444);miniScene.add(grid);
     objectGroup=new THREE.Group();miniScene.add(objectGroup);
     const source=sceneObjects.get(entity.id);if(source){const copyObj=source.clone(true);copyObj.position.set(0,0,0);copyObj.rotation.set(0,0,0);copyObj.scale.fromArray(entity.scale||[1,1,1]);copyObj.traverse(ch=>{if(ch.isMesh){ch.material=new THREE.MeshBasicMaterial({color:0x9a9a9a,wireframe:true});ch.castShadow=false;ch.receiveShadow=false;}});objectGroup.add(copyObj);}else{const target=new THREE.Mesh(new THREE.CapsuleGeometry(.35,.9,4,10),new THREE.MeshBasicMaterial({color:0x999999,wireframe:true}));target.position.y=.8;objectGroup.add(target);}
     handleGroup=new THREE.Group();objectGroup.add(handleGroup);
@@ -2807,30 +2830,23 @@ function getNumericInputStep(input,current){
   }
   const custom=Number(input.dataset.step);if(Number.isFinite(custom)&&custom>0)return custom;
   const abs=Math.abs(Number(current)||0);
-  if(abs<.001)return .001;if(abs<.01)return .005;if(abs<.1)return .01;if(abs<1)return .05;if(abs<10)return .5;if(abs<100)return 1;if(abs<1000)return 10;if(abs<10000)return 100;return 1000;
+  if(abs<.01)return .001;if(abs<.1)return .01;if(abs<1)return .1;if(abs<10)return .5;if(abs<100)return 1;if(abs<1000)return 10;if(abs<10000)return 100;return 1000;
 }
 function enhanceNumericInputs(root=document){
   const candidates=$$('input[type="number"]',root);
   for(const input of candidates){
-    if(input.closest('.axis-stepper,.numeric-stepper')||input.disabled||input.readOnly)continue;
+    if(input.closest('.axis-stepper,.numeric-stepper')||input.dataset.stepperEnhanced==='1')continue;
+    input.dataset.stepperEnhanced='1';
     const wrap=document.createElement('div');wrap.className='numeric-stepper';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
-    const make=(direction,label)=>{const button=document.createElement('button');button.type='button';button.className='numeric-step-button';button.textContent=direction<0?'−':'+';button.setAttribute('aria-label',label);button.addEventListener('click',event=>{
-      event.preventDefault();event.stopPropagation();
-      const current=Number.isFinite(input.valueAsNumber)?input.valueAsNumber:0;
-      const step=getNumericInputStep(input,current);
-      const minRaw=input.getAttribute('min'),maxRaw=input.getAttribute('max');
-      const min=minRaw!==null&&minRaw!==''?Number(minRaw):-Infinity,max=maxRaw!==null&&maxRaw!==''?Number(maxRaw):Infinity;
-      const valueAttr=input.getAttribute('value');
-      const base=Number.isFinite(min)?min:(valueAttr!==null&&Number.isFinite(Number(valueAttr))?Number(valueAttr):0);
-      const position=(current-base)/step,nearest=Math.round(position),aligned=Math.abs(position-nearest)<1e-7;
-      const index=direction>0?(aligned?nearest+1:Math.ceil(position-1e-9)):(aligned?nearest-1:Math.floor(position+1e-9));
-      const decimalPlaces=value=>{const parts=String(value).toLowerCase().split('e');return Math.min(12,Math.max(0,(parts[0].split('.')[1]||'').length-Number(parts[1]||0)));};
-      const decimals=Math.max(decimalPlaces(step),decimalPlaces(base),decimalPlaces(current));
-      let next=base+index*step;
-      if(Number.isFinite(min))next=Math.max(min,next);if(Number.isFinite(max))next=Math.min(max,next);
-      next=Number(next.toFixed(decimals));
-      if(next===current)return;
-      input.value=String(next);input.dispatchEvent(new Event('change',{bubbles:true}));input.dispatchEvent(new Event('input',{bubbles:true}));
+    const make=(direction,label)=>{const button=document.createElement('button');button.type='button';button.className='numeric-step-button';button.textContent=direction<0?'−':'+';button.setAttribute('aria-label',label);button.addEventListener('click',()=>{
+      const current=Number(input.value)||0,step=getNumericInputStep(input,current);
+      const min=input.min!==''?Number(input.min):-Infinity,max=input.max!==''?Number(input.max):Infinity;
+      const base=Number.isFinite(min)?min:0,position=(current-base)/step,epsilon=1e-9;
+      const index=direction>0?Math.floor(position+epsilon)+1:Math.ceil(position-epsilon)-1;
+      const stepParts=String(step).toLowerCase().split('e'),mantissaDecimals=(stepParts[0].split('.')[1]||'').length,exponent=Number(stepParts[1]||0);
+      const decimals=Math.min(10,Math.max(0,mantissaDecimals-exponent));
+      const next=Math.max(min,Math.min(max,Number((base+index*step).toFixed(decimals))));
+      input.value=String(next);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));
     });return button;};
     wrap.appendChild(make(-1,'Уменьшить до предыдущего подходящего значения'));wrap.appendChild(input);wrap.appendChild(make(1,'Увеличить до следующего подходящего значения'));
   }
@@ -2881,12 +2897,29 @@ function openWorkspaceLayoutSettings(){
   });
 }
 
+async function toggleEditorViewportFullscreen(){
+  const root=$('#viewport-wrap');if(!root)return;
+  try{if(document.fullscreenElement)await document.exitFullscreen();else if(root.requestFullscreen)await root.requestFullscreen({navigationUI:'hide'});else toast('Полноэкранный режим не поддерживается браузером','error');}
+  catch(error){console.warn('Editor fullscreen failed',error);toast('Не удалось включить полноэкранный режим','error');}
+  requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
+}
+async function exitEditorWorkspace(){
+  try{await saveProject(false);}catch(error){console.warn('Could not save before leaving editor',error);}
+  if(document.fullscreenElement)try{await document.exitFullscreen();}catch{}
+  showHome();
+}
+document.addEventListener('fullscreenchange',()=>{const button=$('#workspace-fullscreen-overlay');if(button)button.textContent=document.fullscreenElement?'⛶ Обычный экран':'⛶ На весь экран';});
+
 function bindUI() {
   initNumericSteppers();
   initUniversalWindowResizing();
   $('#open-settings-home').addEventListener('click',openDeviceSettings);
   $('#open-settings-editor').addEventListener('click',openDeviceSettings);
   $$('#model-studio [data-model-panel]').forEach(button=>button.addEventListener('click',()=>toggleModelDrawerPanel(button.dataset.modelPanel)));
+  $('#model-panel-add-toggle')?.addEventListener('click',()=>{const menu=$('#model-panel-add-menu'),button=$('#model-panel-add-toggle');menu?.classList.toggle('hidden');button?.setAttribute('aria-expanded',String(!menu?.classList.contains('hidden')));});
+  $('#model-panel-add-menu [data-model-panel-menu-close]')?.addEventListener('click',()=>{$('#model-panel-add-menu')?.classList.add('hidden');$('#model-panel-add-toggle')?.setAttribute('aria-expanded','false');});
+  $('#model-panel-add-menu')?.addEventListener('click',event=>{const button=event.target.closest('[data-model-panel-create]');if(!button)return;const panel=button.dataset.modelPanelCreate;if(panel==='add'){$('#model-quick-add-menu')?.classList.remove('hidden');$('#model-quick-add-toggle')?.setAttribute('aria-expanded','true');}else showModelDrawerPanel(panel);$('#model-panel-add-menu')?.classList.add('hidden');$('#model-panel-add-toggle')?.setAttribute('aria-expanded','false');});
+  $$('#model-studio [data-model-panel-close]').forEach(button=>button.addEventListener('click',()=>{const map={add:'.model-add-panel',tools:'.model-tools',inspector:'.model-inspector'};const panel=$(`#model-studio ${map[button.dataset.modelPanelClose]||'.model-tools'}`);if(panel){if(window.matchMedia?.('(max-width: 850px), (pointer: coarse)').matches)panel.classList.remove('model-drawer-open');else{panel.classList.add('model-panel-hidden');updateModelStudioPanelLayout();}}$$('#model-studio [data-model-panel]').forEach(item=>item.classList.toggle('active',false));requestAnimationFrame(()=>modelStudio.resize?.());}));
   $('#theme-toggle-home').addEventListener('click', toggleTheme);
   $('#theme-toggle-editor').addEventListener('click', toggleTheme);
   $('#language-select-home')?.addEventListener('change', e=>setLanguage(e.target.value));
@@ -2895,19 +2928,32 @@ function bindUI() {
   bindModelPanelResizers();
   loadWorkspaceLayout();
   $('#new-project-open').addEventListener('click', createProjectModal);
+  $('#new-game-project-home')?.addEventListener('click', createProjectModal);
+  $('#new-model-project-home')?.addEventListener('click', openModelStudioCreateProjectForm);
   $('#import-project-open').addEventListener('click', () => $('#project-import-input').click());
   $('#project-import-input').addEventListener('change', event => { const file = event.target.files?.[0]; if (file) importProjectZip(file); });
   $('#back-home').addEventListener('click', async () => { await saveProject(false); showHome(); });
+  $('#workspace-home-overlay')?.addEventListener('click',exitEditorWorkspace);
+  $('#workspace-fullscreen-overlay')?.addEventListener('click',toggleEditorViewportFullscreen);
   $('#save-project-button').addEventListener('click', exportProjectZip);
+  $('#save-project-local-button')?.addEventListener('click',()=>saveProject(true));
   $('#play-button').addEventListener('click', startPlayMode);
   $('#open-zerobox-button').addEventListener('click', () => openWorkbench('zerobox'));
   $('#open-interface-button').addEventListener('click', () => openWorkbench('interface'));
-  $('#open-model-studio-home').addEventListener('click', openModelStudioProjectPicker);
+  $('#open-model-studio-home')?.addEventListener('click', openModelStudioCreateProjectForm);
+  $('#model-overlay-exit')?.addEventListener('click',closeModelStudio);
+  $('#model-overlay-fullscreen')?.addEventListener('click',toggleModelStudioFullscreen);
+  $('#model-export-project')?.addEventListener('click',async()=>{if(await saveModelProject({silent:true}))await exportProjectZip();});
+  $('#model-quick-add-toggle')?.addEventListener('click',()=>{const menu=$('#model-quick-add-menu'),button=$('#model-quick-add-toggle');menu?.classList.toggle('hidden');button?.setAttribute('aria-expanded',String(!menu?.classList.contains('hidden')));});
+  $('#model-quick-add-close')?.addEventListener('click',()=>{$('#model-quick-add-menu')?.classList.add('hidden');$('#model-quick-add-toggle')?.setAttribute('aria-expanded','false');});
+  $('#model-quick-import')?.addEventListener('click',()=>$('#model-import-input')?.click());
+  $('#model-quick-primitives')?.addEventListener('click',event=>{const button=event.target.closest('[data-model-primitive]');if(button){addModelPrimitive(Number(button.dataset.modelPrimitive));$('#model-quick-add-menu')?.classList.add('hidden');}});
   $('#model-studio-back').addEventListener('click', closeModelStudio);
   $('#model-import-open').addEventListener('click',()=>$('#model-import-input').click());
   $('#model-import-input').addEventListener('change',e=>importModelStudioFile(e.target.files?.[0]));
   $('#model-save').addEventListener('click', saveModelStudioAsset);
-  $('#model-download-device')?.addEventListener('click', downloadModelStudioToDevice);
+  $('#model-save-project')?.addEventListener('click',()=>saveModelProject());
+  $('#model-name')?.addEventListener('change',()=>{if(currentProject){currentProject.modelStudioName=$('#model-name').value.trim()||'New Model';scheduleModelProjectSave();}});
   $('#model-join-selected').addEventListener('click', joinSelectedModelObjects);
   $('#model-separate-selected').addEventListener('click', separateSelectedModelGroup);
   $$('#model-studio [data-model-view]').forEach(button=>button.addEventListener('click',()=>snapModelView(button.dataset.modelView)));
@@ -2948,8 +2994,10 @@ function bindUI() {
   $$('[data-sculpt-action]').forEach(b=>b.addEventListener('click',()=>{modelStudio.sculptSettings.action=b.dataset.sculptAction;$$('[data-sculpt-action]').forEach(x=>x.classList.toggle('active',x===b));}));
   $('#model-cut-open-2d').addEventListener('click',openModelCut2DEditor);
   $('#model-camera-orbit-toggle')?.addEventListener('click',()=>setModelCameraNavigation(!modelStudio.cameraNavigation));
+  $('#model-grid-toggle')?.addEventListener('click',()=>{if(!modelStudio.grid)return;modelStudio.grid.visible=!modelStudio.grid.visible;$('#model-grid-toggle').classList.toggle('active',modelStudio.grid.visible);});
   $$('#model-studio [data-model-mirror]').forEach(b=>b.addEventListener('click',()=>mirrorModelObject(Number(b.dataset.modelMirror))));
   $('#model-primitives').innerHTML=MODEL_PRIMITIVES.map((n,i)=>({n,i})).filter(item=>item.i!==2).map(({n,i})=>`<button type="button" data-model-primitive="${i}">${['◧','●','▱','⬭','△','⬯','◎','✳','◇','♟','○','◌','⌂','⬡','◇','⬟','△','∿','⟲','◩'][i]} ${n}</button>`).join('');
+  if($('#model-quick-primitives'))$('#model-quick-primitives').innerHTML=$('#model-primitives').innerHTML;
   $('#model-primitives').addEventListener('click',e=>{const b=e.target.closest('[data-model-primitive]');if(b)addModelPrimitive(Number(b.dataset.modelPrimitive));});
   $('#close-workbench').addEventListener('click', closeWorkbench);
   $('#open-settings-workbench').addEventListener('click',openDeviceSettings);
@@ -2961,10 +3009,11 @@ function bindUI() {
   $('#toggle-inspector').addEventListener('click', () => $('#inspector-panel').classList.toggle('open'));
   $('#close-inspector').addEventListener('click', () => $('#inspector-panel').classList.remove('open'));
   $('#add-object-menu').addEventListener('click', openAddObjectMenu);
-  $('#scene-options').addEventListener('click', () => showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE SETTINGS</span><h2 id="modal-title">Настройки сцены</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Название<input class="field-input" id="scene-setting-name" value="${escapeAttr(activeScene().name)}" /></label><label class="field-label">Цвет фона<input class="field-input" id="scene-setting-bg" type="color" value="${activeSceneData().background || '#182126'}" /></label></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="save-scene-settings">Применить</button></div>`));
+  $('#scene-options').addEventListener('click', () => showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE SETTINGS</span><h2 id="modal-title">Настройки сцены</h2></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Название<input class="field-input" id="scene-setting-name" value="${escapeAttr(activeScene().name)}" /></label><label class="field-label">Цвет фона<input class="field-input" id="scene-setting-bg" type="color" value="${activeSceneData().background || '#182126'}" /></label><label class="check-line"><input type="checkbox" id="scene-setting-grid" ${activeSceneData().grid !== false ? 'checked' : ''}/> Показывать сетку и оси</label></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="save-scene-settings">Применить</button></div>`));
   $('#undo-button').addEventListener('click', undo); $('#redo-button').addEventListener('click', redo);
   $$('[data-transform]').forEach(button => button.addEventListener('click', () => setTransformMode(button.dataset.transform)));
   $('#focus-object').addEventListener('click', focusSelectedObject);
+  $('#grid-toggle').addEventListener('click', () => { activeSceneData().grid = !activeSceneData().grid; gridHelper.visible = axesHelper.visible = activeSceneData().grid; scheduleSave(); });
   $('#viewport-help').addEventListener('click', () => toast('ЛКМ — вращать камеру · СКМ — панорама · ПКМ + перетаскивание — выделение рамкой · Колесо — масштаб'));
   $('#viewport-inspection-toggle')?.addEventListener('click',()=>setViewportInspectionMode(!viewportInspectionMode));
   $$('[data-editor-view]').forEach(button=>button.addEventListener('click',()=>snapEditorView(button.dataset.editorView)));
@@ -2976,7 +3025,8 @@ function bindUI() {
   $('#asset-folder-input').addEventListener('change', event => { addAssetsFromFiles([...event.target.files]); event.target.value = ''; });
   $('#create-asset-button').addEventListener('click', () => currentTab === 'scenes' ? createScene() : currentTab === 'scripts' ? createScript() : currentTab === 'zeroboxes' ? createZeroBox() : currentTab === 'materials' ? createMaterial() : openCreateAssetMenu());
   $('#export-current-scene-button').addEventListener('click', () => { const data = activeSceneData(); downloadBlob(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}), `${safeName(data.name)}.zescene`); toast('Файл сцены экспортирован', 'success'); });
-  $$('.asset-tab').forEach(tab => tab.addEventListener('click', () => setAssetTab(tab.dataset.assetTab)));
+  $('#add-workspace-tab')?.addEventListener('click', openCreateWorkspaceTabModal);
+  $('#clear-workspace-tabs')?.addEventListener('click', clearWorkspaceTabs);
   $('#modal-backdrop').addEventListener('click', event => { if (event.target.id === 'modal-backdrop') closeModal(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && currentProject) saveProject(false); });
   window.addEventListener('beforeunload', () => { if (currentProject && !isPlaying) { currentProject.updatedAt = new Date().toISOString(); try { const tx = db?.transaction('projects','readwrite'); tx?.objectStore('projects').put(currentProject); } catch {} } });
@@ -2984,8 +3034,8 @@ function bindUI() {
     const apply = $('#save-scene-settings'); if (!apply) return;
     apply.addEventListener('click', () => {
       const name = $('#scene-setting-name').value.trim() || 'Scene';
-      const data = activeSceneData(); data.name = name; data.background = $('#scene-setting-bg').value;
-      activeScene().name = name; scene.background = new THREE.Color(data.background); applySceneSkybox();
+      const data = activeSceneData(); data.name = name; data.background = $('#scene-setting-bg').value; data.grid = $('#scene-setting-grid').checked;
+      activeScene().name = name; scene.background = new THREE.Color(data.background); applySceneSkybox(); gridHelper.visible = axesHelper.visible = data.grid;
       $('#active-scene-name').textContent = $('#viewport-scene-name').textContent = name;
       closeModal(); scheduleSave(); renderAssetPanel();
     });
@@ -2995,7 +3045,7 @@ function openAddObjectMenu() {
   const categories=[
     {id:'basic',label:'Основные',icon:'◈',items:[['cube','Куб','⬡'],['plane','Плоскость','▱'],['sphere','Сфера','●'],['cylinder','Цилиндр','⬭'],['cone','Конус','△'],['capsule','Капсула','◉']]},
     {id:'advanced',label:'Дополнительные формы',icon:'◇',items:[['torus','Тор','◎'],['torusKnot','Узел тор','♧'],['icosphere','Икосфера','⬢'],['monkey','Обезьяна','♟'],['circle','Круг','○'],['ring','Кольцо','◌'],['pyramid','Пирамида','⌂'],['hexagonalPrism','Шестиугольная призма','⬡'],['octahedron','Октаэдр','◇'],['dodecahedron','Додекаэдр','⬟'],['tetrahedron','Тетраэдр','△'],['tube','Труба','∿'],['spring','Пружина','⟲'],['wedge','Клин','◩']]},
-    {id:'game',label:'Игровые объекты',icon:'♟',items:[['player','Player','♟'],['camera','Камера','▣'],['skybox','Skybox','☁'],['light','Источник света','✦'],['environmentLight','Окружной свет','☼']]}
+    {id:'game',label:'Игровые объекты',icon:'♟',items:[['player','Player','♟'],['spawn','Player Start','⌖'],['camera','Камера','▣'],['skybox','Skybox','☁'],['light','Источник света','✦'],['environmentLight','Окружной свет','☼']]}
   ];
   const active='basic';
   showModal(`<div class="modal-header"><div><span class="panel-kicker">SCENE OBJECTS</span><h2 id="modal-title">Добавить объект</h2><p>Выбери категорию, затем нужный объект.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body add-object-body"><div class="object-category-tabs">${categories.map(c=>`<button class="object-category-tab ${c.id===active?'active':''}" data-object-category="${c.id}"><span>${c.icon}</span>${c.label}</button>`).join('')}</div><div class="add-object-grid" id="add-object-grid"></div><div class="modal-note">Модели Blender импортируются через GLB/GLTF, FBX, OBJ или STL из панели файлов.</div></div>`);
@@ -3063,28 +3113,29 @@ function deleteScene(sceneId) {
 // ---------- ZeroBox visual logic and camera UI ----------
 const ZEROBOX_CATEGORIES = [
   {name:'События', icon:'⚡', color:'#e4a64c', items:['Straightaway','Buttonclicked','Buttonpressed','ButtonResting']},
-  {name:'Управление игрой', icon:'⏻', color:'#e47d76', items:['ExitGame']},
-  {name:'Управление', icon:'✥', color:'#65c6bd', items:['Joystick','JoystickMovement','Side','Speed']},
-  {name:'Игрок', icon:'♟', color:'#68b7d8', items:['Squat','Jumpup','Life']},
+  {name:'Player', icon:'♟', color:'#68b7d8', items:['Side','Speed','Squat','Jumpup','Life']},
+  {name:'Управление', icon:'✥', color:'#65c6bd', items:['Joystick','JoystickMovement']},
   {name:'Математика', icon:'∑', color:'#aa91e8', items:['Number','NumericArray','Minus','Plus','Divide','Multiply','Size']},
-  {name:'Логика', icon:'⑂', color:'#d68abd', items:['Change','Loop','Branching','ForkYesorno','Close','Yesorno']},
-  {name:'Движение и физика', icon:'↗', color:'#83c77b', items:['Moving','Twist','Collision','Physics','Gamespeed']},
+  {name:'Логика', icon:'⑂', color:'#d68abd', items:['Change','Loop','Branching','ForkYesorno','Close']},
+  {name:'Движение и физика', icon:'↗', color:'#83c77b', items:['Moving','Twist','Collision','Physics','Gamespeed','Laser']},
   {name:'Объекты', icon:'⬡', color:'#d1aa70', items:['Model','Changeofmodel','Aconcretevision','Spawn','Delete']},
-  {name:'Датчики и распознавание', icon:'⌕', color:'#8db6d6', items:['Laser','Specificarray','Recognition']},
+  {name:'Массивы и распознавание', icon:'▤', color:'#8db6d6', items:['Specificarray','Recognition']},
   {name:'Эффекты', icon:'✧', color:'#bd94e4', items:['Particles']},
-  {name:'Визуал', icon:'◈', color:'#e78d75', items:['Writes','ChangeTransparency','ChangeColor','ChangeTexture','ChangeModel','Changinganimation','Transparency','Color']},
+  {name:'Сцены', icon:'🎬', color:'#e1a76c', items:['ChangeScene']},
+  {name:'Визуал', icon:'◈', color:'#e78d75', items:['Writes','ChangeTransparency','ChangeColor','ChangeTexture','ChangeModel','Changinganimation']},
   {name:'Звук', icon:'♫', color:'#62b9a8', items:['Changesound','Playsound',"Don'tSound",'Pausesound']},
-  {name:'Данные', icon:'⌘', color:'#9aa9b5', items:['Text','Asset']}
+  {name:'Типы переменных', icon:'▦', color:'#9aa9b5', items:['Yesorno','Transparency','Color']},
+  {name:'Данные', icon:'⌘', color:'#8db6d6', items:['Text','Asset']}
 ];
 const ZEROBOX_DEFAULTS = {
   targetObjectId:'', variable:'Value', value:1, amount:1, side:'Forward', speed:3,
   x:0, y:0, z:0, color:'#ffffff', enabled:true, key:'', buttonId:'', distance:25,
   repeat:3, condition:'true', assetId:'', animation:'', text:'Hello from ZeroBox',
   sizeX:1, sizeY:1, sizeZ:1, movementMode:'direction', variableX:'JoystickX', variableY:'JoystickY', variableZ:'JoystickY',
-  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', orientation:'camera', deadZone:0.08, modelAssetId:'', modelTextureAssetId:'', modelScaleX:1, modelScaleY:1, modelScaleZ:1, arrayIndex:0, arrayOperator:'greater', recognizedType:'Static', particleTextureAssetId:'', particleCount:24, particleSize:.12, particleLifetime:1.5, concreteObjectId:'', tileX:1, tileY:1,
+  gameSpeed:1, spawnType:'cube', spawnName:'SpawnedObject', joystickId:'', orientation:'camera', deadZone:0.08, modelAssetId:'', modelTextureAssetId:'', modelScaleX:1, modelScaleY:1, modelScaleZ:1, arrayIndex:0, arrayOperator:'greater', recognizedType:'Static', particleTextureAssetId:'', particleCount:24, particleSize:.12, particleLifetime:1.5, concreteObjectId:'', sceneId:'', tileX:1, tileY:1,
 };
 function createZeroBox() {
-  const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[]};
+  const box = {id:uid(), name:`ZeroBox_${(currentProject.zeroBoxes||[]).length+1}`, blocks:[], connections:[], variables:[], canvasSize:{width:26000,height:18000}};
   currentProject.zeroBoxes ||= []; currentProject.zeroBoxes.push(box); selectedZeroBoxId = box.id; selectedBlockId = null;
   setAssetTab('zeroboxes'); openWorkbench('zerobox', box.id); scheduleSave();
 }
@@ -3111,8 +3162,8 @@ function closeWorkbench() {
 function closeModelStudioIfOpenForWorkbench(){const studio=$('#model-studio');if(studio&&!studio.classList.contains('hidden'))closeModelStudio();}
 function syncUIScreen(){const screen=currentProject?.uiScreens?.find(item=>item.id===currentProject.activeUIScreenId);if(screen)screen.elements=clone(currentProject.uiElements||[]);}
 function switchUIScreen(id){if(!currentProject)return;syncUIScreen();const screen=currentProject.uiScreens.find(item=>item.id===id);if(!screen)return;currentProject.activeUIScreenId=id;currentProject.uiElements=clone(screen.elements||[]);selectedUIElementId=null;if(isPlaying){renderGameUI();return;}renderWorkbench();scheduleSave();}
-function createUIScreen(){syncUIScreen();const base=currentProject.baseResolution||{width:1920,height:1080,orientation:'landscape'};const screen={id:uid(),name:`Экран ${currentProject.uiScreens.length+1}`,width:Number(base.width)||1920,height:Number(base.height)||1080,orientation:base.orientation||'landscape',elements:[]};currentProject.uiScreens.push(screen);currentProject.activeUIScreenId=screen.id;currentProject.uiElements=[];selectedUIElementId=null;renderWorkbench();scheduleSave();}
-function duplicateUIScreen(){syncUIScreen();const source=currentProject.uiScreens.find(item=>item.id===currentProject.activeUIScreenId);if(!source)return;const screen={id:uid(),name:`${source.name} — копия`,width:Number(source.width)||currentProject.baseResolution.width,height:Number(source.height)||currentProject.baseResolution.height,orientation:source.orientation||currentProject.baseResolution.orientation,elements:clone(source.elements||[])};screen.elements.forEach(el=>el.id=uid());currentProject.uiScreens.push(screen);currentProject.activeUIScreenId=screen.id;currentProject.uiElements=clone(screen.elements);selectedUIElementId=null;renderWorkbench();scheduleSave();}
+function createUIScreen(){syncUIScreen();const screen={id:uid(),name:`Экран ${currentProject.uiScreens.length+1}`,elements:[]};currentProject.uiScreens.push(screen);currentProject.activeUIScreenId=screen.id;currentProject.uiElements=[];selectedUIElementId=null;renderWorkbench();scheduleSave();}
+function duplicateUIScreen(){syncUIScreen();const source=currentProject.uiScreens.find(item=>item.id===currentProject.activeUIScreenId);if(!source)return;const screen={id:uid(),name:`${source.name} — копия`,elements:clone(source.elements||[])};screen.elements.forEach(el=>el.id=uid());currentProject.uiScreens.push(screen);currentProject.activeUIScreenId=screen.id;currentProject.uiElements=clone(screen.elements);selectedUIElementId=null;renderWorkbench();scheduleSave();}
 function renameUIScreen(){const screen=currentProject.uiScreens.find(item=>item.id===currentProject.activeUIScreenId);if(!screen)return;const name=prompt('Название интерфейса',screen.name);if(name?.trim()){screen.name=name.trim();renderWorkbench();scheduleSave();}}
 function deleteUIScreen(){if(currentProject.uiScreens.length<=1){toast('Нельзя удалить последний интерфейс','error');return;}const id=currentProject.activeUIScreenId;currentProject.uiScreens=currentProject.uiScreens.filter(item=>item.id!==id);currentProject.activeUIScreenId=currentProject.uiScreens[0].id;currentProject.uiElements=clone(currentProject.uiScreens[0].elements||[]);selectedUIElementId=null;renderWorkbench();scheduleSave();}
 function zeroBlockFields(block) {
@@ -3129,6 +3180,7 @@ function zeroBlockFields(block) {
   if(block.type==='Changeofmodel') html += select('targetObjectId','Какой объект заменить',objectOptions)+select('modelAssetId','Новая модель',`<option value="">Выбери модель</option>${(currentProject.assets||[]).filter(a=>a.type==='model').map(a=>`<option value="${a.id}" ${c.modelAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}`)+select('modelTextureAssetId','Новая текстура',`<option value="">Не менять</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${c.modelTextureAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}`)+input('modelScaleX','Размер X')+input('modelScaleY','Размер Y')+input('modelScaleZ','Размер Z')+input('tileX','Tiling X')+input('tileY','Tiling Y');
   if(block.type==='Specificarray') html += select('variable','Числовой массив',`${(currentProject.variables||[]).filter(v=>v.type==='NumericArray'&&Array.isArray(v.value)).map(v=>`<option value="${escapeAttr(v.name)}" ${c.variable===v.name?'selected':''}>${escapeHtml(v.name)} · ${v.value.length} элементов</option>`).join('')||'<option value="">Нет числовых массивов — создай NumericArray</option>'}`)+input('arrayIndex','Индекс элемента')+select('arrayOperator','Условие проверки',`<option value="greater" ${c.arrayOperator==='greater'?'selected':''}>Больше</option><option value="less" ${c.arrayOperator==='less'?'selected':''}>Меньше</option><option value="equal" ${c.arrayOperator==='equal'?'selected':''}>Равно</option><option value="notEqual" ${c.arrayOperator==='notEqual'?'selected':''}>Не равно</option><option value="greaterEqual" ${c.arrayOperator==='greaterEqual'?'selected':''}>Больше или равно</option><option value="lessEqual" ${c.arrayOperator==='lessEqual'?'selected':''}>Меньше или равно</option>`) + input('value','С чем сравнивать');
   if(block.type==='Aconcretevision') html += select('concreteObjectId','Конкретный объект',`<option value="">Выбери объект</option>${(activeSceneData()?.objects||[]).map(e=>`<option value="${e.id}" ${c.concreteObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}`);
+  if(block.type==='ChangeScene') html += select('sceneId','Перейти к сцене',`<option value="">Выбери сцену</option>${(currentProject.scenes||[]).map(item=>`<option value="${item.id}" ${c.sceneId===item.id?'selected':''}>${escapeHtml(item.name)}</option>`).join('')}`)+`<div class="modal-note">При запуске цепочки активная сцена переключится на выбранную. Во время теста прогресс сцены не сохраняется в проект.</div>`;
   if(block.type==='Recognition') html += select('targetObjectId','Объект с лазером',objectOptions)+select('recognizedType','Что распознавать','<option value="Player">Player</option><option value="Static">Static / неподвижный</option><option value="Dynamic">Dynamic / физический</option>')+input('distance','Дальность распознавания')+select('variable','Записать результат в',varOptions)+select('side','Направление','<option value="Forward">Вперёд</option><option value="Backward">Назад</option><option value="Left">Влево</option><option value="Right">Вправо</option>');
   if(block.type==='Particles') html += select('targetObjectId','Где создать частицы',objectOptions)+select('particleTextureAssetId','Текстура частиц',`<option value="">Без текстуры</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${c.particleTextureAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}`)+input('particleCount','Количество')+input('particleSize','Размер')+input('particleLifetime','Время жизни, сек');
   if (['Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type)) html += select('buttonId','Кнопка интерфейса',buttonOptions)+input('key','Или клавиша клавиатуры','text');
@@ -3164,7 +3216,7 @@ function zeroBlockFields(block) {
 }
 function zeroPortLayout(block) {
   const isEvent=['Straightaway','Buttonclicked','Buttonpressed','ButtonResting'].includes(block.type);
-  const isEnd=['Close','ExitGame'].includes(block.type),isBranch=['Branching','ForkYesorno'].includes(block.type);
+  const isEnd=block.type==='Close',isBranch=['Branching','ForkYesorno'].includes(block.type);
   const isDataSource=['Joystick','JoystickMovement','Text','Asset','Aconcretevision','Specificarray'].includes(block.type);
   return {input:!isEvent&&!isDataSource,outputs:isEnd||isDataSource?[]:isBranch?['yes','no']:['out'],inputLabel:'Вход',outputLabel:'Выход'};
 }
@@ -3204,9 +3256,9 @@ function zeroNodePortTop(block,side,portName){
   const ports=side==='out'?zeroDataOutputs(block):zeroDataInputs(block),index=Math.max(0,ports.findIndex(item=>item.name===portName));
   return 79+index*23;
 }
-function zeroBlockLabel(type) { return type==='JoystickMovement' ? 'Joystick Movement' : ({Changeofmodel:'Change of Model',Specificarray:'Specific Array',Aconcretevision:'A concrete vision'}[type]||type); }
+function zeroBlockLabel(type) { return type==='JoystickMovement' ? 'Joystick Movement' : ({Changeofmodel:'Change of Model',Specificarray:'Specific Array',Aconcretevision:'A concrete vision',ChangeScene:'Change Scene'}[type]||type); }
 function zeroBlockIcon(type) {
-  const icons={Model:'▧',Changeofmodel:'⟳',Specificarray:'▤',Recognition:'⌕',Particles:'✧',Aconcretevision:'◎',Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',ExitGame:'⏻',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',JoystickMovement:'🕹',Text:'T',Asset:'▧'};
+  const icons={Model:'▧',Changeofmodel:'⟳',Specificarray:'▤',Recognition:'⌕',Particles:'✧',Aconcretevision:'◎',ChangeScene:'🎬',Spawn:'＋',Delete:'✕',Straightaway:'⚡',Buttonclicked:'🖱',Buttonpressed:'◉',ButtonResting:'○',Side:'🧭',Speed:'➤',Squat:'↧',Jumpup:'↑',Life:'♥',Number:'№',NumericArray:'▥',Minus:'−',Plus:'＋',Divide:'÷',Multiply:'×',Size:'⤢',Change:'✎',Loop:'↻',Branching:'⑂',ForkYesorno:'◇',Close:'■',Moving:'↗',Twist:'⟳',Collision:'▣',Physics:'⚙',Gamespeed:'◷',Laser:'⌁',Writes:'T',ChangeTransparency:'◐',ChangeColor:'◉',ChangeTexture:'▧',ChangeModel:'▦',Changinganimation:'▶',Changesound:'♫',Playsound:'♪',"Don'tSound":'◼',Pausesound:'Ⅱ',Yesorno:'☑',Transparency:'◌',Color:'◉',Joystick:'✥',JoystickMovement:'🕹',Text:'T',Asset:'▧'};
   return icons[type]||'◇';
 }
 function renderZeroBoxPicker() {
@@ -3226,10 +3278,10 @@ function zeroHelpText(type) {
     Squat:'Уменьшает высоту коллайдера объекта.', Jumpup:'Поднимает Player по вертикали.', Life:'Записывает состояние жив/мёртв.',
     Number:'Создаёт числовую переменную.', Yesorno:'Создаёт логическую переменную Да/Нет.', Transparency:'Создаёт переменную прозрачности от 0 до 1.', Color:'Создаёт переменную цвета.',
     Size:'Меняет размер объекта по X, Y и Z.', Minus:'Вычитает указанное число из переменной.', Plus:'Прибавляет число к переменной.', Divide:'Делит переменную на указанное число.', Multiply:'Умножает переменную на указанное число.',
-    Change:'Записывает новое значение в выбранную переменную.', Loop:'Повторяет следующий шаг указанное число раз.', Branching:'Разветвляет выполнение по условию переменной на выходы Yes и No.', ForkYesorno:'Проверяет переменную Да/Нет и выбирает выход Yes или No.', Close:'Останавливает текущую цепочку ZeroBox.', ExitGame:'Останавливает текущий игровой тест и возвращает в редактор проекта.',
+    Change:'Записывает новое значение в выбранную переменную.', Loop:'Повторяет следующий шаг указанное число раз.', Branching:'Разветвляет выполнение по условию переменной на выходы Yes и No.', ForkYesorno:'Проверяет переменную Да/Нет и выбирает выход Yes или No.', Close:'Останавливает текущую цепочку ZeroBox.',
     Writes:'Выводит сообщение или записывает текст в UI Text.', Laser:'Выпускает невидимый луч и записывает результат проверки в переменную.',
     ChangeTransparency:'Меняет прозрачность объекта или UI-элемента.', ChangeColor:'Меняет цвет объекта или UI-элемента.', ChangeTexture:'Назначает объекту текстуру из файлов проекта.', ChangeModel:'Заменяет модель объекта.', Changesound:'Назначает звуковой ресурс объекту.',
-    Changinganimation:'Запускает выбранную анимацию модели.', Text:'Передаёт текст в подключённый вход Write или другой текстовый вход.', Asset:'Передаёт выбранный ресурс в подключённый вход текстуры, модели или звука.', Playsound:'Запускает аудиофайл.', "Don'tSound":'Останавливает воспроизведение звука.', Pausesound:'Ставит воспроизведение на паузу.', Twist:'Поворачивает объект.', Collision:'Включает или выключает коллизию.', Physics:'Включает или выключает физический режим объекта или группы объектов.'
+    Changinganimation:'Запускает выбранную анимацию модели.', ChangeScene:'Переключает активную игровую сцену на выбранную из списка проекта. Работает во время теста и в ручном запуске цепочки.', Text:'Передаёт текст в подключённый вход Write или другой текстовый вход.', Asset:'Передаёт выбранный ресурс в подключённый вход текстуры, модели или звука.', Playsound:'Запускает аудиофайл.', "Don'tSound":'Останавливает воспроизведение звука.', Pausesound:'Ставит воспроизведение на паузу.', Twist:'Поворачивает объект.', Collision:'Включает или выключает коллизию.', Physics:'Включает или выключает физический режим объекта или группы объектов.'
   };
   return help[type] || 'Блок выполняет действие в цепочке ZeroBox.';
 }
@@ -3334,67 +3386,6 @@ function bindWorkbenchMobileTabs() {
   buttons.forEach(button => button.addEventListener('click', () => { workbenchMobilePanel = button.dataset.workbenchPanel; apply(); }));
   apply();
 }
-const UI_SCREEN_TEMPLATES = [
-  {id:'desktop-1080',name:'ПК · Full HD 16:9',width:1920,height:1080,orientation:'landscape'},
-  {id:'desktop-720',name:'ПК · HD 16:9',width:1280,height:720,orientation:'landscape'},
-  {id:'desktop-4-3',name:'Классический 4:3',width:1024,height:768,orientation:'landscape'},
-  {id:'wide-16-10',name:'Широкий 16:10',width:1920,height:1200,orientation:'landscape'},
-  {id:'phone-portrait',name:'Телефон · вертикально',width:390,height:844,orientation:'portrait'},
-  {id:'phone-landscape',name:'Телефон · горизонтально',width:844,height:390,orientation:'landscape'},
-  {id:'tablet-portrait',name:'Планшет · вертикально',width:800,height:1280,orientation:'portrait'},
-  {id:'tablet-landscape',name:'Планшет · горизонтально',width:1280,height:800,orientation:'landscape'}
-];
-function applyUIScreenTemplate(){
-  const screen=getActiveUIScreen(),template=UI_SCREEN_TEMPLATES.find(item=>item.id===$('#ui-screen-template')?.value);if(!screen||!template)return;
-  screen.width=template.width;screen.height=template.height;screen.orientation=template.orientation;screen.templateId=template.id;
-  renderWorkbench();scheduleSave();toast(`Шаблон применён: ${template.width} × ${template.height}`,'success');
-}
-function buildUIHierarchyMarkup(elements,parentId='',depth=0,visited=new Set()){
-  return (elements||[]).filter(item=>(item.parentId||'')===parentId&&!visited.has(item.id)).map(item=>{
-    visited.add(item.id);const label=item.text||item.name||item.type;const children=buildUIHierarchyMarkup(elements,item.id,depth+1,visited);
-    return `<div class="ui-tree-row" draggable="true" data-ui-tree-row="${item.id}" data-ui-parent="${item.parentId||''}" style="--ui-tree-depth:${Math.min(depth,12)}"><button type="button" class="ui-tree-select ${selectedUIElementId===item.id?'active':''}" data-select-ui-item="${item.id}"><span class="ui-tree-grip" title="Перетащить">⋮⋮</span><b>${escapeHtml(label)}</b><small>${escapeHtml(item.type)}</small></button><span class="ui-tree-order"><button type="button" data-ui-order="up" data-ui-order-id="${item.id}" title="Выше">↑</button><button type="button" data-ui-order="down" data-ui-order-id="${item.id}" title="Ниже">↓</button></span><button type="button" class="ui-tree-add-child" data-ui-add-child-of="${item.id}" title="Добавить дочерний элемент">＋</button></div>${children}`;
-  }).join('');
-}
-function bindUIHierarchyReorder(){
-  const tree=$('#ui-element-tree');if(!tree||tree.dataset.reorderBound==='1')return;tree.dataset.reorderBound='1';
-  const move=(id,direction)=>{const el=currentProject.uiElements.find(x=>x.id===id);if(!el)return;const siblings=currentProject.uiElements.filter(x=>(x.parentId||'')===(el.parentId||''));const index=siblings.findIndex(x=>x.id===id),next=index+(direction==='up'?-1:1);if(next<0||next>=siblings.length)return;const a=currentProject.uiElements.indexOf(el),other=currentProject.uiElements.indexOf(siblings[next]);[currentProject.uiElements[a],currentProject.uiElements[other]]=[currentProject.uiElements[other],currentProject.uiElements[a]];renderWorkbench();scheduleSave();};
-  tree.querySelectorAll('[data-ui-order]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();move(b.dataset.uiOrderId,b.dataset.uiOrder);}));
-  let dragged=null;
-  tree.querySelectorAll('[data-ui-tree-row]').forEach(row=>{
-    row.addEventListener('dragstart',e=>{dragged=row.dataset.uiTreeRow;e.dataTransfer?.setData('text/plain',dragged);if(e.dataTransfer)e.dataTransfer.effectAllowed='move';});
-    row.addEventListener('dragover',e=>{if(dragged&&dragged!==row.dataset.uiTreeRow){e.preventDefault();row.classList.add('drop-target');}});
-    row.addEventListener('dragleave',()=>row.classList.remove('drop-target'));
-    row.addEventListener('drop',e=>{e.preventDefault();row.classList.remove('drop-target');const from=dragged||e.dataTransfer?.getData('text/plain'),to=row.dataset.uiTreeRow;if(!from||from===to)return;const source=currentProject.uiElements.find(x=>x.id===from),target=currentProject.uiElements.find(x=>x.id===to);if(!source||!target||isUIElementDescendant(to,from)){toast('Нельзя вложить элемент в самого себя или его потомка','error');return;}const rect=row.getBoundingClientRect(),before=e.clientY<rect.top+rect.height*.33,after=e.clientY>rect.bottom-rect.height*.33;if(before||after){source.parentId=target.parentId||'';const siblings=currentProject.uiElements.filter(x=>(x.parentId||'')===(source.parentId||''));const ordered=siblings.filter(x=>x.id!==source.id);const targetIndex=ordered.findIndex(x=>x.id===to);ordered.splice(Math.max(0,targetIndex+(after?1:0)),0,source);const rest=currentProject.uiElements.filter(x=>(x.parentId||'')!==(source.parentId||''));currentProject.uiElements=[...rest,...ordered];}else{source.parentId=target.id;}dragged=null;renderWorkbench();scheduleSave();});
-  });
-  tree.addEventListener('dragend',()=>{dragged=null;tree.querySelectorAll('.drop-target').forEach(x=>x.classList.remove('drop-target'));});
-}
-function downloadModelStudioToDevice(){
-  if(!modelStudio.root?.children.some(o=>!o.userData.reference)){toast('Добавь объект перед экспортом','error');return;}
-  const exporter=new GLTFExporter(),root=new THREE.Group();root.rotation.x=-Math.PI/2;modelStudio.root.updateMatrixWorld(true);modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(cloneModelObjectDeep(o)));
-  exporter.parseAsync(root,{binary:true,onlyVisible:true}).then(result=>{const name=($('#model-name')?.value.trim()||'New_Model').replace(/\.(glb|gltf)$/i,'');downloadBlob(new Blob([result],{type:'model/gltf-binary'}),`${safeName(name)}.glb`);toast('GLB сохранён на устройство','success');}).catch(error=>{console.error(error);toast('Не удалось экспортировать GLB','error');});
-}
-function solidifySelectedModel(){
-  const object=modelStudio.selected;if(!object){toast('Выбери объект или меш','error');return;}
-  const thickness=Math.max(.001,Number(prompt('Толщина оболочки (в единицах модели)','0.08'))||.08);let changed=0;
-  const meshes=modelMeshesWithin(object);
-  for(const mesh of meshes){
-    const source=mesh.geometry;if(!source?.attributes?.position)continue;
-    const geometry=source.index?source.toNonIndexed():source.clone();geometry.computeVertexNormals();
-    const pos=geometry.attributes.position,normal=geometry.attributes.normal,count=pos.count;
-    const positions=new Float32Array(count*2*3),normals=new Float32Array(count*2*3),uv=geometry.attributes.uv?new Float32Array(count*2*2):null;
-    for(let i=0;i<count;i++){const x=pos.getX(i),y=pos.getY(i),z=pos.getZ(i),nx=normal.getX(i),ny=normal.getY(i),nz=normal.getZ(i),outer=i*2,inner=outer+1;positions.set([x,y,z],outer*3);positions.set([x-nx*thickness,y-ny*thickness,z-nz*thickness],inner*3);normals.set([nx,ny,nz],outer*3);normals.set([-nx,-ny,-nz],inner*3);if(uv){uv[outer*2]=uv[inner*2]=geometry.attributes.uv.getX(i);uv[outer*2+1]=uv[inner*2+1]=geometry.attributes.uv.getY(i);}}
-    const indices=[];for(let i=0;i<count;i+=3){const a=i*2,b=(i+1)*2,c=(i+2)*2;indices.push(a,b,c,c+1,b+1,a+1);}
-    // Connect boundary edges of the original triangulated surface to the inset shell.
-    const edgeMap=new Map(),vertexKey=i=>`${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;for(let i=0;i<count;i+=3){for(const [a,b] of [[i,i+1],[i+1,i+2],[i+2,i]]){const ka=vertexKey(a),kb=vertexKey(b),key=ka<kb?`${ka}|${kb}`:`${kb}|${ka}`;const rec=edgeMap.get(key)||{a,b,n:0};rec.n++;edgeMap.set(key,rec);}}
-    for(const edge of edgeMap.values())if(edge.n===1){const a=edge.a*2,b=edge.b*2,ai=a+1,bi=b+1;indices.push(a,b,bi,a,bi,ai);}
-    const out=new THREE.BufferGeometry();out.setAttribute('position',new THREE.BufferAttribute(positions,3));out.setAttribute('normal',new THREE.BufferAttribute(normals,3));if(uv)out.setAttribute('uv',new THREE.BufferAttribute(uv,2));out.setIndex(indices);out.computeBoundingSphere();mesh.geometry.dispose();mesh.geometry=out;changed++;
-  }
-  if(changed){pushModelHistory();renderModelFields();toast(`Создана внутренняя оболочка: ${changed} меш(ей)`,'success');}else toast('Не удалось создать толщину для этой геометрии','error');
-}
-function addUIChildElement(parentId,type){
-  const parent=currentProject?.uiElements?.find(item=>item.id===parentId);if(!parent){toast('Сначала выбери родительский элемент','error');return;}
-  addUIElement(type,parentId);
-}
 function renderWorkbench() {
   if (!currentProject || !workbenchMode) return;
   const previousCanvas = $('#zero-node-canvas');
@@ -3404,23 +3395,33 @@ function renderWorkbench() {
     const box = currentProject.zeroBoxes.find(item=>item.id===selectedZeroBoxId);
     if (!box) { body.innerHTML='<div class="zero-empty">Создай ZeroBox в панели файлов.</div>'; return; }
     box.connections ||= [];
+    box.canvasSize ||= {width:26000,height:18000};
+    const canvasWidth=Math.max(1200,Math.min(60000,Number(box.canvasSize.width)||26000));
+    const canvasHeight=Math.max(900,Math.min(40000,Number(box.canvasSize.height)||18000));
     const nodes=box.blocks.map(block=>{
-      const category=ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type));
       const ports=zeroPortLayout(block);
       const inputPort=ports.input?`<button class="zero-port input-port" style="top:51px" data-port-side="in" data-port-type="exec" data-port-name="execIn" title="Вход выполнения"><i></i><span>Вход</span></button>`:'';
       const dataInputs=zeroDataInputs(block).map(port=>`<button class="zero-port input-port data-port" style="top:${zeroNodePortTop(block,'in',port.name)}px" data-port-side="in" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Вход ${escapeAttr(port.label)}"><i></i><span>${escapeHtml(port.label)}</span></button>`).join('');
       const outputPorts=ports.outputs.map(name=>`<button class="zero-port output-port ${name==='yes'?'yes-port':name==='no'?'no-port':''}" style="top:${zeroNodePortTop(block,'out',name==='out'?'execOut':name)}px" data-port-side="out" data-port-type="exec" data-port-name="${name==='out'?'execOut':name}" title="Выход ${name}"><span>${name==='yes'?'Да':name==='no'?'Нет':'Выход'}</span><i></i></button>`).join('');
       const dataOutputs=zeroDataOutputs(block).map(port=>`<button class="zero-port output-port data-port" style="top:${zeroNodePortTop(block,'out',port.name)}px" data-port-side="out" data-port-type="data" data-port-value-type="${port.valueType}" data-port-name="${port.name}" title="Выход ${escapeAttr(port.label)}"><span>${escapeHtml(port.label)}</span><i></i></button>`).join('');
-      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="--category-color:${category?.color||'#75818c'};left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(zeroBlockLabel(block.type))}</strong><span class="node-kind">${block.type==='Moving'?escapeHtml(({Forward:'Вперёд',Backward:'Назад',Left:'Влево',Right:'Вправо',Up:'Вверх',Down:'Вниз'})[block.config?.side||'Forward']||'Вперёд'):ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}${dataOutputs}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
+      return `<article class="node-card ${selectedBlockIds.has(block.id)||selectedBlockId===block.id?'selected':''}" data-node-id="${block.id}" style="left:${Math.max(0,block.x||0)}px;top:${Math.max(0,block.y||0)}px"><div class="node-card-head" data-node-drag="${block.id}"><span>◇</span><strong>${escapeHtml(zeroBlockLabel(block.type))}</strong><span class="node-kind">${block.type==='Moving'?escapeHtml(({Forward:'Вперёд',Backward:'Назад',Left:'Влево',Right:'Вправо',Up:'Вверх',Down:'Вниз'})[block.config?.side||'Forward']||'Вперёд'):ZEROBOX_CATEGORIES.find(cat=>cat.items.includes(block.type))?.name||'BLOCK'}</span><button class="node-help-mini" data-node-help="${escapeAttr(block.type)}" title="Описание блока">?</button></div><div class="node-port-row">${inputPort}${dataInputs}<span class="port-type-label">EXEC / DATA</span>${outputPorts}${dataOutputs}</div><div class="node-card-body">${zeroBlockFields(block)}</div><div class="node-card-actions"><button data-node-copy="${block.id}">Копировать</button><button data-node-delete="${block.id}">× Удалить</button></div></article>`;
     }).join('');
-    const categoryMarkup=ZEROBOX_CATEGORIES.map(cat=>{const matches=cat.items.filter(type=>!zeroBlockSearch||zeroBlockLabel(type).toLowerCase().includes(zeroBlockSearch.toLowerCase())||type.toLowerCase().includes(zeroBlockSearch.toLowerCase()));if(zeroBlockSearch&&!matches.length)return '';return `<details class="zero-category-group" style="--category-color:${cat.color}" ${zeroBlockSearch||cat.name===selectedZeroCategory?'open':''}><summary><span>${cat.icon}</span><b>${escapeHtml(cat.name)}</b><small>${matches.length}</small></summary><div class="node-palette">${matches.map(type=>`<button data-add-block="${escapeAttr(type)}" data-block-category="${escapeAttr(cat.name)}" style="--block-color:${cat.color}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(zeroBlockLabel(type))}</span></button>`).join('')}</div></details>`;}).join('')||'<div class="zero-search-empty">Подходящие блоки не найдены</div>';
-    body.innerHTML = `<div class="workbench-grid zero-workbench-grid">
-      <aside class="workbench-sidebar" data-workbench-role="palette"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-list">${categoryMarkup}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Открывай категории списком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
-      <main class="node-canvas zero-node-canvas" id="zero-node-canvas" data-workbench-role="canvas"><div class="zero-node-surface" id="zero-node-surface" style="width:26000px;height:18000px"><svg id="zero-wires" class="zero-wires" width="26000" height="18000" viewBox="0 0 26000 18000" aria-label="Связи ZeroBox"></svg>${nodes||'<div class="zero-empty zero-canvas-empty">Добавь блоки из библиотеки слева, затем размести их на большом поле.</div>'}</div></main>
-      <aside class="workbench-properties" data-workbench-role="properties"><div class="panel-resize-handle resize-zero-right-handle" data-resize="zero-right" title="Изменить ширину свойств"></div><div class="workbench-section-title">СВОЙСТВА ZEROBOX</div><label class="field-label">Название<input class="field-input" id="zerobox-name" value="${escapeAttr(box.name)}" /></label><label class="field-label">Назначить ZeroBox объекту<select class="field-select" id="zerobox-target"><option value="">Не назначен</option>${(activeSceneData().objects||[]).map(e=>`<option value="${e.id}" ${box.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}</select></label><button class="button button-danger button-small" id="delete-zero-selection">Удалить выбранные блоки</button><div class="zero-box-stats">Блоков: ${box.blocks.length}<br>Соединений: ${box.connections.length}</div><div class="modal-note">Порядок выполнения задаётся проводами, а не расположением блоков. Для старых ZeroBox без проводов сохранён запуск сверху вниз.</div><button class="button button-quiet" id="export-zerobox">↓ Экспорт .zbox</button></aside>
+    body.innerHTML = `<nav class="workbench-mobile-tabs" aria-label="Панели ZeroBox"><button type="button" data-workbench-panel="palette">Блоки</button><button type="button" data-workbench-panel="canvas">Поле</button><button type="button" data-workbench-panel="properties">Свойства</button></nav><div class="workbench-grid zero-workbench-grid">
+      <aside class="workbench-sidebar" data-workbench-role="palette"><div class="panel-resize-handle resize-zero-left-handle" data-resize="zero-left" title="Изменить ширину библиотеки"></div><div class="workbench-section-title">МОИ ZEROBOX</div><input class="field-input zero-box-search" id="zero-box-search" placeholder="Поиск ZeroBox по названию…" value="${escapeAttr(zeroBoxSearch)}" /><div class="zero-box-results" id="zero-box-results"></div><div class="workbench-section-title zero-library-title">БИБЛИОТЕКА БЛОКОВ</div><div class="zero-zoom-controls"><button type="button" id="zero-zoom-out">−</button><span id="zero-zoom-value">${Math.round(zeroZoom*100)}%</span><button type="button" id="zero-zoom-in">＋</button><button type="button" id="zero-zoom-reset">100%</button></div><input class="field-input zero-block-search" id="zero-block-search" placeholder="Поиск блока…" value="${escapeAttr(zeroBlockSearch)}" /><div class="zero-category-tabs">${ZEROBOX_CATEGORIES.map(cat=>`<button class="zero-category-tab ${cat.name===selectedZeroCategory?'active':''}" data-zero-category="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"><span>${cat.icon}</span><small>${escapeHtml(cat.name)}</small></button>`).join('')}</div><div class="node-palette">${(ZEROBOX_CATEGORIES.find(cat=>cat.name===selectedZeroCategory)?.items||[]).filter(type=>!zeroBlockSearch||zeroBlockLabel(type).toLowerCase().includes(zeroBlockSearch.toLowerCase())).map(type=>`<button data-add-block="${escapeAttr(type)}" draggable="true" title="${escapeAttr(zeroHelpText(type))}"><span class="node-library-icon">${zeroBlockIcon(type)}</span><span>${escapeHtml(zeroBlockLabel(type))}</span></button>`).join('')||'<div class="zero-search-empty">Нет блоков в этой категории</div>'}</div><div class="workbench-section-title" style="margin-top:18px">ПЕРЕМЕННЫЕ</div><button class="button button-quiet button-small" id="add-zero-variable">＋ Новая переменная</button>${(currentProject.variables||[]).map(v=>`<div class="zero-variable"><b>${escapeHtml(v.name)}</b><div class="asset-meta">${v.type} · ${escapeHtml(String(v.value))}</div></div>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай блоки на поле. Выбирай категорию значком. Shift/Ctrl + клик — мультивыделение; Ctrl+A — вся сеть; Ctrl+C/V — копирование. Колесо — масштаб, средняя кнопка или пробел+ЛКМ — панорама.</div></aside>
+      <main class="node-canvas zero-node-canvas" id="zero-node-canvas" data-workbench-role="canvas"><div class="zero-node-surface" id="zero-node-surface" style="width:${canvasWidth}px;height:${canvasHeight}px;min-width:${canvasWidth}px;min-height:${canvasHeight}px"><svg id="zero-wires" class="zero-wires" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}" aria-label="Связи ZeroBox"></svg>${nodes||'<div class="zero-empty zero-canvas-empty">Добавь блоки из библиотеки слева, затем размести их на большом поле.</div>'}</div></main>
+      <aside class="workbench-properties" data-workbench-role="properties"><div class="panel-resize-handle resize-zero-right-handle" data-resize="zero-right" title="Изменить ширину свойств"></div><div class="workbench-section-title">СВОЙСТВА ZEROBOX</div><label class="field-label">Название<input class="field-input" id="zerobox-name" value="${escapeAttr(box.name)}" /></label><div class="workbench-section-title">РАЗМЕР ПОЛЯ</div><div class="field-row two"><label class="field-label">Ширина<input class="field-input" id="zerobox-canvas-width" type="number" min="1200" max="60000" step="500" value="${canvasWidth}" /></label><label class="field-label">Высота<input class="field-input" id="zerobox-canvas-height" type="number" min="900" max="40000" step="500" value="${canvasHeight}" /></label></div><button class="button button-quiet button-small" id="apply-zerobox-canvas-size">Применить размер поля</button><label class="field-label">Назначить ZeroBox объекту<select class="field-select" id="zerobox-target"><option value="">Не назначен</option>${(activeSceneData().objects||[]).map(e=>`<option value="${e.id}" ${box.targetObjectId===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}</select></label><button class="button button-danger button-small" id="delete-zero-selection">Удалить выбранные блоки</button><div class="zero-box-stats">Блоков: ${box.blocks.length}<br>Соединений: ${box.connections.length}</div><div class="modal-note">Порядок выполнения задаётся проводами, а не расположением блоков. Для старых ZeroBox без проводов сохранён запуск сверху вниз.</div><button class="button button-quiet" id="export-zerobox">↓ Экспорт .zbox</button></aside>
     </div>`;
+    bindWorkbenchMobileTabs();
     activeZeroBoxCanvas=$('#zero-node-canvas');
     const surface=$('#zero-node-surface');if(surface)surface.style.zoom=String(zeroZoom);
+    $('#apply-zerobox-canvas-size')?.addEventListener('click',()=>{
+      const width=Math.max(1200,Math.min(60000,Math.round((Number($('#zerobox-canvas-width')?.value)||canvasWidth)/100)*100));
+      const height=Math.max(900,Math.min(40000,Math.round((Number($('#zerobox-canvas-height')?.value)||canvasHeight)/100)*100));
+      box.canvasSize={width,height};
+      if(surface){surface.style.width=`${width}px`;surface.style.height=`${height}px`;surface.style.minWidth=`${width}px`;surface.style.minHeight=`${height}px`;}
+      const wires=$('#zero-wires');if(wires){wires.setAttribute('width',String(width));wires.setAttribute('height',String(height));wires.setAttribute('viewBox',`0 0 ${width} ${height}`);}
+      renderZeroWires(box);scheduleSave();toast(`Поле ZeroBox: ${width} × ${height}`,'success');
+    });
     $('#zero-zoom-out')?.addEventListener('click',()=>setZeroZoom(zeroZoom*.85));$('#zero-zoom-in')?.addEventListener('click',()=>setZeroZoom(zeroZoom*1.18));$('#zero-zoom-reset')?.addEventListener('click',()=>setZeroZoom(1));
     if(previousScroll){activeZeroBoxCanvas.scrollLeft=previousScroll.left;activeZeroBoxCanvas.scrollTop=previousScroll.top;}
     $$('[data-add-block]').forEach(b=>{
@@ -3431,6 +3432,7 @@ function renderWorkbench() {
     renderZeroBoxPicker();
     $('#zero-box-search').addEventListener('input',e=>{zeroBoxSearch=e.target.value;renderZeroBoxPicker();});
     $('#zero-block-search').addEventListener('input',e=>{zeroBlockSearch=e.target.value;const value=zeroBlockSearch;renderWorkbench();const next=$('#zero-block-search');if(next){next.focus();next.setSelectionRange(value.length,value.length);}});
+    $$('[data-zero-category]').forEach(button=>button.addEventListener('click',()=>{selectedZeroCategory=button.dataset.zeroCategory;renderWorkbench();}));
     $('#delete-zero-selection').addEventListener('click',()=>{const ids=[...selectedBlockIds];if(!ids.length&&selectedBlockId)ids.push(selectedBlockId);ids.forEach(id=>deleteZeroBlock(id));});
     const zeroCanvas=activeZeroBoxCanvas;
     zeroCanvas.addEventListener('wheel',event=>{if(event.ctrlKey||event.metaKey){event.preventDefault();setZeroZoom(zeroZoom*(event.deltaY<0?1.12:.89));}},{passive:false});
@@ -3468,38 +3470,11 @@ function renderWorkbench() {
     $('#zerobox-help').addEventListener('click',renderZeroBoxHelp);
     renderZeroWires(box);
   } else {
-    const activeScreen=getActiveUIScreen();
-    const hierarchyMarkup=buildUIHierarchyMarkup(currentProject.uiElements||[]);
-    body.innerHTML = `<div class="ui-designer-grid">
-      <aside class="ui-palette" data-workbench-role="palette">
-        <div class="workbench-section-title">ВКЛАДКИ ЭКРАНОВ</div><div class="ui-screen-tabs" id="ui-screen-tabs">${currentProject.uiScreens.map(screen=>`<div class="ui-screen-tab ${screen.id===currentProject.activeUIScreenId?'active':''}"><button type="button" data-ui-screen-tab="${screen.id}">${escapeHtml(screen.name)}</button><button type="button" data-ui-screen-close="${screen.id}" title="Закрыть вкладку">×</button></div>`).join('')}<button type="button" class="ui-screen-tab-add" id="ui-screen-tab-add" title="Добавить вкладку">＋</button></div>
-        <div class="workbench-section-title">ЭКРАН</div>
-        <select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select>
-        <div class="ui-screen-actions"><button id="ui-screen-new" title="Новый экран">＋</button><button id="ui-screen-duplicate" title="Дублировать экран">▢</button><button id="ui-screen-rename" title="Переименовать экран">✎</button><button id="ui-screen-settings" title="Размер и ориентация экрана">⚙</button><button id="ui-screen-delete" title="Удалить экран">×</button></div>
-        <label class="field-label ui-template-label">Шаблон экрана<select class="field-select" id="ui-screen-template">${UI_SCREEN_TEMPLATES.map(template=>`<option value="${template.id}" ${(activeScreen?.templateId===template.id)?'selected':''}>${escapeHtml(template.name)}</option>`).join('')}</select></label>
-        <button class="button button-quiet button-small" id="ui-screen-apply-template">Применить шаблон</button>
-        <div class="screen-size-summary" id="ui-screen-size-summary"></div>
-        <div class="workbench-section-title">ДОБАВИТЬ ЭЛЕМЕНТ</div>
-        ${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['TextInput','⌨ Поле ввода'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}
-        <div class="workbench-section-title ui-tree-title">ИЕРАРХИЯ ЭЛЕМЕНТОВ</div>
-        <div class="ui-element-tree" id="ui-element-tree">${hierarchyMarkup||'<div class="modal-note">Экран пока пуст.</div>'}</div>
-        <label class="field-label">Тип дочернего элемента<select class="field-select" id="ui-child-type">${[['Button','Кнопка'],['ScreenButton','Переход на экран'],['Text','Текст'],['TextInput','Поле ввода'],['Scale','Шкала'],['Slider','Ползунок'],['Background','Фон'],['CameraControlArea','Зона камеры'],['Joystick','Джойстик']].map(([type,label])=>`<option value="${type}">${label}</option>`).join('')}</select></label>
-        <button class="button button-quiet button-small" id="ui-add-child" ${selectedUIElementId?'':'disabled'}>＋ Добавить внутрь выбранного</button>
-        <div class="workbench-toolbar-tip">Выбирай элементы в дереве, меняй порядок слоёв и добавляй вложенные элементы. Размеры на макете можно менять перетаскиванием.</div>
-      </aside>
-      <div class="ui-stage-wrap" data-workbench-role="canvas"><div class="ui-design-stage" id="ui-design-stage"></div></div>
-      <aside class="ui-property-panel" id="ui-property-panel" data-workbench-role="properties"></aside>
-    </div>`;
+    body.innerHTML = `<nav class="workbench-mobile-tabs" aria-label="Панели UI Designer"><button type="button" data-workbench-panel="palette">Элементы</button><button type="button" data-workbench-panel="canvas">Экран</button><button type="button" data-workbench-panel="properties">Свойства</button></nav><div class="ui-designer-grid"><aside class="ui-palette" data-workbench-role="palette"><div class="workbench-section-title">ИНТЕРФЕЙСЫ</div><select class="field-select" id="ui-screen-select">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${screen.id===currentProject.activeUIScreenId?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select><div class="ui-screen-actions"><button id="ui-screen-new">＋</button><button id="ui-screen-duplicate">▢</button><button id="ui-screen-rename">✎</button><button id="ui-screen-delete">×</button></div><div class="workbench-section-title">ЭЛЕМЕНТЫ UI</div>${[['Button','▣ Кнопка'],['ScreenButton','⇄ Переход на экран'],['Text','T Текст'],['TextInput','⌨ Поле ввода'],['Scale','▰ Шкала'],['Slider','◉ Ползунок'],['Background','▧ Фон'],['CameraControlArea','◉ Зона камеры'],['Joystick','✥ Джойстик']].map(([type,label])=>`<button data-add-ui="${type}">${label}</button>`).join('')}<div class="workbench-toolbar-tip">Перетаскивай элементы на макете. Размеры и координаты задаются справа.</div></aside><div class="ui-stage-wrap" data-workbench-role="canvas"><div class="ui-design-stage" id="ui-design-stage"></div></div><aside class="ui-property-panel" id="ui-property-panel" data-workbench-role="properties"></aside></div>`;
+    bindWorkbenchMobileTabs();
     const stage=$('#ui-design-stage'); renderUIStage(stage,true);
-    updateUIScreenSizeSummary();
     $('#ui-screen-select').addEventListener('change',e=>switchUIScreen(e.target.value));
-    $('#ui-screen-tab-add')?.addEventListener('click',createUIScreen);$$('[data-ui-screen-tab]').forEach(button=>button.addEventListener('click',()=>switchUIScreen(button.dataset.uiScreenTab)));$$('[data-ui-screen-close]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.uiScreenClose;if(currentProject.activeUIScreenId!==id){const screen=currentProject.uiScreens.find(x=>x.id===id);if(!screen)return;if(currentProject.uiScreens.length<=1)return;currentProject.uiScreens=currentProject.uiScreens.filter(x=>x.id!==id);renderWorkbench();scheduleSave();}else deleteUIScreen();}));
-    $('#ui-screen-new').addEventListener('click',createUIScreen);$('#ui-screen-duplicate').addEventListener('click',duplicateUIScreen);$('#ui-screen-rename').addEventListener('click',renameUIScreen);$('#ui-screen-settings').addEventListener('click',editUIScreenSettings);$('#ui-screen-delete').addEventListener('click',deleteUIScreen);
-    $('#ui-screen-apply-template')?.addEventListener('click',applyUIScreenTemplate);
-    $('#ui-add-child')?.addEventListener('click',()=>{if(!selectedUIElementId){toast('Выбери родительский элемент в иерархии','error');return;}addUIChildElement(selectedUIElementId,$('#ui-child-type')?.value||'Button');});
-    $$('[data-select-ui-item]').forEach(button=>button.addEventListener('click',()=>{selectedUIElementId=button.dataset.selectUiItem;renderWorkbench();}));
-    bindUIHierarchyReorder();
-    $$('[data-ui-add-child-of]').forEach(button=>button.addEventListener('click',()=>{const parentId=button.dataset.uiAddChildOf;selectedUIElementId=parentId;addUIChildElement(parentId,$('#ui-child-type')?.value||'Button');}));
+    $('#ui-screen-new').addEventListener('click',createUIScreen);$('#ui-screen-duplicate').addEventListener('click',duplicateUIScreen);$('#ui-screen-rename').addEventListener('click',renameUIScreen);$('#ui-screen-delete').addEventListener('click',deleteUIScreen);
     $$('[data-add-ui]').forEach(b=>b.addEventListener('click',()=>addUIElement(b.dataset.addUi)));
     renderUIProperties();
   }
@@ -3511,7 +3486,7 @@ function createCustomVariable() {
   $('#variable-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#variable-name').value.trim();const type=$('#variable-type').value;if(!name)return;if(currentProject.variables.some(v=>v.name===name)){toast('Переменная с таким именем уже существует','error');return;}let value=$('#variable-value').value;if(type==='NumericArray'){value=String(value).split(/[,;\s]+/).map(part=>Number(part.trim())).filter(Number.isFinite);if(!value.length)value=[0];}else if(type==='Number'||type==='Transparency')value=Number(value)||0;else if(type==='Yesorno')value=value==='true'||value==='1';box.variables||=[];box.variables.push({id:uid(),name,type,value});currentProject.variables||=[];currentProject.variables.push({id:uid(),name,type,value});closeModal();renderWorkbench();scheduleSave();});
 }
 function defaultUIElement(type) {
-  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':type==='TextInput'?'Введите текст':'',value:60,max:100,color:'#ffffff',buttonColor:'#292929',borderColor:'#999999',borderWidth:2,buttonTextureAssetId:'',buttonTextureFit:'cover',layer:2,opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:'',parentId:''};
+  const base={id:uid(),type,x:10,y:15,w:24,h:9,text:type==='Button'?'Button':type==='ScreenButton'?'Открыть экран':type==='Text'?'Text':type==='TextInput'?'Введите текст':'',value:60,max:100,color:'#ffffff',opacity:1,sticky:false,key:'',zeroBoxId:'',variableName:''};
   if(type==='Scale')Object.assign(base,{x:8,y:82,w:28,h:6});
   if(type==='Slider')Object.assign(base,{x:62,y:82,w:28,h:7});
   if(type==='Background')Object.assign(base,{x:0,y:0,w:100,h:100,imageAssetId:'',fit:'cover'});
@@ -3521,36 +3496,18 @@ function defaultUIElement(type) {
   if(type==='ScreenButton')base.targetScreenId=currentProject.uiScreens.find(screen=>screen.id!==currentProject.activeUIScreenId)?.id||'';
   return base;
 }
-function addUIElement(type,parentId=null) {
-  const el=defaultUIElement(type);if(parentId){const parent=currentProject.uiElements?.find(item=>item.id===parentId);if(parent){el.parentId=parentId;el.x=6;el.y=6;el.w=60;el.h=26;el.layer=(Number(parent.layer)||1)+1;}}currentProject.uiElements||=[];currentProject.uiElements.push(el);
+function addUIElement(type) {
+  const el=defaultUIElement(type);currentProject.uiElements||=[];currentProject.uiElements.push(el);
   if(type==='Joystick'){currentProject.variables||=[];const existing=[...new Map([...(currentProject.uiElements||[]),...(currentProject.uiScreens||[]).flatMap(screen=>screen.elements||[])].filter(item=>item.type==='Joystick').map(item=>[item.id,item])).values()];let index=existing.length;let prefix=index===1?'Joystick':`Joystick${index}`;while(currentProject.variables.some(v=>v.name===`${prefix}X`||v.name===`${prefix}Y`)){index++;prefix=`Joystick${index}`;}el.xVariable=`${prefix}X`;el.yVariable=`${prefix}Y`;for(const name of [el.xVariable,el.yVariable])if(!currentProject.variables.some(v=>v.name===name))currentProject.variables.push({id:uid(),name,type:'Number',value:0,system:true});}
   selectedUIElementId=el.id;renderWorkbench();scheduleSave();
 }
-function getActiveUIScreen(){return currentProject?.uiScreens?.find(screen=>screen.id===currentProject.activeUIScreenId)||currentProject?.uiScreens?.[0]||null;}
-function getUIScreenResolution(screen=getActiveUIScreen()){
-  const base=currentProject?.baseResolution||{width:1920,height:1080};
-  return {width:Math.max(240,Number(screen?.width)||Number(base.width)||1920),height:Math.max(240,Number(screen?.height)||Number(base.height)||1080),orientation:screen?.orientation||base.orientation||'landscape'};
-}
-function updateUIScreenSizeSummary(){const host=$('#ui-screen-size-summary');if(!host)return;const size=getUIScreenResolution();host.textContent=`${size.orientation==='portrait'?'Вертикальный':'Горизонтальный'} · ${size.width} × ${size.height} px`;}
-function editUIScreenSettings(){
-  syncUIScreen();const screen=getActiveUIScreen();if(!screen)return;const size=getUIScreenResolution(screen);
-  showModal(`<div class="modal-header"><div><span class="panel-kicker">UI DISPLAY</span><h2 id="modal-title">Размер экрана интерфейса</h2><p>Настрой ориентацию и базовое разрешение именно этого экрана.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><label class="field-label">Ориентация<select class="field-select" id="ui-screen-orientation"><option value="landscape" ${size.orientation==='landscape'?'selected':''}>Горизонтальная</option><option value="portrait" ${size.orientation==='portrait'?'selected':''}>Вертикальная</option></select></label><label class="field-label">Готовый размер<select class="field-select" id="ui-screen-preset"><option value="1920x1080">1920 × 1080</option><option value="1600x900">1600 × 900</option><option value="1280x720">1280 × 720</option><option value="1024x768">1024 × 768</option><option value="390x844">390 × 844</option><option value="360x800">360 × 800</option><option value="844x390">844 × 390</option><option value="1080x1920">1080 × 1920</option><option value="custom">Своё</option></select></label><div class="field-row two"><label class="field-label">Ширина, px<input class="field-input" id="ui-screen-width" type="number" min="240" max="7680" step="1" value="${size.width}"></label><label class="field-label">Высота, px<input class="field-input" id="ui-screen-height" type="number" min="240" max="7680" step="1" value="${size.height}"></label></div><div class="device-preview-card"><div class="device-preview-screen" id="ui-screen-device-preview"></div><div><b id="ui-screen-preview-name">${size.orientation==='portrait'?'Вертикальный экран':'Горизонтальный экран'}</b><small id="ui-screen-preview-dimensions">${size.width} × ${size.height} px</small></div></div></div><div class="modal-footer"><button class="button button-quiet" data-close-modal>Отмена</button><button class="button button-primary" id="ui-screen-settings-apply">Применить</button></div>`);
-  const width=$('#ui-screen-width'),height=$('#ui-screen-height'),orientation=$('#ui-screen-orientation'),preset=$('#ui-screen-preset');
-  const syncOrientation=()=>{let w=Number(width.value)||240,h=Number(height.value)||240;if(orientation.value==='portrait'&&w>h)[w,h]=[h,w];if(orientation.value==='landscape'&&h>w)[w,h]=[h,w];width.value=String(w);height.value=String(h);};
-  const updatePreview=()=>{const w=Math.max(240,Number(width.value)||240),h=Math.max(240,Number(height.value)||240),landscape=orientation.value==='landscape';const preview=$('#ui-screen-device-preview');if(preview){preview.style.aspectRatio=`${landscape?Math.max(w,h):Math.min(w,h)} / ${landscape?Math.min(w,h):Math.max(w,h)}`;preview.style.width=landscape?'90px':'48px';preview.style.height=landscape?'50px':'84px';}$('#ui-screen-preview-name').textContent=landscape?'Горизонтальный экран':'Вертикальный экран';$('#ui-screen-preview-dimensions').textContent=`${w} × ${h} px`;};
-  orientation.addEventListener('change',()=>{syncOrientation();updatePreview();});
-  preset.addEventListener('change',()=>{if(preset.value==='custom')return;const [w,h]=preset.value.split('x').map(Number);width.value=String(w);height.value=String(h);if(w===h)orientation.value='landscape';else orientation.value=w>h?'landscape':'portrait';syncOrientation();updatePreview();});
-  [width,height].forEach(field=>field.addEventListener('input',()=>{preset.value='custom';updatePreview();}));
-  $('#ui-screen-settings-apply').addEventListener('click',()=>{let w=Math.max(240,Math.min(7680,Number(width.value)||size.width)),h=Math.max(240,Math.min(7680,Number(height.value)||size.height));if(orientation.value==='portrait'&&w>h)[w,h]=[h,w];if(orientation.value==='landscape'&&h>w)[w,h]=[h,w];screen.width=w;screen.height=h;screen.orientation=orientation.value;closeModal();renderWorkbench();scheduleSave();toast(`Экран: ${w} × ${h} px`,'success');});
-  updatePreview();
-}
 function renderUIStage(host, design=false) {
-  if(!host)return;host.innerHTML='';const uiNodeMap=new Map(),uiPendingNodes=[];
-  if(design){const size=getUIScreenResolution();host.style.aspectRatio=`${size.width} / ${size.height}`;host.style.setProperty('--ui-device-aspect',`${size.width} / ${size.height}`);host.dataset.resolution=`${size.width}x${size.height}`;}
+  if(!host)return;host.innerHTML='';
+  if(design){const base=currentProject?.baseResolution||{width:1920,height:1080};host.style.aspectRatio=`${Number(base.width)||1920} / ${Number(base.height)||1080}`;}
   (currentProject.uiElements||[]).forEach(el=>{
     const node=document.createElement('div');node.className=`ui-element ${el.type==='Text'?'text-element':''} ${el.type==='Background'?'background-element':''} ${design&&selectedUIElementId===el.id?'selected':''}`;
-    node.dataset.uiId=el.id;node.style.left=`${el.x}%`;node.style.top=`${el.y}%`;node.style.width=`${el.w}%`;node.style.height=`${el.h}%`;node.style.zIndex=String(Number.isFinite(Number(el.layer))?Number(el.layer):(el.type==='Background'?0:2));node.style.opacity=String(el.opacity??1);
-    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');b.style.backgroundColor=el.buttonColor||el.color||'#292929';b.style.color=el.textColor||'#ffffff';b.style.borderColor=el.borderColor||'#999999';b.style.borderWidth=`${Math.max(0,Math.min(16,Number(el.borderWidth??2)))}px`;const texture=(currentProject.assets||[]).find(a=>a.id===el.buttonTextureAssetId&&a.type==='texture');if(texture){b.style.backgroundImage=`url("${getAssetUrl(texture)}")`;b.style.backgroundSize=el.buttonTextureFit==='contain'?'contain':el.buttonTextureFit==='repeat'?'auto':'cover';b.style.backgroundRepeat=el.buttonTextureFit==='repeat'?'repeat':'no-repeat';b.style.backgroundPosition='center';}if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
+    node.dataset.uiId=el.id;node.style.left=`${el.x}%`;node.style.top=`${el.y}%`;node.style.width=`${el.w}%`;node.style.height=`${el.h}%`;node.style.zIndex=el.type==='Background'?'0':'2';node.style.opacity=String(el.opacity??1);
+    if(el.type==='Button'||el.type==='ScreenButton'){const b=document.createElement('button');b.type='button';b.textContent=el.text||(el.type==='ScreenButton'?'Открыть экран':'Button');if(el.color)b.style.background=el.color;b.style.color='#171717';if(el.sticky&&el.pressed)b.classList.add('sticky-on');node.appendChild(b);}
     else if(el.type==='Text'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);node.textContent=String(el.text||'Text').replaceAll('{value}',String(v?.value??''));node.style.fontSize=`${el.fontSize||22}px`;node.style.color=el.color||'#ffffff';}
     else if(el.type==='TextInput'){const input=document.createElement('input');input.type='text';input.placeholder=el.text||el.placeholder||'Введите текст';input.value=String(el.valueText||'');input.style.width='100%';input.style.height='100%';input.style.boxSizing='border-box';input.style.background=el.color||'#ffffff';input.style.color='#171717';input.style.border='1px solid #999';input.style.borderRadius='6px';if(!design)input.addEventListener('input',()=>{el.valueText=input.value;const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);if(v)v.value=input.value;});node.appendChild(input);}
     else if(el.type==='Scale'){const v=(currentProject.variables||[]).find(x=>x.name===el.variableName);const current=v?Number(v.value):Number(el.value)||0;const track=document.createElement('div');track.className='ui-scale-track';const fill=document.createElement('div');fill.className='ui-scale-fill';fill.style.width=`${Math.max(0,Math.min(100,current/(Number(el.max)||100)*100))}%`;fill.style.background=el.color||'#ffffff';track.appendChild(fill);node.appendChild(track);}
@@ -3566,14 +3523,8 @@ function renderUIStage(host, design=false) {
       const release=()=>{if(!el.sticky){el.pressed=false;heldButtonIds.delete(el.id);button.classList.remove('sticky-on');dispatchZeroBoxEvent('ButtonResting',el.id);dispatchZeroBoxEvent('Buttonclicked',el.id);if(el.type==='ScreenButton'&&el.targetScreenId)switchUIScreen(el.targetScreenId);}};
       button.addEventListener('pointerdown',e=>{button.setPointerCapture?.(e.pointerId);press();});button.addEventListener('pointerup',release);button.addEventListener('pointercancel',release);button.addEventListener('lostpointercapture',release);
     }
-    uiNodeMap.set(el.id,node);uiPendingNodes.push({el,node});
+    host.appendChild(node);
   });
-  // Parent/child UI elements are real nested DOM nodes; child coordinates are relative to the parent box.
-  for(const item of uiPendingNodes){
-    const parentId=item.el.parentId,parentNode=parentId?uiNodeMap.get(parentId):null;
-    const safeParent=parentNode&&parentNode!==item.node&&!item.node.contains(parentNode)?parentNode:null;
-    if(safeParent){safeParent.style.overflow='visible';item.node.style.overflow='visible';safeParent.appendChild(item.node);}else host.appendChild(item.node);
-  }
   if(design){
     host.style.touchAction='none';
     host.onpointerdown=event=>{
@@ -3613,21 +3564,13 @@ function renderUIStage(host, design=false) {
     };
   }
 }
-function isUIElementDescendant(candidateId,ancestorId,items=currentProject?.uiElements||[]){
-  let current=items.find(item=>item.id===candidateId),guard=0;
-  while(current?.parentId&&guard++<items.length+1){if(current.parentId===ancestorId)return true;current=items.find(item=>item.id===current.parentId);}
-  return false;
-}
 function renderUIProperties() {
   const panel=$('#ui-property-panel');if(!panel)return;
   const el=currentProject.uiElements.find(item=>item.id===selectedUIElementId);
   if(!el){panel.innerHTML='<div class="workbench-section-title">СВОЙСТВА</div><div class="modal-note">Выбери элемент на макете или добавь новый.</div>';return;}
   const field=(key,label,type='number',value=el[key])=>`<label class="field-label">${label}<input class="field-input" data-ui-field="${key}" type="${type}" value="${escapeAttr(value??'')}" /></label>`;
-  panel.innerHTML=`<div class="workbench-section-title">СВОЙСТВА ЭЛЕМЕНТА</div><b>${el.type}</b><div class="ui-property-grid">${field('x','X, %')}${field('y','Y, %')}${field('w','Ширина, %')}${field('h','Высота, %')}${field('layer','Слой (больше = выше)')}</div><label class="field-label">Родительский элемент<select class="field-select" id="ui-parent-element"><option value="">Корневой элемент</option>${currentProject.uiElements.filter(item=>item.id!==el.id&&!isUIElementDescendant(item.id,el.id)).map(item=>`<option value="${item.id}" ${el.parentId===item.id?'selected':''}>${escapeHtml(item.text||item.type)}</option>`).join('')}</select></label>${field('text','Текст / placeholder','text')}${field('color','Цвет','color')}${el.type==='Text'?field('fontSize','Размер текста'):''}${['Button','ScreenButton'].includes(el.type)?`<div class="workbench-section-title">ОФОРМЛЕНИЕ КНОПКИ</div>${field('buttonColor','Цвет поверхности','color',el.buttonColor||el.color||'#292929')}${field('borderColor','Цвет грани / рамки','color',el.borderColor||'#999999')}${field('borderWidth','Толщина грани, px','number',el.borderWidth??2)}<label class="field-label">Текстура кнопки<select class="field-select" id="ui-button-texture"><option value="">Без текстуры</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${el.buttonTextureAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Режим текстуры<select class="field-select" id="ui-button-texture-fit"><option value="cover" ${el.buttonTextureFit==='cover'?'selected':''}>Заполнить</option><option value="contain" ${el.buttonTextureFit==='contain'?'selected':''}>Вписать</option><option value="repeat" ${el.buttonTextureFit==='repeat'?'selected':''}>Повторять (tiling)</option></select></label>`:''}${el.type==='Background'?`<label class="field-label">Фоновое изображение<select class="field-select" id="ui-background-image"><option value="">Без изображения</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${el.imageAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Вписывание<select class="field-select" id="ui-background-fit"><option value="cover" ${el.fit!=='contain'?'selected':''}>Заполнить</option><option value="contain" ${el.fit==='contain'?'selected':''}>Вписать целиком</option></select></label>`:''}${['Scale','Slider'].includes(el.type)?field('value','Значение'):''}${['Scale','Slider'].includes(el.type)?field('max','Максимум'):''}${['Text','TextInput','Scale','Slider'].includes(el.type)?`<label class="field-label">Связать с переменной<select class="field-select" id="ui-variable"><option value="">Без связи</option>${(currentProject.variables||[]).map(v=>`<option value="${escapeAttr(v.name)}" ${el.variableName===v.name?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}</select></label>`:''}${el.type==='Text'?'<div class="modal-note">В тексте используй {value}, чтобы вывести текущее значение связанной переменной.</div>':''}${['Button','ScreenButton'].includes(el.type)?`<label class="check-line"><input type="checkbox" id="ui-sticky" ${el.sticky?'checked':''}/> Залипающая кнопка</label><label class="field-label">Назначить клавишу <span>${escapeHtml(el.keyLabel||el.key||'не назначена')}</span><button class="button button-quiet" id="ui-assign-key">Нажми клавишу на клавиатуре</button></label><label class="field-label">Запуск ZeroBox<select class="field-select" id="ui-zerobox"><option value="">Нет</option>${currentProject.zeroBoxes.map(b=>`<option value="${b.id}" ${el.zeroBoxId===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}</select></label>${el.type==='ScreenButton'?`<label class="field-label">Открыть интерфейс<select class="field-select" id="ui-target-screen">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${el.targetScreenId===screen.id?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select></label>`:''}`:''}${el.type==='Joystick'?`<div class="modal-note">Джойстик записывает оси в NumericArray/Number переменные для блока Moving.</div>${field('xVariable','Переменная X','text')}${field('yVariable','Переменная Y','text')}`:''}${el.type==='CameraControlArea'?'<div class="modal-note">Прозрачная сенсорная область для вращения игровой камеры. Размещай поверх свободного участка экрана.</div>':''}<button class="button button-danger" id="ui-delete-element">Удалить элемент</button><div class="modal-note">Координаты и размеры задаются в процентах от разрешения активного экрана.</div>`;
+  panel.innerHTML=`<div class="workbench-section-title">СВОЙСТВА ЭЛЕМЕНТА</div><b>${el.type}</b><div class="ui-property-grid">${field('x','X, %')}${field('y','Y, %')}${field('w','Ширина, %')}${field('h','Высота, %')}</div>${field('text','Текст / placeholder','text')}${field('color','Цвет','color')}${el.type==='Text'?field('fontSize','Размер текста'):''}${el.type==='Background'?`<label class="field-label">Фоновое изображение<select class="field-select" id="ui-background-image"><option value="">Без изображения</option>${(currentProject.assets||[]).filter(a=>a.type==='texture').map(a=>`<option value="${a.id}" ${el.imageAssetId===a.id?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select></label><label class="field-label">Вписывание<select class="field-select" id="ui-background-fit"><option value="cover" ${el.fit!=='contain'?'selected':''}>Заполнить</option><option value="contain" ${el.fit==='contain'?'selected':''}>Вписать целиком</option></select></label>`:''}${['Scale','Slider'].includes(el.type)?field('value','Значение'):''}${['Scale','Slider'].includes(el.type)?field('max','Максимум'):''}${['Text','TextInput','Scale','Slider'].includes(el.type)?`<label class="field-label">Связать с переменной<select class="field-select" id="ui-variable"><option value="">Без связи</option>${(currentProject.variables||[]).map(v=>`<option value="${escapeAttr(v.name)}" ${el.variableName===v.name?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}</select></label>`:''}${el.type==='Text'?'<div class="modal-note">В тексте используй {value}, чтобы вывести текущее значение связанной переменной.</div>':''}${['Button','ScreenButton'].includes(el.type)?`<label class="check-line"><input type="checkbox" id="ui-sticky" ${el.sticky?'checked':''}/> Залипающая кнопка</label><label class="field-label">Назначить клавишу <span>${escapeHtml(el.keyLabel||el.key||'не назначена')}</span><button class="button button-quiet" id="ui-assign-key">Нажми клавишу на клавиатуре</button></label><label class="field-label">Запуск ZeroBox<select class="field-select" id="ui-zerobox"><option value="">Нет</option>${currentProject.zeroBoxes.map(b=>`<option value="${b.id}" ${el.zeroBoxId===b.id?'selected':''}>${escapeHtml(b.name)}</option>`).join('')}</select></label>${el.type==='ScreenButton'?`<label class="field-label">Открыть интерфейс<select class="field-select" id="ui-target-screen">${currentProject.uiScreens.map(screen=>`<option value="${screen.id}" ${el.targetScreenId===screen.id?'selected':''}>${escapeHtml(screen.name)}</option>`).join('')}</select></label>`:''}`:''}${el.type==='Joystick'?`<div class="modal-note">Джойстик записывает оси в NumericArray/Number переменные для блока Moving.</div>${field('xVariable','Переменная X','text')}${field('yVariable','Переменная Y','text')}`:''}${el.type==='CameraControlArea'?'<div class="modal-note">Прозрачная сенсорная область для вращения игровой камеры. Размещай поверх свободного участка экрана.</div>':''}<button class="button button-danger" id="ui-delete-element">Удалить элемент</button><div class="modal-note">Координаты и размеры задаются в процентах от выбранного разрешения.</div>`;
   $$('[data-ui-field]').forEach(input=>input.addEventListener('change',()=>{el[input.dataset.uiField]=input.type==='number'?Number(input.value):input.value;renderWorkbench();scheduleSave();}));
-  $('#ui-parent-element')?.addEventListener('change',e=>{el.parentId=e.target.value||'';renderWorkbench();scheduleSave();});
-  $('#ui-button-texture')?.addEventListener('change',e=>{el.buttonTextureAssetId=e.target.value||'';renderWorkbench();scheduleSave();});
-  $('#ui-button-texture-fit')?.addEventListener('change',e=>{el.buttonTextureFit=e.target.value;renderWorkbench();scheduleSave();});
   $('#ui-background-image')?.addEventListener('change',e=>{el.imageAssetId=e.target.value;renderWorkbench();scheduleSave();});
   $('#ui-background-fit')?.addEventListener('change',e=>{el.fit=e.target.value;renderWorkbench();scheduleSave();});
   $('#ui-variable')?.addEventListener('change',e=>{el.variableName=e.target.value||'';renderWorkbench();scheduleSave();});
@@ -3635,7 +3578,7 @@ function renderUIProperties() {
   $('#ui-assign-key')?.addEventListener('click',()=>{uiKeyCaptureId=el.id;toast('Нажми нужную клавишу на клавиатуре', 'success');});
   $('#ui-zerobox')?.addEventListener('change',e=>{el.zeroBoxId=e.target.value;scheduleSave();});
   $('#ui-target-screen')?.addEventListener('change',e=>{el.targetScreenId=e.target.value;scheduleSave();});
-  $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements.forEach(item=>{if(item.parentId===el.id)item.parentId=el.parentId||'';});currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
+  $('#ui-delete-element')?.addEventListener('click',()=>{currentProject.uiElements=currentProject.uiElements.filter(item=>item.id!==el.id);selectedUIElementId=null;renderWorkbench();scheduleSave();});
 }
 let gameUIRenderQueued=false;
 function queueGameUIRender(){if(!isPlaying||gameUIRenderQueued)return;gameUIRenderQueued=true;requestAnimationFrame(()=>{gameUIRenderQueued=false;if(isPlaying)renderGameUI();});}
@@ -3798,6 +3741,29 @@ function getZeroBoxExecutionIndex(box, blocks, connections) {
   zeroBoxExecutionIndexes.set(box, index);
   return index;
 }
+async function switchSceneDuringPlay(sceneId){
+  const next=(currentProject?.scenes||[]).find(item=>item.id===sceneId);
+  if(!next){toast('ChangeScene: сцена не найдена','error');return false;}
+  if(!isPlaying){switchScene(sceneId);return true;}
+  if(activeScene()?.id===sceneId)return true;
+  currentProject.activeSceneId=sceneId;selectedId=null;selectedIds=new Set();
+  $('#active-scene-name').textContent=next.name;$('#viewport-scene-name').textContent=next.name;
+  await loadSceneIntoViewport();
+  const objects=activeSceneData()?.objects||[];
+  const player=objects.find(item=>item.type==='player');
+  const spawn=objects.find(item=>item.type==='spawn');
+  const sceneCamera=objects.find(item=>item.type==='camera');
+  const base=spawn||player||sceneCamera;const basePosition=base?.position||[0,0,5];
+  for(const entity of objects){if(entity.physics){entity.physics.velocity=[0,0,0];}const object=sceneObjects.get(entity.id);if(!object)continue;const firstPerson=entity.type==='player'&&(player?.cameraMount?.mode||'head')==='head';object.visible=entity.visible!==false&&(entity.type!=='spawn'||entity.gameVisible===true)&&entity.type!=='camera'&&!firstPerson;object.traverse(child=>{if(child.userData?.editorOnly)child.visible=false;});const helper=collisionHelpers.get(entity.id);if(helper)helper.visible=false;}
+  if(player){player.physics||={enabled:true,useGravity:true,mass:1,velocity:[0,0,0],linearDamping:.05};player.physics.enabled=true;player.physics.velocity=[0,0,0];snapEntityToGround(player,.65);previewYaw=THREE.MathUtils.degToRad(Number(player.rotation?.[1])||0);previewPitch=-.18;syncPreviewCameraToPlayer();}
+  else if(sceneCamera){previewCamera.position.fromArray(sceneCamera.position||basePosition);previewCamera.rotation.set(...(sceneCamera.rotation||[0,0,0]).map(v=>THREE.MathUtils.degToRad(v)),'YXZ');}
+  else{previewCamera.position.set(basePosition[0],basePosition[1]+1.6,basePosition[2]);previewCamera.lookAt(basePosition[0],basePosition[1]+1.6,basePosition[2]-1);}
+  previewCamera.updateProjectionMatrix();orbit.enabled=false;transform.detach();gridHelper.visible=false;axesHelper.visible=false;renderGameUI();
+  // Start the new level's entry chains only after its scene and assets have loaded.
+  for(const box of currentProject.zeroBoxes||[])if(box.blocks?.some(block=>block.type==='Straightaway'))runZeroBox(box,'Straightaway');
+  toast(`Сцена «${next.name}» загружена`,'success');return true;
+}
+
 function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBlockId=null) {
   if(!box)return 0;
   const blocks=box.blocks||[], connections=box.connections||[];
@@ -3831,7 +3797,10 @@ function runZeroBox(box,eventName='manual',uiElementId='',deltaSeconds=1,eventBl
     const visits=(visited.get(current)||0)+1;visited.set(current,visits);if(visits>Math.max(1,Math.min(30,Number(c.repeat)||1)))break;
     executed++;
     if(b.type==='Close')break;
-    if(b.type==='ExitGame'){if(isPlaying)stopPlayMode();else toast('ExitGame работает во время игрового теста','success');break;}
+    if(b.type==='ChangeScene'){
+      if(!c.sceneId){toast('ChangeScene: выбери сцену в настройках блока','error');break;}
+      void switchSceneDuringPlay(c.sceneId);break;
+    }
     if(eventTypes.includes(b.type)){if(eventName==='manual'){current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}break;}
     if(b.type==='Model'){executeModelBlock(c);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
     if(b.type==='Particles'){executeParticlesBlock(c);current=isGraph?outgoing(b.id,'execOut'):(blocks[i+1]?.id||null);continue;}
@@ -3990,18 +3959,16 @@ function focusSelectedObject() {
 
 // ---------- Zero Model Studio ----------
 async function openModelStudioProjectPicker(){
-  let projects=[];
-  try{projects=(await getAllProjects()).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));}
+  let projects=[],legacy=[];
+  try{const all=await getAllProjects();projects=all.filter(project=>project.projectType==='model').sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));legacy=all.filter(project=>!project.projectType).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));}
   catch(error){console.error(error);toast('Не удалось прочитать список проектов','error');return;}
   const projectRows=projects.map(project=>`<div class="model-project-choice-row"><button type="button" class="model-project-choice" data-model-project="${escapeAttr(project.id)}"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.description||'Без описания')}</small></button><button type="button" class="model-project-delete" data-delete-model-project="${escapeAttr(project.id)}" title="Удалить проект" aria-label="Удалить проект ${escapeAttr(project.name)}">×</button></div>`).join('');
-  showModal(`<div class="modal-header"><div><span class="panel-kicker">ZERO MODEL STUDIO</span><h2 id="modal-title">3D-моделирование</h2><p>Выбери проект, в который будет сохранена готовая модель.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><div class="model-project-choices">${projectRows||'<div class="modal-note">Пока нет проектов. Создай проект прямо здесь, чтобы начать моделирование.</div>'}</div><button type="button" class="button button-primary" id="model-create-project">＋ Создать проект</button></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button></div>`);
-  $$('#modal-content [data-model-project]').forEach(button=>button.addEventListener('click',async()=>{
-    const project=projects.find(item=>item.id===button.dataset.modelProject);if(!project)return;
-    closeModal();await enterModelStudio(project);
-  }));
+  const legacyRows=legacy.map(project=>`<div class="model-project-choice-row model-project-legacy-row"><button type="button" class="model-project-choice" data-model-project-legacy="${escapeAttr(project.id)}"><strong>${escapeHtml(project.name)}</strong><small>Старый проект · нажми, чтобы перенести в 3D Editor</small></button></div>`).join('');
+  showModal(`<div class="modal-header"><div><span class="panel-kicker">ZERO MODEL STUDIO</span><h2 id="modal-title">3D-моделирование</h2><p>Выбери проект, в который будет сохранена готовая модель.</p></div><button class="modal-close" data-close-modal>×</button></div><div class="modal-body"><div class="model-project-choices">${projectRows||'<div class="modal-note">Пока нет новых 3D-проектов.</div>'}${legacy.length?`<h3 class="model-legacy-heading">Старые проекты без типа</h3><p class="modal-note">Выбери только те, которые были проектами 3D-моделирования. После выбора они переедут в отдельный список 3D Editor.</p>${legacyRows}`:''}</div><button type="button" class="button button-primary" id="model-create-project">＋ Создать проект</button></div><div class="modal-footer"><button type="button" class="button button-quiet" data-close-modal>Отмена</button></div>`);
+  $$('#modal-content [data-model-project]').forEach(button=>button.addEventListener('click',async()=>{const project=projects.find(item=>item.id===button.dataset.modelProject);if(project){closeModal();await enterModelStudio(project);}}));
+  $$('#modal-content [data-model-project-legacy]').forEach(button=>button.addEventListener('click',async()=>{const project=legacy.find(item=>item.id===button.dataset.modelProjectLegacy);if(project){closeModal();await migrateLegacyModelProject(project);}}));
   $$('#modal-content [data-delete-model-project]').forEach(button=>button.addEventListener('click',async event=>{
-    event.preventDefault();event.stopPropagation();
-    const project=projects.find(item=>item.id===button.dataset.deleteModelProject);if(!project)return;
+    event.preventDefault();event.stopPropagation();const project=projects.find(item=>item.id===button.dataset.deleteModelProject);if(!project)return;
     if(!confirm(`Удалить проект «${project.name}» вместе со всеми его сценами и ресурсами?`))return;
     try{await deleteProjectRecord(project.id);toast(`Проект «${project.name}» удалён`,'success');await openModelStudioProjectPicker();}
     catch(error){console.error(error);toast('Не удалось удалить проект','error');}
@@ -4011,16 +3978,16 @@ async function openModelStudioProjectPicker(){
 function openModelStudioCreateProjectForm(){
   showModal(`<div class="modal-header"><div><span class="panel-kicker">NEW MODEL WORKSPACE</span><h2 id="modal-title">Новый проект для модели</h2><p>Модель будет сохранена в этом проекте и попадёт в его ZIP-архив.</p></div><button class="modal-close" data-close-modal>×</button></div><form id="model-create-project-form"><div class="modal-body"><label class="field-label">Название проекта<input class="field-input" id="model-new-project-name" maxlength="48" placeholder="Например, My Character" required></label><label class="field-label">Описание<textarea class="field-textarea" id="model-new-project-description" maxlength="240" placeholder="Необязательно"></textarea></label></div><div class="modal-footer"><button type="button" class="button button-quiet" id="model-create-project-cancel">Назад</button><button class="button button-primary" type="submit">Создать и открыть</button></div></form>`);
   $('#model-create-project-cancel').addEventListener('click',openModelStudioProjectPicker);
-  $('#model-create-project-form').addEventListener('submit',async event=>{event.preventDefault();const name=$('#model-new-project-name').value.trim();if(!name)return;const project=makeProject(name,$('#model-new-project-description').value);try{await putProject(project);closeModal();await enterModelStudio(project);}catch(error){console.error(error);toast('Не удалось создать проект','error');}});
+  $('#model-create-project-form').addEventListener('submit',async event=>{event.preventDefault();const name=$('#model-new-project-name').value.trim();if(!name)return;const project=makeProject(name,$('#model-new-project-description').value);project.projectType='model';try{await putProject(project);closeModal();await enterModelStudio(project);}catch(error){console.error(error);toast('Не удалось создать проект','error');}});
 }
 async function enterModelStudio(project){
   currentProject=normalizeProject(project);selectedId=null;selectedIds=new Set();releaseObjectUrls();
   $('#home-screen').classList.add('hidden');$('#editor-screen').classList.add('hidden');
-  $('#model-studio').classList.remove('hidden');
-  openModelStudio();
+  $('#model-studio').classList.remove('hidden');$('#model-quick-add-menu')?.classList.add('hidden');$('#model-quick-add-toggle')?.setAttribute('aria-expanded','false');
+  await openModelStudio();
 }
 function disposeModelNode(node){node.traverse?.(child=>{child.geometry?.dispose?.();if(child.material){for(const material of (Array.isArray(child.material)?child.material:[child.material]))material?.dispose?.();}});}
-function openModelStudio(){
+async function openModelStudio(){
   if(!currentProject)return;
   const r=modelStudio,canvas=$('#model-canvas');
   if(!r.renderer){
@@ -4029,11 +3996,11 @@ function openModelStudio(){
     r.camera=new THREE.PerspectiveCamera(50,1,.01,3000);r.camera.up.set(0,0,1);r.camera.position.set(6,-8,6);r.camera.lookAt(0,0,0);
     // Modeling strokes/click tools must take precedence over OrbitControls' left-button drag.
     canvas.addEventListener('pointerdown',event=>{if(modelStudio.activeTool&&!modelStudio.cameraNavigation&&(event.pointerType!=='mouse'||event.button===0)){event.stopImmediatePropagation();selectModelObject(event);}},true);
-    r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;r.orbit.enablePan=true;r.orbit.minDistance=.2;r.orbit.maxDistance=2000;r.orbit.minAzimuthAngle=-Infinity;r.orbit.maxAzimuthAngle=Infinity;r.orbit.minPolarAngle=.0001;r.orbit.maxPolarAngle=Math.PI-.0001;r.orbit.target.set(0,0,0);
+    r.orbit=new OrbitControls(r.camera,canvas);r.orbit.enableDamping=true;r.orbit.enablePan=true;r.orbit.minDistance=.2;r.orbit.maxDistance=2000;r.orbit.minAzimuthAngle=-Infinity;r.orbit.maxAzimuthAngle=Infinity;r.orbit.minPolarAngle=0;r.orbit.maxPolarAngle=Math.PI;r.orbit.target.set(0,0,0);
     if(r.orbit.touches&&THREE.TOUCH){r.orbit.touches.ONE=THREE.TOUCH.ROTATE;r.orbit.touches.TWO=THREE.TOUCH.DOLLY_PAN;}
     r.orbit.rotateSpeed=1.05;r.orbit.zoomSpeed=1.1;r.orbit.panSpeed=0.9;r.orbit.mouseButtons={LEFT:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.ROTATE};
     r.scene.add(new THREE.HemisphereLight(0xffffff,0x555b65,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,5);r.scene.add(key);
-    r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);r.grid=null;
+    r.root=new THREE.Group();r.root.name='Model Workspace';r.scene.add(r.root);const modelGrid=new THREE.GridHelper(200,200,0x555b5b,0x343a3d);modelGrid.rotation.x=Math.PI/2;modelGrid.position.z=0;r.grid=modelGrid;r.scene.add(modelGrid);
     r.transform=new TransformControls(r.camera,canvas);r.transform.setSize((window.matchMedia?.('(max-width: 850px)').matches||window.matchMedia?.('(pointer: coarse)').matches)?0.82:1.15);
     r.componentPivot=new THREE.Object3D();r.scene.add(r.componentPivot);
     r.transform.addEventListener('dragging-changed',event=>{
@@ -4064,30 +4031,74 @@ function openModelStudio(){
     r.selected=null;r.selectedObjects.clear();clearModelTopologyOverlay();r.componentTarget=null;r.activeTool=null;r.mode='object';r.transformTool='move';r.toolScope='all';$$('[data-model-scope]').forEach(button=>button.classList.toggle('active',button.dataset.modelScope==='all'));r.creationPoints=[];$$('[data-model-mode]').forEach(b=>b.classList.toggle('active',b.dataset.modelMode==='object'));$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='move'));$('#model-sculpt-settings').classList.remove('active');$('#model-cut-settings').classList.remove('active');r.creationTarget=null;r.history=[];r.future=[];r.clipboard=null;r.projectId=currentProject.id;
     // A new model project always opens centered at the world origin with Z as world up.
     r.orbit.target.set(0,0,0);r.camera.up.set(0,0,1);r.orbit.object.up.set(0,0,1);r.camera.position.set(6,-8,6);r.camera.near=.01;r.camera.far=3000;r.camera.lookAt(0,0,0);r.camera.updateProjectionMatrix();r.orbit.update();
-    $('#model-name').value='New Model';$('#model-paint-panel').classList.add('hidden');
+    $('#model-name').value=currentProject.modelStudioName||'New Model';$('#model-paint-panel').classList.add('hidden');
     $('#model-selection-info').textContent='Объект не выбран';
+    // Restore the editable model snapshot saved into this workspace project.
+    const savedModelAsset=currentProject.assets?.find(asset=>asset.id===currentProject.modelStudioAssetId&&asset.type==='model'&&asset.blob);
+    if(savedModelAsset){
+      try{
+        const file=new File([savedModelAsset.blob],savedModelAsset.name||'Model.glb',{type:savedModelAsset.blob.type||'model/gltf-binary'});
+        const restored=await importModelStudioFile(file,{silent:true,restore:true});
+        if(restored){$('#model-name').value=currentProject.modelStudioName||savedModelAsset.name.replace(/\.(glb|gltf)$/i,'');$('#model-studio-status').textContent=`Загружено: ${savedModelAsset.name}`;}
+        else toast('Сохранённая модель не загрузилась. Проверь GLB в ресурсах проекта.','error');
+      }catch(error){console.error('Saved model restore failed',error);toast('Не удалось восстановить модель из рабочего пространства','error');}
+    }
   }
   if(!r.history.length)r.history.push([]);
-  r.resize();r.orbit.update();cancelAnimationFrame(r.raf);r.tick();renderModelObjectList();renderModelFields();setModelMobilePanel('viewport');requestAnimationFrame(()=>r.resize?.());
+  r.resize();updateModelStudioPanelLayout();r.orbit.update();if(r.grid){r.grid.visible=true;$('#model-grid-toggle')?.classList.add('active');}cancelAnimationFrame(r.raf);r.tick();renderModelObjectList();renderModelFields();setModelMobilePanel('viewport');requestAnimationFrame(()=>r.resize?.());
 }
+async function toggleModelStudioFullscreen(){
+  const root=$('#model-studio');if(!root)return;
+  try{
+    if(document.fullscreenElement){await document.exitFullscreen();}
+    else if(root.requestFullscreen){await root.requestFullscreen({navigationUI:'hide'});}
+    else toast('Полноэкранный режим не поддерживается этим браузером','error');
+  }catch(error){console.warn('Fullscreen request failed',error);toast('Не удалось включить полноэкранный режим','error');}
+  const button=$('#model-overlay-fullscreen');if(button)button.textContent=document.fullscreenElement?'⛶ Обычный экран':'⛶ На весь экран';
+  requestAnimationFrame(()=>modelStudio.resize?.());
+}
+document.addEventListener('fullscreenchange',()=>{const button=$('#model-overlay-fullscreen');if(button)button.textContent=document.fullscreenElement?'⛶ Обычный экран':'⛶ На весь экран';requestAnimationFrame(()=>modelStudio.resize?.());});
+
 async function closeModelStudio(){
+  clearTimeout(modelProjectSaveTimer);modelProjectSaveTimer=0;
   clearModelCreationPreview();clearModelTopologyOverlay();if(modelStudio.transform)modelStudio.transform.detach();cancelAnimationFrame(modelStudio.raf);
-  if(currentProject)await saveProject(false);
-  $('#model-studio').classList.add('hidden');$('#home-screen').classList.remove('hidden');$('#editor-screen').classList.add('hidden');
+  if(currentProject)await saveModelProject({silent:true});
+  $('#model-studio').classList.add('hidden');$('#editor-screen').classList.add('hidden');
+  $('#home-screen').classList.remove('hidden');
   currentProject=null;releaseObjectUrls();renderProjectList();
 }
 function setModelCameraNavigation(enabled){
   const r=modelStudio;r.cameraNavigation=!!enabled;const button=$('#model-camera-orbit-toggle');button?.classList.toggle('active',r.cameraNavigation);button?.setAttribute('aria-pressed',String(r.cameraNavigation));if(r.cameraNavigation){toast('Осмотр камеры включён. Выбранный инструмент сохранён; нажми кнопку ещё раз, чтобы продолжить работу.');}else toast(r.activeTool?`Инструмент «${r.activeTool}» снова активен`:'Режим камеры выключен');
 }
+function updateModelStudioPanelLayout(){
+  const layout=$('#model-studio .model-studio-layout');if(!layout)return;
+  const tools= !layout.querySelector('.model-tools')?.classList.contains('model-panel-hidden');
+  const inspector= !layout.querySelector('.model-inspector')?.classList.contains('model-panel-hidden');
+  const columns=[];if(tools)columns.push('minmax(170px, 220px)');columns.push('minmax(0,1fr)');if(inspector)columns.push('minmax(190px, 270px)');
+  if(!window.matchMedia?.('(max-width: 850px), (pointer: coarse)').matches)layout.style.gridTemplateColumns=columns.join(' ');
+}
+function showModelDrawerPanel(panel){
+  const layout=$('#model-studio .model-studio-layout');if(!layout)return;
+  const classMap={add:'.model-add-panel',tools:'.model-tools',inspector:'.model-inspector'};
+  const target=layout.querySelector(classMap[panel]);if(!target)return;
+  if(window.matchMedia?.('(max-width: 850px), (pointer: coarse)').matches)target.classList.add('model-drawer-open');
+  else{target.classList.remove('model-panel-hidden');updateModelStudioPanelLayout();}
+  $$('#model-studio [data-model-panel]').forEach(button=>button.classList.toggle('active',button.dataset.modelPanel===panel));
+  requestAnimationFrame(()=>{modelStudio.resize?.();modelStudio.orbit?.update();});
+}
 function toggleModelDrawerPanel(panel){
   const layout=$('#model-studio .model-studio-layout');if(!layout)return;
   const classMap={add:'.model-add-panel',tools:'.model-tools',inspector:'.model-inspector'};
+  const target=layout.querySelector(classMap[panel]);if(!target)return;
   if(window.matchMedia?.('(max-width: 850px), (pointer: coarse)').matches){
-    const target=layout.querySelector(classMap[panel]);if(!target)return;
     const opened=target.classList.toggle('model-drawer-open');
-    // Drawers are independent: users can keep the tool settings visible while opening assets or properties.
     $$('#model-studio [data-model-panel]').forEach(button=>button.classList.toggle('active',button.dataset.modelPanel===panel&&opened));
-  }else setModelMobilePanel('viewport');
+  }else{
+    target.classList.toggle('model-panel-hidden');
+    const opened=!target.classList.contains('model-panel-hidden');
+    $$('#model-studio [data-model-panel]').forEach(button=>button.classList.toggle('active',button.dataset.modelPanel===panel&&opened));
+    updateModelStudioPanelLayout();
+  }
   requestAnimationFrame(()=>{modelStudio.resize?.();modelStudio.orbit?.update();});
 }
 
@@ -4131,6 +4142,7 @@ function modelGeometry(index){
   }
 }
 function addModelPrimitive(index){
+  $('#model-quick-add-menu')?.classList.add('hidden');$('#model-quick-add-toggle')?.setAttribute('aria-expanded','false');
   const names=MODEL_PRIMITIVES;let mesh;
   if(index===9){mesh=new THREE.Group();const mat=new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.72});const head=new THREE.Mesh(new THREE.SphereGeometry(.62,24,18),mat);head.scale.set(1,.8,1.05);mesh.add(head);for(const side of [-1,1]){const ear=new THREE.Mesh(new THREE.SphereGeometry(.27,16,12),mat);ear.position.set(side*.55,0,.35);mesh.add(ear);}const muzzle=new THREE.Mesh(new THREE.SphereGeometry(.3,16,12),mat);muzzle.position.set(0,.48,-.15);muzzle.scale.set(.8,.6,.65);mesh.add(muzzle);}
   else mesh=new THREE.Mesh(modelGeometry(index),new THREE.MeshStandardMaterial({color:'#ffffff',roughness:.72,metalness:0}));
@@ -4200,6 +4212,17 @@ function renderModelComponentMarker(){
   const target=selection.target,vertices=uniqueComponentVertices(target,selection.indices);if(!vertices.length)return;
   target.updateMatrixWorld(true);const world=vertices.map(v=>v.clone().applyMatrix4(target.matrixWorld));
   const material=new THREE.MeshBasicMaterial({color:0xffd166,depthTest:false,depthWrite:false});
+  if(target.userData?.createdComponent){
+    const box=new THREE.Box3().setFromObject(target),center=box.getCenter(new THREE.Vector3());
+    if(target.userData.createdComponent==='edge'){
+      const direction=new THREE.Vector3(0,1,0).applyQuaternion(target.getWorldQuaternion(new THREE.Quaternion())).normalize();
+      const length=Math.max(.05,box.getSize(new THREE.Vector3()).length()*.5);
+      const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([center.clone().addScaledVector(direction,-length),center.clone().addScaledVector(direction,length)]),new THREE.LineBasicMaterial({color:0xffd166,depthTest:false}));line.renderOrder=1001;r.componentHelper.add(line);
+    }else{
+      const marker=new THREE.Mesh(new THREE.SphereGeometry(target.userData.createdComponent==='vertex'?.09:.07,12,8),material);marker.position.copy(center);marker.renderOrder=1002;r.componentHelper.add(marker);
+    }
+    return;
+  }
   if(r.mode==='face'){
     const boundary=extractModelBoundaryLoop(target.geometry,selection.faceIndices||[selection.face]);
     const boundaryWorld=boundary.map(v=>v.clone().applyMatrix4(target.matrixWorld));
@@ -4242,23 +4265,32 @@ function collectModelIndicesAtPoints(geometry,points){
   return out;
 }
 function selectModelComponent(hit){
-  const r=modelStudio,target=hit.modelTarget||hit.object;
+  const r=modelStudio;
+  const createdTarget=hit.createdComponentTarget||null;
+  const createdComponent=createdTarget?.userData?.createdComponent||hit.object?.userData?.createdComponent||null;
+  const target=createdTarget||(createdComponent?hit.object:(hit.modelTarget||hit.object));
   if(target.geometry?.index){const old=target.geometry;target.geometry=old.toNonIndexed();old.dispose();}
   const geometry=target.geometry,positions=geometry?.attributes?.position;if(!positions)return;
   const face=Math.max(0,hit.faceIndex??0),info=modelTriangleInfo(geometry,face);if(!info)return;
   let indices=info.ids,faceIndices=[face];
-  if(r.mode==='vertex'){
+  if(createdComponent){
+    // User-created vertices, edges and faces remain separately editable components.
+    // Selecting one edits this component's own mesh rather than an unrelated source face.
+    indices=Array.from({length:positions.count},(_,i)=>i);
+    if(r.mode==='face')faceIndices=connectedCoplanarModelFaces(geometry,face);
+  }else
+  if(!createdComponent&&r.mode==='vertex'){
     const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
     const nearest=info.vertices.reduce((best,v,i)=>v.distanceTo(localHit)<info.vertices[best].distanceTo(localHit)?i:best,0);
     indices=collectModelIndicesAtPoints(geometry,[info.vertices[nearest]]);
-  }else if(r.mode==='edge'){
+  }else if(!createdComponent&&r.mode==='edge'){
     if(hit.modelEdgePoints?.length===2){indices=collectModelIndicesAtPoints(geometry,hit.modelEdgePoints);}
     else {const localHit=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
     const segmentDistance=(point,a,b)=>{const ab=b.clone().sub(a),lengthSq=ab.lengthSq();const t=lengthSq?THREE.MathUtils.clamp(point.clone().sub(a).dot(ab)/lengthSq,0,1):0;return point.distanceTo(a.addScaledVector(ab,t));};
     const edges=[[0,1],[1,2],[2,0]].map(pair=>({pair,distance:segmentDistance(localHit,info.vertices[pair[0]],info.vertices[pair[1]])}));
     edges.sort((a,b)=>a.distance-b.distance);
     indices=collectModelIndicesAtPoints(geometry,edges[0].pair.map(i=>info.vertices[i]));}
-  }else if(r.mode==='face'){
+  }else if(!createdComponent&&r.mode==='face'){
     faceIndices=connectedCoplanarModelFaces(geometry,face);
     const facePositions=faceIndices.flatMap(faceId=>[0,1,2].map(corner=>new THREE.Vector3().fromBufferAttribute(geometry.attributes.position,faceId*3+corner)));
     // Non-indexed geometry duplicates boundary vertices between polygons; transform all coincident copies together.
@@ -4276,7 +4308,7 @@ function createModelElementAtHit(hit,kind){
   const r=modelStudio,target=hit.object;target.updateMatrixWorld(true);
   const local=hit.point.clone().applyMatrix4(target.matrixWorld.clone().invert());
   if(kind==='create-vertex'){
-    const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,12,8),new THREE.MeshStandardMaterial({color:0xffd166}));dot.name='New Vertex';dot.position.copy(local);dot.userData.createdComponent='vertex';target.add(dot);pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новая точка создана';return;
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(.055,12,8),new THREE.MeshStandardMaterial({color:0xffd166}));dot.name='New Vertex';dot.position.copy(local);dot.userData.createdComponent='vertex';target.add(dot);pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новая редактируемая точка создана';return;
   }
   if(r.creationTarget!==target){clearModelCreationPreview();r.creationTarget=target;r.creationPoints=[];}
   if(r.creationPoints.some(p=>p.distanceTo(local)<.015)){toast('Эта точка уже добавлена');return;}
@@ -4284,7 +4316,7 @@ function createModelElementAtHit(hit,kind){
   if(kind==='create-edge'&&r.creationPoints.length>=2){
     const [a,b]=r.creationPoints.slice(0,2),direction=b.clone().sub(a),length=direction.length();
     if(length<.0001){toast('Точки ребра слишком близко друг к другу','error');return;}
-    const edge=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,length,8),new THREE.MeshStandardMaterial({color:0x52d9ff}));edge.name='New Edge';edge.position.copy(a).add(b).multiplyScalar(.5);edge.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());edge.userData.createdComponent='edge';target.add(edge);
+    const edge=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,length,8),new THREE.MeshStandardMaterial({color:0x52d9ff}));edge.name='New Edge';edge.position.copy(a).add(b).multiplyScalar(.5);edge.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());edge.userData.createdComponent='edge';edge.userData.modelCreatedEditable=true;target.add(edge);
     r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent='Новое ребро создано';return;
   }
   if(kind==='create-face'){
@@ -4356,11 +4388,10 @@ function applyModelSculptAt(clientX,clientY){
   const cfg=r.sculptSettings,radius=THREE.MathUtils.clamp(Number(cfg.radius)||.65,.01,100),sign=cfg.action==='dent'?-1:1;
   const amount=THREE.MathUtils.clamp((Number(cfg.strength)||.45)*.095,.001,1.5)*sign;
   const flatRatio=cfg.profile==='flat'?.72:0;
-  let changed=false;
+  let changed=false;const sculptUpdates=new Map();
   for(let i=0;i<position.count;i++){
-    const local=new THREE.Vector3().fromBufferAttribute(position,i),world=local.clone().applyMatrix4(target.matrixWorld),delta=world.sub(worldHit);
-    const normalDistance=Math.abs(delta.dot(worldNormal));if(normalDistance>Math.max(.025,radius*.28))continue;
-    if(normals){const vertexNormal=new THREE.Vector3().fromBufferAttribute(normals,i).applyMatrix3(normalMatrix).normalize();if(vertexNormal.dot(worldNormal)<.48)continue;}
+    const local=new THREE.Vector3().fromBufferAttribute(position,i),world=local.clone().applyMatrix4(target.matrixWorld),delta=world.clone().sub(worldHit);
+    const normalDistance=Math.abs(delta.dot(worldNormal));if(normalDistance>Math.max(.035,radius*.34))continue;
     const u=delta.dot(axisU),v=delta.dot(axisV);
     let normalizedDistance;
     if(cfg.shape==='square')normalizedDistance=Math.max(Math.abs(u),Math.abs(v))/radius;
@@ -4378,8 +4409,13 @@ function applyModelSculptAt(clientX,clientY){
       falloff=1-smooth01(normalizedDistance);
     }
     if(falloff<=.0005)continue;
-    const movedWorld=worldHit.clone().add(delta).addScaledVector(worldNormal,amount*falloff);
-    const movedLocal=movedWorld.applyMatrix4(inverse);position.setXYZ(i,movedLocal.x,movedLocal.y,movedLocal.z);changed=true;
+    const movedWorld=world.clone().addScaledVector(worldNormal,amount*falloff);
+    const movedLocal=movedWorld.applyMatrix4(inverse);sculptUpdates.set(modelPointKey(local),movedLocal);
+  }
+  if(sculptUpdates.size){
+    // Non-indexed meshes duplicate vertices per triangle. Update every coincident copy
+    // with one shared offset to keep adjacent faces watertight and prevent cracks.
+    for(let i=0;i<position.count;i++){const local=new THREE.Vector3().fromBufferAttribute(position,i),next=sculptUpdates.get(modelPointKey(local));if(next){position.setXYZ(i,next.x,next.y,next.z);changed=true;}}
   }
   if(changed){position.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();target.updateMatrixWorld(true);}
   return changed;
@@ -4565,7 +4601,7 @@ function finishModelFaceCreation(){
   const origin=points[0],normal=points[1].clone().sub(origin).cross(points[2].clone().sub(origin)).normalize();if(normal.lengthSq()<1e-8){toast('Точки грани лежат на одной линии','error');return false;}
   const axisU=points[1].clone().sub(origin).normalize(),axisV=normal.clone().cross(axisU).normalize(),contour=points.map(p=>{const delta=p.clone().sub(origin);return new THREE.Vector2(delta.dot(axisU),delta.dot(axisV));});
   const triangles=THREE.ShapeUtils.triangulateShape(contour,[]).map(indices=>indices.map(index=>points[index]));if(!triangles.length){toast('Не удалось построить полигон из этих точек','error');return false;}
-  if(!makeModelTriangleMesh(target,triangles,'New Face'))return false;
+  const createdFace=makeModelTriangleMesh(target,triangles,'New Face');if(!createdFace)return false;createdFace.userData.createdComponent='face';createdFace.userData.modelCreatedEditable=true;
   r.creationPoints=[];r.creationTarget=null;clearModelCreationPreview();$('#model-create-face-finish').hidden=true;$('#model-tool-cancel').hidden=false;$$('[data-model-tool]').forEach(b=>b.classList.toggle('active',b.dataset.modelTool==='create-face'));pushModelHistory();renderModelObjectList();$('#model-selection-info').textContent=`Создана грань из ${points.length} точек. Можно создать следующую`;return true;
 }
 function cancelModelActiveTool(){
@@ -4585,7 +4621,7 @@ function selectModelObject(e){
     const edgeHits=r.raycaster.intersectObject(r.topologyOverlay,true).filter(hit=>hit.object?.isLineSegments&&hit.object.userData.modelSourceMesh);
     if(edgeHits.length){const edgeHit=edgeHits[0],line=edgeHit.object,positions=line.geometry.attributes.position;let closest=null,best=Infinity;line.updateMatrixWorld(true);
       for(let i=0;i+1<positions.count;i+=2){const a=new THREE.Vector3().fromBufferAttribute(positions,i).applyMatrix4(line.matrixWorld),b=new THREE.Vector3().fromBufferAttribute(positions,i+1).applyMatrix4(line.matrixWorld),ab=b.clone().sub(a),t=THREE.MathUtils.clamp(edgeHit.point.clone().sub(a).dot(ab)/(ab.lengthSq()||1),0,1),point=a.addScaledVector(ab,t),distance=point.distanceTo(edgeHit.point);if(distance<best){best=distance;closest=[i,i+1];}}
-      if(closest){const inverse=line.matrixWorld.clone().invert(),points=closest.map(i=>new THREE.Vector3().fromBufferAttribute(positions,i).applyMatrix4(inverse));selectModelComponent({object:line,modelTarget:line.userData.modelSourceMesh,modelEdgePoints:points,faceIndex:0,point:edgeHit.point});return;}
+      if(closest){const inverse=line.matrixWorld.clone().invert(),points=closest.map(i=>new THREE.Vector3().fromBufferAttribute(positions,i).applyMatrix4(inverse)),source=line.userData.modelSourceMesh;selectModelComponent({object:line,modelTarget:source,createdComponentTarget:source?.userData?.createdComponent?source:null,modelEdgePoints:points,faceIndex:0,point:edgeHit.point});return;}
     }
   }
   const hits=r.raycaster.intersectObjects(r.root.children,true).filter(hit=>hit.object.isMesh&&!hit.object.userData.reference&&!hit.object.userData.editorOnly&&hit.object.visible);
@@ -4593,6 +4629,7 @@ function selectModelObject(e){
   const hit=hits[0];
   if(r.activeTool){
     const tool=r.activeTool;
+    if(r.toolScope==='selected'&&r.selected){const allowed=modelMeshesWithin(r.selected);if(!allowed.includes(hit.object)){return;}}
     if(tool==='create-vertex'||tool==='create-edge'||tool==='create-face'){createModelElementAtHit(hit,tool);return;}
     if(['bevel','sharpen'].includes(tool)&&r.mode!=='face'){toast('Для этой операции переключись в режим «Грани»','error');return;}
     selectModelComponent(hit);applyModelComponentTool(tool);return;
@@ -4618,10 +4655,21 @@ function deleteModelObject(object){
 function renderModelObjectList(){
   const el=$('#model-object-list');if(!el)return;
   const objects=modelStudio.root?modelStudio.root.children.filter(o=>!o.userData.reference):[];
-  el.innerHTML=objects.map((o,i)=>`<div class="model-object-item"><input class="model-object-check" type="checkbox" data-model-choose="${o.uuid}" aria-label="Добавить ${escapeAttr(o.name||'Object')} в выбор для объединения" ${modelStudio.selectedObjects.has(o.uuid)?'checked':''}><button class="model-object-row ${o===modelStudio.selected||o.getObjectById?.(modelStudio.selected?.id)?'active':''}" data-model-object="${i}">◈ ${escapeHtml(o.name||'Object')}</button><button class="model-object-delete" data-model-delete="${i}" aria-label="Удалить ${escapeAttr(o.name||'Object')}" title="Удалить модель">×</button></div>`).join('')||'<small>Добавь модель слева</small>';
+  const componentRows=[];
+  for(const owner of objects){
+    owner.traverse?.(child=>{
+      if(child!==owner&&child.userData?.createdComponent)componentRows.push({owner,child});
+    });
+  }
+  const objectMarkup=objects.map((o,i)=>`<div class="model-object-item"><input class="model-object-check" type="checkbox" data-model-choose="${o.uuid}" aria-label="Добавить ${escapeAttr(o.name||'Object')} в выбор для объединения" ${modelStudio.selectedObjects.has(o.uuid)?'checked':''}><button class="model-object-row ${o===modelStudio.selected||o.getObjectById?.(modelStudio.selected?.id)?'active':''}" data-model-object="${i}">◈ ${escapeHtml(o.name||'Object')}</button><button class="model-object-delete" data-model-delete="${i}" aria-label="Удалить ${escapeAttr(o.name||'Object')}" title="Удалить модель">×</button></div>`).join('');
+  const typeLabels={vertex:'Точка',edge:'Ребро',face:'Грань'};
+  const componentMarkup=componentRows.map(({owner,child},i)=>`<div class="model-object-item model-created-component-item"><span class="model-created-component-indent">↳</span><button class="model-object-row ${child===modelStudio.selected?'active':''}" data-model-created-component="${i}" title="Выбрать и редактировать ${escapeAttr(typeLabels[child.userData.createdComponent]||'компонент')}">${typeLabels[child.userData.createdComponent]||'Компонент'} · ${escapeHtml(child.name||'Без имени')}</button><button class="model-object-delete" data-model-component-delete="${i}" aria-label="Удалить компонент" title="Удалить компонент">×</button></div>`).join('');
+  el.innerHTML=(objectMarkup+componentMarkup)||'<small>Добавь модель через кнопку + над сценой</small>';
   el.querySelectorAll('[data-model-object]').forEach(button=>button.addEventListener('click',()=>{const object=objects[Number(button.dataset.modelObject)];if(object){selectModelMesh(object);focusModelObject(object);}}));
   el.querySelectorAll('[data-model-choose]').forEach(input=>input.addEventListener('change',()=>{const id=input.dataset.modelChoose;if(input.checked)modelStudio.selectedObjects.add(id);else modelStudio.selectedObjects.delete(id);const count=modelStudio.selectedObjects.size;$('#model-selection-info').textContent=count?`Для объединения выбрано: ${count}`:(modelStudio.selected?.name||'Объект не выбран');}));
   el.querySelectorAll('[data-model-delete]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const object=objects[Number(button.dataset.modelDelete)];if(object)deleteModelObject(object);}));
+  el.querySelectorAll('[data-model-created-component]').forEach(button=>button.addEventListener('click',()=>{const entry=componentRows[Number(button.dataset.modelCreatedComponent)];if(!entry)return;const mode=entry.child.userData.createdComponent||'object';if(mode!=='object')setModelMode(mode);entry.child.updateMatrixWorld(true);const center=new THREE.Box3().setFromObject(entry.child).getCenter(new THREE.Vector3());selectModelComponent({object:entry.child,point:center,faceIndex:0});focusModelObject(entry.child);}));
+  el.querySelectorAll('[data-model-component-delete]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const entry=componentRows[Number(button.dataset.modelComponentDelete)];if(entry)deleteModelObject(entry.child);}));
 }
 function modelMeshesWithin(object){const result=[];object?.traverse?.(child=>{if(child.isMesh&&child.material)result.push(child);});if(object?.isMesh&&!result.includes(object)&&object.material)result.push(object);return result;}
 function modelMaterialList(object){return modelMeshesWithin(object).flatMap(mesh=>Array.isArray(mesh.material)?mesh.material:[mesh.material]).filter(Boolean);}
@@ -4693,9 +4741,10 @@ function snapModelView(spec){
   const r=modelStudio;if(spec==='center'||spec==='reset'){focusModelWorkspace();return;}const [axis,signText]=String(spec||'z:1').split(':');const sign=Number(signText)>=0?1:-1;if(!r.camera||!r.orbit)return;
   const target=r.orbit.target.clone();const direction=axis==='x'?new THREE.Vector3(sign,0,0):axis==='y'?new THREE.Vector3(0,sign,0):new THREE.Vector3(0,0,sign);
   const distance=THREE.MathUtils.clamp(r.camera.position.distanceTo(target)||6,2,2000);
-  // Z is the world-up axis. Side views keep Z vertical; top/bottom views use Y as screen-up.
-  r.camera.up.copy(axis==='z'?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));
-  r.orbit.object.up.copy(r.camera.up);r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();
+  const wasDamping=r.orbit.enableDamping;r.orbit.enableDamping=false;r.orbit.enabled=true;r.orbit.enableRotate=true;r.orbit.enablePan=true;r.orbit.enableZoom=true;
+  // Z-up: +/-Z are exact top/bottom orthographic directions; orbit remains unconstrained afterwards.
+  r.camera.up.copy(axis==='z'?(sign>0?new THREE.Vector3(0,1,0):new THREE.Vector3(0,-1,0)):new THREE.Vector3(0,0,1));
+  r.orbit.object.up.copy(r.camera.up);r.orbit.target.copy(target);r.camera.position.copy(target).addScaledVector(direction,distance);r.camera.lookAt(target);r.camera.updateProjectionMatrix();r.orbit.update();r.orbit.enableDamping=wasDamping;
   $$('#model-studio [data-model-view]').forEach(button=>button.classList.toggle('active',button.dataset.modelView===spec));
 }
 function joinSelectedModelObjects(){
@@ -4777,37 +4826,6 @@ function extractModelBoundaryLoop(geometry,faceIndices){
 function makeModelPolygonRim(target,outer,inner,name){
   const triangles=[];for(let i=0;i<outer.length;i++){const j=(i+1)%outer.length;triangles.push([outer[i],outer[j],inner[j]],[outer[i],inner[j],inner[i]]);}return triangles.length?makeModelTriangleMesh(target,triangles,name):null;
 }
-function rebuildModelFaceRegion(target,faceIndices,boundary,mapPoint,ringSegments=1){
-  const original=target?.geometry,originalPosition=original?.attributes?.position;if(!originalPosition||boundary.length<3)return false;
-  const source=original.index?original.toNonIndexed():original.clone(),position=source.attributes.position;
-  const attributeNames=Object.keys(source.attributes),data=Object.fromEntries(attributeNames.map(name=>[name,[]])),groups=[];
-  const total=Math.floor(position.count/3),wanted=new Set(faceIndices.filter(face=>Number.isInteger(face)&&face>=0&&face<total));if(!wanted.size)return false;
-  const readRow=index=>{const row={};for(const name of attributeNames){const attr=source.attributes[name];row[name]=Array.from({length:attr.itemSize},(_,i)=>attr.array[index*attr.itemSize+i]);}return row;};
-  const rowPosition=row=>new THREE.Vector3(...row.position);
-  const mappedRow=(row,t=1)=>{const next={};for(const name of attributeNames)next[name]=row[name].slice();const p=mapPoint(rowPosition(row),t);next.position=[p.x,p.y,p.z];return next;};
-  const appendTriangle=(triangle,materialIndex)=>{const start=data.position.length/3;triangle.forEach(row=>attributeNames.forEach(name=>data[name].push(...(row[name]||new Array(source.attributes[name].itemSize).fill(0)))));const prev=groups.at(-1);if(prev&&prev.materialIndex===materialIndex&&prev.start+prev.count===start)prev.count+=3;else groups.push({start,count:3,materialIndex});};
-  const outerRows=new Map();
-  for(let i=0;i<position.count;i++){const row=readRow(i),key=modelPointKey(rowPosition(row));if(!outerRows.has(key))outerRows.set(key,row);}
-  for(let face=0;face<total;face++){
-    const materialIndex=modelFaceMaterialIndex(source,face),rows=[readRow(face*3),readRow(face*3+1),readRow(face*3+2)];
-    if(!wanted.has(face)){appendTriangle(rows,materialIndex);continue;}
-    appendTriangle(rows.map(row=>mappedRow(row,1)),materialIndex);
-  }
-  const boundaryKeys=boundary.map(modelPointKey),outer=boundaryKeys.map(key=>outerRows.get(key));
-  if(outer.some(row=>!row)){source.dispose();return false;}
-  const segments=Math.max(1,Math.min(8,Math.floor(ringSegments)||1)),rings=[outer];
-  for(let ring=1;ring<=segments;ring++)rings.push(outer.map(row=>mappedRow(row,ring/segments)));
-  const faceMaterial=modelFaceMaterialIndex(source,[...wanted][0]);
-  for(let ring=0;ring<segments;ring++){
-    const from=rings[ring],to=rings[ring+1];
-    for(let i=0;i<from.length;i++){const j=(i+1)%from.length;appendTriangle([from[i],from[j],to[j]],faceMaterial);appendTriangle([from[i],to[j],to[i]],faceMaterial);}
-  }
-  const next=new THREE.BufferGeometry();
-  for(const name of attributeNames){const attr=source.attributes[name],Typed=attr.array.constructor;next.setAttribute(name,new THREE.BufferAttribute(new Typed(data[name]),attr.itemSize,attr.normalized));}
-  groups.forEach(group=>next.addGroup(group.start,group.count,group.materialIndex));
-  next.computeVertexNormals();next.computeBoundingBox();next.computeBoundingSphere();
-  target.geometry=next;source.dispose();original.dispose();target.geometry.attributes.position.needsUpdate=true;target.updateMatrixWorld(true);return true;
-}
 
 function removeModelTriangles(target,faceIndices){
   const source=target?.geometry,position=source?.attributes?.position;if(!position)return false;
@@ -4836,6 +4854,11 @@ function applyModelComponentTool(tool){
   const indices=selection.indices,vertices=componentVertices(target,indices);if(!vertices.length)return false;
   const center=vertices.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/vertices.length);
   if(tool==='delete'){
+    if(target.userData.createdComponent){
+      const parent=target.parent;parent?.remove(target);disposeModelNode(target);
+      r.componentSelection=null;r.componentTarget=null;r.componentHelper?.parent?.remove(r.componentHelper);r.componentHelper=null;
+      r.transform.detach();renderModelObjectList();renderModelFields();pushModelHistory();$('#model-selection-info').textContent='Созданный компонент удалён';return true;
+    }
     const triangleCount=Math.floor(pos.count/3),removeFaces=new Set();
     if(selection.mode==='face') (selection.faceIndices||[selection.face]).forEach(face=>removeFaces.add(face));
     else for(let face=0;face<triangleCount;face++)if([0,1,2].some(corner=>indices.includes(face*3+corner)))removeFaces.add(face);
@@ -4850,31 +4873,38 @@ function applyModelComponentTool(tool){
     if(!subdivideModelFaces(target,selection.faceIndices||[selection.face])){toast('Не удалось разделить грань','error');return false;}
   }else if(['extrude','inset','bevel','sharpen'].includes(tool)){
     if(selection.mode!=='face'){toast('Для этой операции выбери грань','error');return false;}
-    const faceIndices=selection.faceIndices||[selection.face],boundary=extractModelBoundaryLoop(geometry,faceIndices);
-    if(boundary.length<3){toast('Не удалось определить замкнутую границу грани','error');return false;}
+    const faceIndices=selection.faceIndices||[selection.face];
     const firstFace=modelTriangleInfo(geometry,faceIndices[0]);
-    const normal=firstFace?.normal||new THREE.Vector3(0,0,1);
-    const boundaryCenter=boundary.reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(1/boundary.length);
-    if(tool==='bevel'||tool==='sharpen'){
-      const inset=tool==='bevel'?.78:.62,offset=tool==='bevel'?.045:.16;
-      const segments=tool==='bevel'?5:2;
-      const mapPoint=(v,t=1)=>{const radial=1-(1-inset)*t;const arc=tool==='bevel'?Math.sin(Math.PI*t)*offset*.35:0;return boundaryCenter.clone().add(v.clone().sub(boundaryCenter).multiplyScalar(radial)).addScaledVector(normal,offset*t+arc);};
-      const addedTriangles=boundary.length*2*segments;
-      if(countModelTriangles(modelStudio.root||target)+addedTriangles>MAX_MODEL_TRIANGLES){toast('Операция создаст слишком много полигонов','error');return false;}
-      if(!rebuildModelFaceRegion(target,faceIndices,boundary,mapPoint,segments)){toast('Не удалось перестроить геометрию грани','error');return false;}
-    }else if(tool==='extrude'||tool==='inset'){
-      const mapPoint=v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(boundaryCenter,.22).addScaledVector(normal,-.09);
+    const normal=firstFace?.normal?.clone()||new THREE.Vector3(0,0,1);
+    if(tool==='extrude'||tool==='inset'){
+      const boundary=extractModelBoundaryLoop(geometry,faceIndices);
+      if(boundary.length<3){toast('Не удалось определить границу грани','error');return false;}
+      const mapPoint=v=>tool==='extrude'?v.clone().addScaledVector(normal,.25):v.clone().lerp(center,.22).addScaledVector(normal,-.09);
       const moved=boundary.map(mapPoint);
       const movedTriangles=faceIndices.map(face=>[0,1,2].map(corner=>mapPoint(new THREE.Vector3().fromBufferAttribute(pos,face*3+corner))));
-      const rimTriangles=boundary.length*2,addedTriangles=rimTriangles+movedTriangles.length;
+      const addedTriangles=boundary.length*2+movedTriangles.length;
       if(countModelTriangles(modelStudio.root||target)+addedTriangles>MAX_MODEL_TRIANGLES){toast('Операция создаст слишком много полигонов','error');return false;}
       const rim=makeModelPolygonRim(target,boundary,moved,`${target.name||'Object'}_${tool}_Sides`);
       const cap=makeModelTriangleMesh(target,movedTriangles,`${target.name||'Object'}_${tool}_Cap`);
       if(!rim||!cap){if(rim){target.remove(rim);disposeModelNode(rim);}if(cap){target.remove(cap);disposeModelNode(cap);}return false;}
       if(!removeModelTriangles(target,faceIndices)){target.remove(rim);target.remove(cap);disposeModelNode(rim);disposeModelNode(cap);toast('Не удалось обновить исходную грань','error');return false;}
     }else{
-      indices.forEach(index=>{const v=new THREE.Vector3().fromBufferAttribute(pos,index),next=center.clone().add(v.sub(center).multiplyScalar(1.18));pos.setXYZ(index,next.x,next.y,next.z);});
-      pos.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+      // Bevel and sharpen are non-destructive vertex deformations: shared boundary copies
+      // move together, so no face is detached and no hole is opened in the source mesh.
+      const factor=tool==='bevel'?.90:1.08;
+      const normalOffset=tool==='bevel'?.018:.045;
+      const movedByPosition=new Map();
+      indices.forEach(index=>{
+        const v=new THREE.Vector3().fromBufferAttribute(pos,index);
+        const next=center.clone().add(v.clone().sub(center).multiplyScalar(factor)).addScaledVector(normal,normalOffset);
+        movedByPosition.set(modelPointKey(v),next);
+      });
+      const allPositions=geometry.attributes.position;
+      for(let index=0;index<allPositions.count;index++){
+        const v=new THREE.Vector3().fromBufferAttribute(allPositions,index),next=movedByPosition.get(modelPointKey(v));
+        if(next)allPositions.setXYZ(index,next.x,next.y,next.z);
+      }
+      allPositions.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();target.updateMatrixWorld(true);
     }
   }
   if(r.componentHelper){r.scene.remove(r.componentHelper);disposeModelNode(r.componentHelper);r.componentHelper=null;}
@@ -4883,8 +4913,11 @@ function applyModelComponentTool(tool){
 }
 function syncModelTransformToolButtons(tool){$$('#model-studio [data-model-tool]').forEach(button=>button.classList.toggle('active',['move','rotate','scale','move-plane','scale-uniform'].includes(tool)&&button.dataset.modelTool===tool));}
 function setModelTool(tool){
-  const r=modelStudio,mesh=r.selected;if(!mesh&&!['cut','sculpt'].includes(tool)){toast('Сначала выбери объект','error');return;}
-  if(['cut','sculpt'].includes(tool)&&r.toolScope==='selected'&&!mesh){toast('Выбран режим «Только выбранный»: сначала выбери объект','error');return;}
+  const r=modelStudio,mesh=r.selected;
+  const componentTools=['cut','sculpt','bevel','sharpen','create-vertex','create-edge','create-face',...(r.mode!=='object'?['duplicate','delete']:[])];
+  const selectionTools=['move','rotate','scale','move-plane','scale-uniform','merge',...(r.mode==='object'?['duplicate','delete']:[])];
+  if(!mesh&&selectionTools.includes(tool)){toast('Сначала выбери объект или компонент','error');return;}
+  if(componentTools.includes(tool)&&r.toolScope==='selected'&&!mesh){toast('В режиме «Только выбранный» сначала выбери объект','error');return;}
   if($('#model-sculpt-cursor'))$('#model-sculpt-cursor').hidden=true;
   if(r.cameraNavigation)setModelCameraNavigation(false);
   clearModelCreationPreview();r.creationPoints=[];r.creationTarget=null;
@@ -4920,11 +4953,30 @@ function setModelTool(tool){
   if(tool==='merge'){joinSelectedModelObjects();return;}
 }
 
-function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}if(tool==='solidify'){solidifySelectedModel();return;}setModelTool(tool);}
+function runModelTool(tool){if(tool==='copy'){copyModelObject();return;}setModelTool(tool);}
 function copyModelObject(){if(modelStudio.selected)modelStudio.clipboard=cloneModelObjectDeep(modelStudio.selected);}
 function pasteModelObject(){if(!modelStudio.clipboard)return;const copy=cloneModelObjectDeep(modelStudio.clipboard);copy.position.x+=1;copy.name=`${copy.name||'Object'} Copy`;modelStudio.root.add(copy);selectModelMesh(copy);pushModelHistory();}
-function cloneModelObjectDeep(object){const copy=object.clone(true);copy.traverse(child=>{if(child.isMesh){child.geometry=child.geometry?.clone?.()||child.geometry;if(Array.isArray(child.material))child.material=child.material.map(material=>material?.clone?.()||material);else child.material=child.material?.clone?.()||child.material;}});return copy;}
-function pushModelHistory(){try{const total=countModelTriangles(modelStudio.root);if(total>40000){modelStudio.history=[];modelStudio.future=[];if(!modelStudio.historyLimited){toast('Для тяжёлой модели история отмены отключена ради стабильности','info');modelStudio.historyLimited=true;}return;}modelStudio.historyLimited=false;const snapshot=modelStudio.root.children.filter(object=>!object.userData.reference).map(object=>({object:cloneModelObjectDeep(object)}));modelStudio.history.push(snapshot);modelStudio.future=[];if(modelStudio.history.length>10)modelStudio.history.shift();}catch(error){console.warn('Model history snapshot failed',error);}}
+function cloneModelObjectDeep(object){
+  const copy=object.clone(true);
+  const textureSlots=['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap','alphaMap','bumpMap','displacementMap','lightMap','envMap','specularMap','gradientMap'];
+  const cloneMaterial=material=>{
+    if(!material?.clone)return material;
+    const cloned=material.clone();
+    // Material.clone() shares texture objects. Clone the texture transforms too,
+    // otherwise editing UV tiling after an undo snapshot mutates the old snapshot.
+    for(const slot of textureSlots)if(cloned[slot]?.clone)cloned[slot]=cloned[slot].clone();
+    cloned.needsUpdate=true;
+    return cloned;
+  };
+  copy.traverse(child=>{if(child.isMesh){child.geometry=child.geometry?.clone?.()||child.geometry;if(Array.isArray(child.material))child.material=child.material.map(cloneMaterial);else child.material=cloneMaterial(child.material);}});
+  return copy;
+}
+function scheduleModelProjectSave(){
+  if(!currentProject||modelStudio.projectId!==currentProject.id||$('#model-studio')?.classList.contains('hidden'))return;
+  clearTimeout(modelProjectSaveTimer);
+  modelProjectSaveTimer=setTimeout(()=>{if(currentProject&&modelStudio.projectId===currentProject.id&&!$('#model-studio')?.classList.contains('hidden'))saveModelProject({silent:true});},1100);
+}
+function pushModelHistory(){try{const total=countModelTriangles(modelStudio.root);if(total>40000){modelStudio.history=[];modelStudio.future=[];if(!modelStudio.historyLimited){toast('Для тяжёлой модели история отмены отключена ради стабильности','info');modelStudio.historyLimited=true;}scheduleModelProjectSave();return;}modelStudio.historyLimited=false;const snapshot=modelStudio.root.children.filter(object=>!object.userData.reference).map(object=>({object:cloneModelObjectDeep(object)}));modelStudio.history.push(snapshot);modelStudio.future=[];if(modelStudio.history.length>10)modelStudio.history.shift();scheduleModelProjectSave();}catch(error){console.warn('Model history snapshot failed',error);}}
 function restoreModelHistorySnapshot(snapshot){
   clearModelCreationPreview();modelStudio.activeTool=null;modelStudio.sculptStroke=null;modelStudio.cutStroke=null;cancelAnimationFrame(modelStudio.sculptRaf);modelStudio.sculptRaf=0;modelStudio.creationPoints=[];modelStudio.creationTarget=null;$('#model-sculpt-settings')?.classList.remove('active');$('#model-cut-settings')?.classList.remove('active');$('#model-tool-cancel')?.setAttribute('hidden','');$('#model-canvas')?.classList.remove('model-tool-cursor');$$('[data-model-tool]').forEach(button=>button.classList.toggle('active',button.dataset.modelTool===modelStudio.transformTool));modelStudio.transform.detach();clearModelComponentHelper();clearModelTopologyOverlay();modelStudio.selectedObjects.clear();
   for(const child of [...modelStudio.root.children]){if(child.userData.reference)continue;modelStudio.root.remove(child);disposeModelNode(child);}
@@ -4939,16 +4991,17 @@ function undoModelToolAction(){
 }
 function undoModelStudio(){
   if(modelStudio.history.length<2){toast('Нет предыдущего действия для отмены');return;}
-  const current=modelStudio.history.pop();modelStudio.future.push(current);restoreModelHistorySnapshot(modelStudio.history.at(-1)||[]);
+  const current=modelStudio.history.pop();modelStudio.future.push(current);restoreModelHistorySnapshot(modelStudio.history.at(-1)||[]);scheduleModelProjectSave();
 }
 function redoModelStudio(){
   if(!modelStudio.future.length){toast('Нет действия для повтора');return;}
-  const next=modelStudio.future.pop();modelStudio.history.push(next);restoreModelHistorySnapshot(next);
+  const next=modelStudio.future.pop();modelStudio.history.push(next);restoreModelHistorySnapshot(next);scheduleModelProjectSave();
 }
-async function saveModelStudioAsset(){
-  if(!currentProject||!modelStudio.root?.children.some(o=>!o.userData.reference)){toast('Добавь хотя бы один объект модели','error');return;}
+async function saveModelStudioAsset(options={}){
+  const {skipProjectSave=false,silent=false}=options;
+  if(!currentProject||!modelStudio.root?.children.some(o=>!o.userData.reference)){if(!silent)toast('Добавь хотя бы один объект модели','error');return false;}
   const exporter=new GLTFExporter(),root=new THREE.Group();root.rotation.x=-Math.PI/2;modelStudio.root.updateMatrixWorld(true);
-  // Export back to glTF's Y-up convention; the Model Studio wrapper converts it to Z-up on import.
+  // Export back to glTF's Y-up convention; Model Studio restores it to Z-up on import.
   modelStudio.root.children.filter(o=>!o.userData.reference).forEach(o=>root.add(cloneModelObjectDeep(o)));
   try{
     const result=await exporter.parseAsync(root,{binary:true,onlyVisible:true});
@@ -4956,25 +5009,49 @@ async function saveModelStudioAsset(){
     const name=($('#model-name').value.trim()||'New Model').replace(/\.(glb|gltf)$/i,'');
     const path=`Assets/Models/${safeName(name)}.glb`;currentProject.assetFolders||=[];
     if(!currentProject.assetFolders.includes('Models'))currentProject.assetFolders.push('Models');
-    const existing=currentProject.assets.find(item=>item.type==='model'&&item.path===path);
+    const existing=currentProject.assets.find(item=>item.id===currentProject.modelStudioAssetId&&item.type==='model')||currentProject.assets.find(item=>item.type==='model'&&item.path===path);
     const old=existing?{...existing}:null;
     const asset={id:existing?.id||uid(),name:`${name}.glb`,type:'model',size:blob.size,folder:'Models',path,blob};
     if(existing)Object.assign(existing,asset);else currentProject.assets.push(asset);
-    const saved=await saveProject(false);
+    currentProject.modelStudioAssetId=asset.id;
+    currentProject.modelStudioName=name;
+    const saved=skipProjectSave?true:await saveProject(false);
     if(!saved){if(existing&&old)Object.assign(existing,old);else currentProject.assets=currentProject.assets.filter(item=>item.id!==asset.id);throw new Error('Локальное хранилище не подтвердило сохранение');}
-    renderAssetPanel();toast(existing?'Модель обновлена в Assets / Models':'3D-модель сохранена в Assets / Models','success');
+    renderAssetPanel();
+    if(!silent){toast(existing?'Модель обновлена в рабочем пространстве':'3D-модель сохранена в рабочем пространстве','success');}
     $('#model-studio-status').textContent=`Сохранено: ${name}.glb`;
-  }catch(err){console.error(err);toast(`Не удалось сохранить модель: ${err.message||'ошибка GLB'}`,'error');}
+    return true;
+  }catch(err){console.error(err);if(!silent)toast(`Не удалось сохранить модель: ${err.message||'ошибка GLB'}`,'error');return false;}
+}
+async function saveModelProject(options={}){
+  if(!currentProject)return false;
+  const {silent=false}=options;
+  const hasModel=modelStudio.root?.children.some(object=>!object.userData.reference);
+  if(hasModel){
+    const persisted=await saveModelStudioAsset({skipProjectSave:true,silent:true});
+    if(!persisted){if(!silent)toast('Не удалось сохранить геометрию модели','error');return false;}
+  }else{
+    // Preserve a previously saved pointer if its GLB failed to restore; only clear it
+    // after the user actually edited/deleted the model in this workspace session.
+    if(!currentProject.modelStudioAssetId||modelStudio.history.length>1)currentProject.modelStudioAssetId=null;
+    currentProject.modelStudioName=($('#model-name')?.value.trim()||currentProject.modelStudioName||'New Model');
+  }
+  const saved=await saveProject(false);
+  if(saved){
+    $('#model-studio-status').textContent=hasModel?`Проект сохранён: ${currentProject.modelStudioName}`:'Пустой проект сохранён';
+    if(!silent)toast('Проект модели сохранён в рабочем пространстве','success');
+  }
+  return saved;
 }
 function convertModelToPlayer(){const o=modelStudio.selected;if(!o||!currentProject)return;const exporter=new GLTFExporter(),group=new THREE.Group();group.rotation.x=-Math.PI/2;group.add(cloneModelObjectDeep(o));exporter.parseAsync(group,{binary:true}).then(async result=>{const blob=new Blob([result],{type:'model/gltf-binary'}),asset={id:uid(),name:`${safeName(o.name)}_Player.glb`,type:'model',size:blob.size,folder:'Models',path:`Assets/Models/${uid()}.glb`,blob};currentProject.assets.push(asset);const entity={id:uid(),name:`${o.name} Player`,type:'player',modelAssetId:asset.id,position:[0,0,0],rotation:[0,0,0],scale:[1,1,1],visible:true,collision:{enabled:true,shape:'capsule',size:[.8,1.8,.8]},cameraMount:{mode:'back',offset:[0,1.55,3.2],fov:70},material:{}};activeSceneData().objects.push(entity);await loadSceneIntoViewport();renderHierarchy();renderInspector();scheduleSave();toast('Импортированная модель создана как Player','success');}).catch(err=>toast('Не удалось создать Player','error'));}
 function loadModelReference(file){if(!file)return;const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'References',path:`Assets/References/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);const plane=new THREE.Mesh(new THREE.PlaneGeometry(3,2),new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:.7,side:THREE.DoubleSide,depthWrite:false}));plane.name='Reference Image';plane.userData.reference=true;plane.position.set(0,1,0);modelStudio.root.add(plane);},undefined,()=>URL.revokeObjectURL(url));}
 function removeModelReference(){modelStudio.root.children.filter(object=>object.userData.reference).forEach(object=>{modelStudio.root.remove(object);disposeModelNode(object);});}
-function loadModelTexture(file){if(!file||!modelStudio.selected)return;const targets=[];modelStudio.selected.traverse?.(child=>{if(child.isMesh&&child.material)targets.push(child);});if(!targets.length&&modelStudio.selected.isMesh)targets.push(modelStudio.selected);if(!targets.length){toast('В выбранном объекте нет материала для текстуры','error');return;}const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'Textures',path:`Assets/Textures/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;targets.forEach(child=>{const materials=Array.isArray(child.material)?child.material:[child.material];materials.forEach(material=>{material.map=tex;material.needsUpdate=true;});});},undefined,()=>URL.revokeObjectURL(url));}
-function cropModelTexture(){const object=modelStudio.selected;if(!object)return;let applied=0;object.traverse?.(child=>{if(!child.isMesh||!child.material)return;for(const material of (Array.isArray(child.material)?child.material:[child.material]))if(material.map){material.map.repeat.set(.8,.8);material.map.offset.set(.1,.1);material.map.needsUpdate=true;applied++;}});if(!applied&&object.isMesh&&object.material?.map){object.material.map.repeat.set(.8,.8);object.material.map.offset.set(.1,.1);object.material.map.needsUpdate=true;applied++;}toast(applied?'Применена обрезка текстуры 10% по краям':'На выбранном объекте пока нет текстуры',applied?'success':'error');}
-let modelPainting=false;function startModelPaint(e){e.preventDefault();modelPainting=true;e.currentTarget.setPointerCapture?.(e.pointerId);modelPaintAt(e);}function moveModelPaint(e){if(modelPainting)modelPaintAt(e);}function endModelPaint(e){modelPainting=false;if(e?.currentTarget?.hasPointerCapture?.(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}function modelPaintAt(e){const c=$('#model-paint-canvas'),r=c.getBoundingClientRect(),ctx=c.getContext('2d');ctx.fillStyle=$('#model-brush-color').value;ctx.beginPath();ctx.arc((e.clientX-r.left)/r.width*c.width,(e.clientY-r.top)/r.height*c.height,Number($('#model-brush-size').value),0,Math.PI*2);ctx.fill();}function applyModelPaint(){const object=modelStudio.selected;if(!object)return;const c=$('#model-paint-canvas'),tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;let applied=0;object.traverse?.(child=>{if(child.isMesh&&child.material){for(const material of (Array.isArray(child.material)?child.material:[child.material])){material.map=tex;material.needsUpdate=true;applied++;}}});if(!applied&&object.isMesh&&object.material){object.material.map=tex;object.material.needsUpdate=true;applied++;}if(!applied){toast('В выбранном объекте нет материала для рисования','error');return;}c.toBlob(blob=>{if(blob){currentProject.assets.push({id:uid(),name:'Painted_Texture.png',type:'texture',size:blob.size,folder:'Textures',path:`Assets/Textures/${uid()}_Painted_Texture.png`,blob});scheduleSave();}},'image/png');toast('Текстура нанесена на объект и сохранена в ресурсах проекта');}
+function loadModelTexture(file){if(!file||!modelStudio.selected)return;const targets=[];modelStudio.selected.traverse?.(child=>{if(child.isMesh&&child.material)targets.push(child);});if(!targets.length&&modelStudio.selected.isMesh)targets.push(modelStudio.selected);if(!targets.length){toast('В выбранном объекте нет материала для текстуры','error');return;}pushModelHistory();const asset={id:uid(),name:file.name,type:'texture',size:file.size,folder:'Textures',path:`Assets/Textures/${uid()}_${safeName(file.name)}`,blob:file};currentProject.assets.push(asset);scheduleSave();const url=URL.createObjectURL(file);new THREE.TextureLoader().load(url,tex=>{URL.revokeObjectURL(url);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;targets.forEach(child=>{const materials=Array.isArray(child.material)?child.material:[child.material];materials.forEach(material=>{material.map=tex;material.needsUpdate=true;});});pushModelHistory();scheduleModelProjectSave();},undefined,()=>URL.revokeObjectURL(url));}
+function cropModelTexture(){const object=modelStudio.selected;if(!object)return;pushModelHistory();let applied=0;object.traverse?.(child=>{if(!child.isMesh||!child.material)return;for(const material of (Array.isArray(child.material)?child.material:[child.material]))if(material.map){material.map.repeat.set(.8,.8);material.map.offset.set(.1,.1);material.map.needsUpdate=true;applied++;}});if(!applied&&object.isMesh&&object.material?.map){object.material.map.repeat.set(.8,.8);object.material.map.offset.set(.1,.1);object.material.map.needsUpdate=true;applied++;}if(applied){pushModelHistory();scheduleModelProjectSave();}toast(applied?'Применена обрезка текстуры 10% по краям':'На выбранном объекте пока нет текстуры',applied?'success':'error');}
+let modelPainting=false;function startModelPaint(e){e.preventDefault();modelPainting=true;e.currentTarget.setPointerCapture?.(e.pointerId);modelPaintAt(e);}function moveModelPaint(e){if(modelPainting)modelPaintAt(e);}function endModelPaint(e){modelPainting=false;if(e?.currentTarget?.hasPointerCapture?.(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}function modelPaintAt(e){const c=$('#model-paint-canvas'),r=c.getBoundingClientRect(),ctx=c.getContext('2d');ctx.fillStyle=$('#model-brush-color').value;ctx.beginPath();ctx.arc((e.clientX-r.left)/r.width*c.width,(e.clientY-r.top)/r.height*c.height,Number($('#model-brush-size').value),0,Math.PI*2);ctx.fill();}function applyModelPaint(){const object=modelStudio.selected;if(!object)return;pushModelHistory();const c=$('#model-paint-canvas'),tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;tex.wrapS=tex.wrapT=THREE.RepeatWrapping;let applied=0;object.traverse?.(child=>{if(child.isMesh&&child.material){for(const material of (Array.isArray(child.material)?child.material:[child.material])){material.map=tex;material.needsUpdate=true;applied++;}}});if(!applied&&object.isMesh&&object.material){object.material.map=tex;object.material.needsUpdate=true;applied++;}if(!applied){toast('В выбранном объекте нет материала для рисования','error');return;}c.toBlob(blob=>{if(blob){currentProject.assets.push({id:uid(),name:'Painted_Texture.png',type:'texture',size:blob.size,folder:'Textures',path:`Assets/Textures/${uid()}_Painted_Texture.png`,blob});pushModelHistory();scheduleModelProjectSave();}},'image/png');toast('Текстура нанесена на объект и сохранена в ресурсах проекта');}
 
-async function importModelStudioFile(file){
-  if(!file)return;const ext=extOf(file.name);let object;
+async function importModelStudioFile(file,options={}){
+  if(!file)return;$('#model-quick-add-menu')?.classList.add('hidden');const ext=extOf(file.name);let object;
   try{
     if(ext==='glb'||ext==='gltf'){const url=URL.createObjectURL(file);try{const gltf=await new GLTFLoader().loadAsync(url);object=gltf.scene;}finally{URL.revokeObjectURL(url);}}
     else if(ext==='obj')object=new OBJLoader().parse(await file.text());
@@ -4989,8 +5066,9 @@ async function importModelStudioFile(file){
     modelStudio.root.add(wrapper);wrapper.updateMatrixWorld(true);
     const bounds=new THREE.Box3().setFromObject(wrapper);if(!bounds.isEmpty()){const center=bounds.getCenter(new THREE.Vector3());wrapper.position.sub(center);}
     selectModelMesh(wrapper);focusModelObject(wrapper);pushModelHistory();renderModelObjectList();$('#model-name').value=wrapper.name;
-    toast(`Импортировано: ${file.name}${['glb','gltf','fbx','obj'].includes(ext)?' · Y-up → Z-up':''}`,'success');
-  }catch(err){console.error(err);toast('Не удалось импортировать модель. Для GLTF с внешними файлами используй GLB.','error');}
+    if(!options.silent)toast(`Импортировано: ${file.name}${['glb','gltf','fbx','obj'].includes(ext)?' · Y-up → Z-up':''}`,'success');
+    return true;
+  }catch(err){console.error(err);if(!options.silent)toast('Не удалось импортировать модель. Для GLTF с внешними файлами используй GLB.','error');return false;}
 }
 
 // ---------- Startup ----------

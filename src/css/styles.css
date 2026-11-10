@@ -1012,106 +1012,124 @@ input[type="range"]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;b
 #workbench-body .ui-design-stage{flex-shrink:0!important}
 
 
-/* ZeroEngine 0.10.14 — no hidden mobile workbench tabs; keep the full ZeroBox/UI Designer reachable. */
-@media (max-width:900px), (pointer:coarse), (max-device-width:900px){
-  #workbench-body{display:block!important;flex:1 1 auto!important;min-height:0!important;height:auto!important;overflow-x:hidden!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}
-  #workbench-body .workbench-grid,
-  #workbench-body .ui-designer-grid{display:flex!important;position:relative!important;flex-direction:column!important;gap:8px!important;width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;flex:0 0 auto!important;}
-  #workbench-body [data-workbench-role]{display:block!important;position:relative!important;inset:auto!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;transform:none!important;width:100%!important;max-width:none!important;height:auto!important;min-width:0!important;min-height:0!important;max-height:none!important;overflow:visible!important;box-sizing:border-box!important;flex:0 0 auto!important;visibility:visible!important;}
-  #workbench-body [data-workbench-role="palette"]{display:flex!important;flex-direction:column!important;padding:10px!important;border:1px solid var(--line)!important;border-radius:8px!important;}
-  #workbench-body [data-workbench-role="canvas"]{display:block!important;width:100%!important;height:62dvh!important;min-height:360px!important;max-height:72dvh!important;overflow:auto!important;border:1px solid var(--line)!important;border-radius:8px!important;flex:none!important;}
-  #workbench-body [data-workbench-role="properties"]{display:block!important;width:100%!important;min-height:180px!important;max-height:none!important;overflow:visible!important;padding:12px!important;border:1px solid var(--line)!important;border-radius:8px!important;}
-  #workbench-body .ui-stage-wrap{display:flex!important;align-items:flex-start!important;justify-content:center!important;width:100%!important;height:auto!important;min-height:50dvh!important;max-height:none!important;overflow:auto!important;padding:10px!important;}
-  #workbench-body .ui-design-stage{display:block!important;width:min(100%,1000px)!important;height:auto!important;min-width:0!important;max-width:100%!important;max-height:none!important;aspect-ratio:var(--ui-device-aspect,16 / 9)!important;flex:0 0 auto!important;}
-  #workbench-body .ui-palette button{min-height:42px!important;font-size:12px!important;}
-  #workbench-body .node-palette{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
-  #workbench-body .workbench-sidebar .workbench-toolbar-tip{display:block!important;}
-  #workbench-body .zero-category-list{display:flex!important;flex-direction:column!important;gap:6px!important;max-height:none!important;overflow:visible!important;}
-  #workbench-body .resize-zero-left-handle,#workbench-body .resize-zero-right-handle{display:none!important;}
-  .workbench-mobile-tabs{display:none!important;}
+/* Split applications + robust model workspace affordances (v0.10.14). */
+body[data-app-mode="game"] #open-model-studio-home,
+body[data-app-mode="game"] #model-studio{display:none!important}
+body[data-app-mode="model"] #home-screen,
+body[data-app-mode="model"] #editor-screen,
+body[data-app-mode="model"] #play-screen{display:none!important}
+body[data-app-mode="model"] #model-home-screen{display:flex!important}
+body[data-app-mode="model"] #model-studio:not(.hidden){display:flex!important}
+body[data-app-mode="model"] .toast-region{z-index:200000!important}
+
+#model-studio{position:fixed;inset:0;z-index:10000}
+#model-studio .model-studio-header{position:relative;z-index:10020;flex:0 0 auto}
+#model-studio .model-studio-layout{grid-template-columns:minmax(190px,220px) minmax(0,1fr) minmax(230px,270px)}
+#model-studio .model-add-panel{display:none!important;visibility:hidden!important;pointer-events:none!important}
+#model-studio .model-workspace-overlay{position:absolute;z-index:10050;top:8px;right:8px;display:flex;gap:6px;pointer-events:auto;isolation:isolate}
+#model-studio .model-workspace-overlay button{min-height:36px;padding:6px 10px;border:1px solid #ffffff48;border-radius:8px;background:#111a21ed;color:#fff;font-weight:700;font-size:11px;box-shadow:0 4px 16px #0008;touch-action:manipulation}
+#model-studio .model-workspace-overlay button:hover{background:#26333b}
+#model-studio .model-viewport-views{top:54px!important;right:8px!important;left:auto!important;bottom:auto!important;z-index:10015!important}
+#model-studio .model-quick-add-wrap{position:absolute;top:8px;left:8px;z-index:10040;pointer-events:auto}
+#model-studio #model-quick-add-toggle{width:40px;height:40px;border:1px solid #ffffff40;border-radius:10px;background:#10191fed;color:#fff;font-size:25px;line-height:1;box-shadow:0 4px 16px #0008;touch-action:manipulation}
+#model-studio .model-quick-add-menu{position:absolute;top:46px;left:0;width:min(290px,calc(100vw - 28px));max-height:min(70vh,560px);overflow:auto;padding:9px;border:1px solid #ffffff35;border-radius:12px;background:#151d22f7;box-shadow:0 16px 42px #000b;overscroll-behavior:contain;z-index:10060}
+#model-studio .model-quick-add-menu>button{width:100%;min-height:38px;margin-bottom:8px;text-align:left;border:1px solid #ffffff2e;border-radius:7px;background:#25323a;color:#f4f7f8;padding:8px 10px}
+#model-studio .model-quick-primitives{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+#model-studio .model-quick-primitives button{min-height:36px;min-width:0;white-space:normal;border:1px solid #ffffff22;border-radius:6px;background:#1c282e;color:#eaf0f2;font-size:11px;padding:6px}
+#model-studio .model-panel-close{float:right;width:27px;height:27px;min-width:27px;min-height:27px;padding:0;border:1px solid #ffffff30;border-radius:6px;background:#202b31;color:#fff;font-size:18px;line-height:1}
+#model-studio .model-drawer-toolbar{z-index:10025}
+#model-studio .model-viewport{isolation:isolate}
+#model-studio .model-cut-overlay,#model-studio #model-sculpt-cursor{pointer-events:none}
+
+#model-home-screen{display:none;width:100%;height:100%;overflow:auto;flex-direction:column;gap:20px;padding:clamp(18px,5vw,56px);background:radial-gradient(ellipse at 80% 10%,#26382f 0,transparent 38%),linear-gradient(145deg,#101619,#101c1e 70%);color:#eef3f4}
+#model-home-screen .model-home-top{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #ffffff20;padding-bottom:16px}
+#model-home-screen .model-home-brand{font-size:20px;font-weight:800;letter-spacing:.08em}
+#model-home-screen .model-home-brand span{color:#9ae66b}
+#model-home-screen .model-home-hero{max-width:880px;margin:8vh auto 0;text-align:center}
+#model-home-screen h1{font-size:clamp(30px,6vw,64px);line-height:1.05;margin:0 0 14px}
+#model-home-screen p{color:#b6c3c7;line-height:1.65}
+#model-home-screen .model-home-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:24px 0}
+#model-home-screen .model-home-projects{width:min(900px,100%);margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+#model-home-screen .model-home-project{display:flex;flex-direction:column;gap:6px;text-align:left;padding:14px;border:1px solid #ffffff28;border-radius:10px;background:#1b262b;color:#eef4f5;min-height:80px}
+#model-home-screen .model-home-project small{color:#98a7ad}
+#model-home-screen .model-home-empty{grid-column:1/-1;padding:20px;border:1px dashed #ffffff35;border-radius:10px;color:#aab8bd}
+@media(max-width:700px),(pointer:coarse){
+  #model-studio .model-studio-header{padding-right:8px;gap:5px;flex-wrap:wrap;min-height:54px}
+  #model-studio .model-studio-header #model-name{min-width:75px;max-width:110px}
+  #model-studio .model-workspace-overlay{top:54px;right:6px}
+  #model-studio .model-workspace-overlay button{min-height:34px;padding:5px 7px;font-size:10px}
+  #model-studio .model-viewport-views{top:98px!important}
+  #model-studio .model-quick-add-wrap{top:54px;left:6px}
+  #model-studio .model-quick-add-menu{max-height:55dvh}
 }
+#model-studio .model-panel-hidden{display:none!important}
+body[data-app-mode="model"] #model-home-screen.hidden{display:none!important}
 
-/* ZeroBox category palette and node card identity colors. */
-.zero-category-list{display:flex;flex-direction:column;gap:6px;min-width:0;}
-.zero-category-group{border:1px solid var(--line2);border-left:3px solid var(--category-color,#77838c);border-radius:7px;background:var(--panel2);overflow:hidden;}
-.zero-category-group>summary{display:flex;align-items:center;gap:8px;min-height:36px;padding:7px 9px;cursor:pointer;list-style:none;color:var(--text);user-select:none;}
-.zero-category-group>summary::-webkit-details-marker{display:none;}
-.zero-category-group>summary>b{font-size:10px;font-weight:700;}
-.zero-category-group>summary>small{margin-left:auto;color:var(--muted);font:10px var(--mono);}
-.zero-category-group[open]>summary{background:color-mix(in srgb,var(--category-color,#77838c) 16%,var(--panel2));border-bottom:1px solid color-mix(in srgb,var(--category-color,#77838c) 45%,var(--line));}
-.zero-category-group .node-palette{padding:6px;}
-.zero-category-group .node-palette button{border-left:3px solid var(--block-color,#77838c);background:color-mix(in srgb,var(--block-color,#77838c) 11%,var(--panel2));}
-.zero-category-group .node-palette button:hover{border-color:var(--block-color,#77838c);filter:brightness(1.14);}
-.node-card{border-left:4px solid var(--category-color,#77838c)!important;}
-.node-card-head{background:color-mix(in srgb,var(--category-color,#77838c) 19%,var(--panel2))!important;}
-.node-card-head .node-kind{color:var(--category-color,#77838c)!important;}
-:root[data-theme="light"] .zero-category-group .node-palette button{background:color-mix(in srgb,var(--block-color,#77838c) 10%,#fff);}
-:root[data-theme="light"] .node-card-head{background:color-mix(in srgb,var(--category-color,#77838c) 12%,#fff)!important;}
+/* Keep exit and fullscreen controls above the game viewport and UI overlay. */
+.workspace-overlay-actions{position:absolute;top:8px;right:8px;z-index:100000;display:flex;gap:6px;pointer-events:auto;isolation:isolate}
+.workspace-overlay-actions button{min-height:36px;padding:6px 10px;border:1px solid #ffffff40;border-radius:8px;background:#111a21ed;color:#fff;font-weight:700;font-size:11px;box-shadow:0 4px 16px #0008;touch-action:manipulation}
+.workspace-overlay-actions button:hover{background:#26333b}
+#play-overlay .play-top{z-index:100000;pointer-events:auto}
+#play-overlay .play-top-actions{position:relative;z-index:100001;pointer-events:auto}
 
+/* Model workspace panel creation menu and close affordances. */
+.model-panel-add-wrap{position:relative;display:inline-flex}
+.model-panel-add-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:10080;min-width:190px;padding:8px;border:1px solid #ffffff2e;border-radius:10px;background:#151d22f5;box-shadow:0 14px 36px #000b;display:flex;flex-direction:column;gap:5px}
+.model-panel-add-menu>button{min-height:34px;border:1px solid #ffffff20;border-radius:6px;background:#243138;color:#eef4f5;text-align:left;padding:7px 9px}
+.model-panel-add-menu-head,.model-quick-add-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 2px 7px;color:#f0f5f6;font-size:12px;font-weight:800}
+.model-panel-add-menu-head button,.model-quick-add-head button{width:26px;height:26px;min-width:26px;min-height:26px;padding:0;border:1px solid #ffffff2b;border-radius:6px;background:#29363c;color:#fff;font-size:18px;line-height:1}
+.model-created-component-item{padding-left:8px;border-left:2px solid #52d9ff55}
+.model-created-component-indent{color:#7edcf3;padding:0 3px;font-size:13px}
+.model-quick-add-head{margin-bottom:6px}
+.model-home-legacy{grid-column:1/-1;margin-top:12px;padding:14px;border:1px dashed #ffffff35;border-radius:12px;background:#ffffff06}
+.model-home-legacy h3,.model-legacy-heading{margin:0 0 7px;color:#e8eff1;font-size:14px}
+.model-home-legacy p{margin:0 0 12px;color:#aebdc2;font-size:12px}
+.model-home-legacy-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #ffffff17}
+.model-home-legacy-row>div{display:flex;flex-direction:column;min-width:0;gap:3px;color:#f1f5f6}
+.model-home-legacy-row small{color:#9daeb4;overflow-wrap:anywhere}
+.model-home-legacy-row .button{flex:0 0 auto;white-space:normal}
+.model-project-legacy-row{border:1px dashed #ffffff25;border-radius:8px;margin:5px 0}
 
-/* ZeroEngine 0.10.15: numeric inputs show only the custom minus/plus controls. */
-input[type="number"]{-moz-appearance:textfield!important;appearance:textfield!important;}
-input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none!important;appearance:none!important;margin:0!important;display:none!important;}
-/* No visual alignment grid in scene, model studio or node workspaces. */
-.node-canvas,.zero-node-surface{background-image:none!important;background-color:var(--bg)!important;}
-.model-viewport,.viewport-wrap{background-image:none!important;}
-
-/* ZeroEngine 0.10.16 — no grid overlays; UI Designer tree, templates and layers. */
-.art-grid{display:none!important;background-image:none!important}
-.node-canvas,.zero-node-surface,.model-viewport,.viewport-wrap,.ui-stage-wrap{background-image:none!important}
-.ui-element-tree{display:flex;flex-direction:column;gap:3px;max-height:clamp(150px,34vh,420px);overflow:auto;padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
-.ui-tree-row{display:flex;align-items:center;gap:3px;padding-left:calc(min(var(--ui-tree-depth,0),12)*9px);min-width:0}
-.ui-tree-select{display:flex;align-items:center;gap:6px;min-width:0;flex:1;padding:6px 7px;border:1px solid transparent;border-radius:5px;background:var(--panel2);color:var(--text);text-align:left;font-size:9px}
-.ui-tree-select b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
-.ui-tree-select small{margin-left:auto;color:var(--muted);font-size:8px;white-space:nowrap}
-.ui-tree-select.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,var(--panel2))}
-.ui-tree-add-child,.ui-screen-actions button{flex:0 0 27px;width:27px;height:27px;padding:0;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);font-size:14px}
-.ui-tree-add-child:hover,.ui-screen-actions button:hover{border-color:var(--accent)}
-.ui-screen-actions{display:flex;gap:4px;margin:6px 0 10px;flex-wrap:wrap}
-.ui-template-label{margin-top:8px}
-.ui-tree-title{margin-top:16px}
-.ui-element{isolation:isolate}
-.ui-element button{background-color:var(--ui-button-color,#292929)}
-.ui-element-tree .modal-note{padding:7px}
+/* Unified ZeroEngine home: keep both project types in one menu, in separate sections. */
+.home-project-category{margin-top:22px;padding:18px 0 4px;border-top:1px solid #263137}
+.home-project-category-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 14px}
+.home-project-category-heading>div{display:flex;align-items:center;gap:10px;min-width:0}
+.home-project-category-heading h3{margin:0;font-size:15px;letter-spacing:-.25px}
+.home-project-category-heading>span{color:var(--muted);font:9px var(--mono);letter-spacing:.6px;text-align:right}
+.project-category-mark{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:#25312a;color:#c6efa0;font-size:17px}
+.model-project-category .project-category-mark{background:#2b293b;color:#c9bafa}
+.home-project-category .project-count{padding:4px 7px;border:1px solid #344149;border-radius:20px;min-width:24px;text-align:center}
+.project-card-game .project-symbol{background:#26372a;color:#c6efa0}
+.project-card-model .project-symbol{background:#302b42;color:#c9bafa}
+.project-card:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:520px){.home-project-category{margin-top:18px;padding-top:15px}.home-project-category-heading{align-items:flex-start;flex-direction:column;gap:5px}.home-project-category-heading>span{text-align:left;padding-left:40px;font-size:8px}.home-project-category-heading h3{font-size:14px}}
 
 
-/* ZeroEngine 0.10.17 — draggable scene hierarchy for mouse and touch. */
-.hierarchy-list{position:relative;overscroll-behavior:contain}
-.tree-item{padding-left:calc(7px + var(--tree-depth,0)*15px)!important;min-width:0;gap:6px;transition:background .08s,border-color .08s;}
-.tree-item[style*="--tree-depth"]{border-left:1px solid transparent}
-.tree-drag-handle{flex:0 0 18px;width:18px;height:22px;min-width:18px;margin:0;padding:0;border:0;border-radius:3px;background:transparent;color:#718087;font-size:12px;letter-spacing:-3px;line-height:1;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;display:grid;place-items:center}
-.tree-drag-handle:hover,.tree-drag-handle:active{background:#34433a;color:var(--accent,#a7d66e)}
-.tree-item:hover .tree-drag-handle{color:#b9c9c0}
-.tree-item.drag-source{opacity:.36;background:#26352c}
-.tree-item.drop-inside{background:#354a37!important;outline:1px solid #9bce6c;outline-offset:-1px}
-.tree-item.drop-before{box-shadow:inset 0 2px 0 #a7d66e}
-.tree-item.drop-after{box-shadow:inset 0 -2px 0 #a7d66e}
-.hierarchy-list.drop-root{outline:1px dashed #a7d66e;outline-offset:-4px;background:#a7d66e0b}
-.hierarchy-dragging,.hierarchy-dragging *{cursor:grabbing!important;user-select:none!important;-webkit-user-select:none!important}
-.hierarchy-dragging #viewport-canvas{pointer-events:none}
-@media(max-width:850px),(pointer:coarse){
-  .tree-item{height:38px;min-height:38px;padding-right:4px!important;gap:6px}
-  .tree-drag-handle{width:25px;height:30px;min-width:25px;font-size:14px}
-  .tree-name{font-size:12px;min-width:0;flex:1}
-  .tree-kind{font-size:8px;max-width:60px;overflow:hidden;text-overflow:ellipsis}
-  .tree-lock-button{flex-basis:27px;width:27px;min-width:27px;height:27px}
-  .hierarchy-footer{font-size:8px}
+/* User-managed workspace tabs. All dock tabs, including defaults, may be renamed or removed. */
+.asset-dock-header{min-width:0;overflow:visible}
+.asset-tabs{min-width:0;overflow-x:auto;scrollbar-width:thin;flex:1 1 auto}
+.asset-tab-item{height:100%;display:flex;align-items:center;gap:1px;flex:0 0 auto;border-bottom:2px solid transparent;position:relative}
+.asset-tab-item.active{border-bottom-color:var(--accent)}
+.asset-tab-item .asset-tab{height:100%;border:0;border-bottom:0;padding:0 8px;white-space:nowrap}
+.asset-tab-item .asset-tab.active{border-bottom:0;color:var(--accent)}
+.asset-tab-edit,.asset-tab-delete{width:19px;height:21px;min-width:19px;padding:0;border:0;border-radius:4px;background:transparent;color:#78878e;font-size:12px;display:grid;place-items:center;line-height:1}
+.asset-tab-edit:hover{background:#2d3a40;color:#e7eef0}
+.asset-tab-delete:hover{background:#4b292b;color:#ffaaa5}
+.asset-tab-create-tools{display:flex;align-items:center;flex:0 0 auto}
+.asset-tab-create-tools .button{white-space:nowrap}
+.asset-tab-empty{width:100%;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;padding:22px;color:var(--muted)}
+.asset-tab-empty-icon{width:42px;height:42px;border:1px dashed #53636a;border-radius:12px;display:grid;place-items:center;font-size:25px;color:var(--accent)}
+.asset-tab-empty strong{color:var(--text);font-size:13px}
+.asset-tab-empty span{max-width:420px;line-height:1.6;font-size:10px}
+.home-category-actions{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+.home-category-actions>span{color:var(--muted);font:9px var(--mono);letter-spacing:.6px;text-align:right}
+@media(max-width:760px){
+  .asset-dock-header{height:auto;min-height:42px;flex-wrap:wrap;padding:4px 6px;row-gap:2px}
+  .asset-tabs{order:1;flex:1 1 100%;height:34px;min-height:34px}
+  .asset-tab-create-tools{order:2}
+  .asset-actions{order:3;flex:1 1 auto;overflow-x:auto;min-width:0}
+  .asset-tab-item .asset-tab{padding:0 6px;font-size:9px}
+  .asset-tab-edit,.asset-tab-delete{width:17px;min-width:17px}
+  .home-category-actions{width:100%;justify-content:space-between}
+  .home-category-actions>span{text-align:left;white-space:normal}
 }
-/* ZeroEngine 0.10.18: editable UI tabs and hierarchy ordering */
-.ui-screen-tabs{display:flex;align-items:center;gap:4px;overflow-x:auto;padding:3px 0 8px;max-width:100%;}
-.ui-screen-tab{display:flex;align-items:center;flex:0 0 auto;border:1px solid #3b4a50;border-radius:6px;background:#202b30;overflow:hidden;max-width:170px;}
-.ui-screen-tab.active{border-color:var(--accent);background:#293b30;}
-.ui-screen-tab button{border:0;background:transparent;color:#dce5e4;padding:6px 8px;font-size:9px;min-width:0;}
-.ui-screen-tab button:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ui-screen-tab button:last-child{color:#e6a4a4;padding:5px 7px;border-left:1px solid #ffffff18;}
-.ui-screen-tab-add{flex:0 0 30px;min-height:29px;border:1px dashed #65756e;border-radius:6px;background:transparent;color:#e7f3e7;}
-.ui-tree-row{display:flex;align-items:center;gap:3px;min-height:32px;padding-left:calc(var(--ui-tree-depth)*12px);border-radius:5px;}
-.ui-tree-row.drop-target{outline:2px solid var(--accent);background:#8dbb3022;}
-.ui-tree-select{min-width:0;flex:1;display:flex;align-items:center;gap:6px;text-align:left;}
-.ui-tree-grip{font-size:13px;letter-spacing:-3px;cursor:grab;color:#91a59b;touch-action:none;}
-.ui-tree-order{display:flex;gap:1px;}
-.ui-tree-order button{width:22px;height:23px;padding:0;border:1px solid #39484e;border-radius:4px;background:#202b30;color:#dce8e5;font-size:12px;}
-.ui-tree-order button:active{background:var(--accent);color:#111;}
-.ui-tree-order-hint{font-size:8px;color:#91a09e;margin:3px 0 5px;}
-.model-action-grid #model-solidify{grid-column:1/-1;}
-@media(max-width:700px){.ui-screen-tabs{padding-bottom:10px}.ui-screen-tab{max-width:135px}.ui-tree-order button{width:26px;height:27px}.ui-tree-row{min-height:38px}}
